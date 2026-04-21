@@ -34,7 +34,7 @@ The primary developer is a junior engineer, final-year university student, solo 
 - **Mobile app (React Native + Expo, TypeScript):** user-facing app for students and merchants. Contains signing logic, local SQLite ledger, QR generation and scanning.
 - **Backend (NestJS, TypeScript):** REST API handling authentication, reconciliation, merchant cashouts, admin operations.
 - **Database (PostgreSQL, managed):** source of truth for verified balances, transaction history, user records.
-- **Payment rails (Paystack):** handles naira-in (student top-ups) and naira-out (merchant cashouts). oneto never handles raw card data.
+- **Payment rails (Korapay):** handles naira-in (student top-ups) and naira-out (merchant cashouts). oneto never handles raw card data.
 
 ### 3.2 Trust boundaries — memorize these
 
@@ -45,10 +45,10 @@ The primary developer is a junior engineer, final-year university student, solo 
 
 ### 3.3 The transaction lifecycle
 
-1. **Top-up (online):** Student pays naira via Paystack. Server verifies webhook signature. Server increments the student's `verifiedBalanceKobo`. Two ledger rows written.
+1. **Top-up (online):** Student pays naira via Korapay. Server verifies webhook signature. Server increments the student's `verifiedBalanceKobo`. Two ledger rows written.
 2. **Offline payment:** Merchant generates a payment request QR (amount + merchant ID + nonce). Student scans, confirms, the student's app constructs and signs a transaction envelope, displays the signed envelope as a second QR. Merchant scans the signed envelope and verifies the signature locally. Both phones store the envelope in their local SQLite ledgers as `pending_reconciliation`.
 3. **Reconciliation:** When either phone reconnects, it pushes pending envelopes to `/reconcile`. Server verifies signature, checks sequence monotonicity, checks claimed balance consistency with server state, writes double-entry ledger rows, updates both users' `verifiedBalanceKobo`.
-4. **Merchant cashout:** Merchant requests cashout via app. Admin reviews (manual during pilot). Paystack Transfer API sends naira to the merchant's bank account. Operating account debited in the ledger.
+4. **Merchant cashout:** Merchant requests cashout via app. Admin reviews (manual during pilot). Korapay Transfer API sends naira to the merchant's bank account. Operating account debited in the ledger.
 
 ---
 
@@ -88,7 +88,7 @@ Lock these in `package.json`. Do not upgrade casually. Security-critical librari
 
 - **Hosting:** Railway or Render for pilot. Not raw AWS — too easy to misconfigure.
 - **Auth:** Phone + OTP via Termii (cheaper Nigerian SMS) or Twilio Verify. No passwords for end users.
-- **Payments:** Paystack for top-ups and cashouts. Verify all webhooks via HMAC signature.
+- **Payments:** Korapay for top-ups and cashouts. Verify all webhooks via HMAC signature.
 - **Monitoring:** Sentry for errors, Axiom or Logtail for logs, UptimeRobot for heartbeat checks.
 - **Secrets:** Doppler or Infisical for environment variable management. Never commit `.env` files. Never paste secrets into Claude Code or Antigravity prompts.
 
@@ -127,7 +127,7 @@ oneto/
 │   │   ├── users/                   user accounts, public keys
 │   │   ├── balance/                 verified balance management
 │   │   ├── reconcile/               envelope verification and ledger writes — CRITICAL
-│   │   ├── topup/                   Paystack webhook handler
+│   │   ├── topup/                   Korapay webhook handler
 │   │   ├── cashout/                 merchant cashout flow
 │   │   ├── admin/                   admin dashboard endpoints
 │   │   └── common/                  shared utilities, guards, filters
@@ -283,7 +283,7 @@ enum LedgerEntryType {
 
 ### 8.3 The operating account
 
-A single internal user record with `id: "u_operating"` represents oneto's operating float. Every top-up credits this account (money came in from Paystack) and credits the student (they now have credits). Every cashout debits the operating account (we paid naira out) and debits the merchant (their credits are gone). The sum of all non-operating account balances always equals the negative of the operating account's balance.
+A single internal user record with `id: "u_operating"` represents oneto's operating float. Every top-up credits this account (money came in from Korapay) and credits the student (they now have credits). Every cashout debits the operating account (we paid naira out) and debits the merchant (their credits are gone). The sum of all non-operating account balances always equals the negative of the operating account's balance.
 
 **Run the invariant check daily:** `SUM(all user balances) + operating_account_balance === 0`. If this is ever false, pause the system and investigate. Do not allow any new transactions until the mismatch is resolved.
 
@@ -301,8 +301,8 @@ POST  /auth/keys/register           auth          register device public key
 GET   /me                           auth          profile + verifiedBalanceKobo
 GET   /me/ledger                    auth          paginated transaction history
 
-POST  /topup/paystack/initiate      auth          returns Paystack checkout URL
-POST  /topup/paystack/webhook       public+HMAC   handles payment completion
+POST  /topup/Korapay/initiate      auth          returns Korapay checkout URL
+POST  /topup/Korapay/webhook       public+HMAC   handles payment completion
 
 POST  /reconcile                    auth          submit pending envelopes
 POST  /reconcile/status             auth          check envelope statuses
@@ -366,6 +366,7 @@ Every endpoint has:
 ---
 
 ## 11. Working with AI assistants
+Claude code sessions should open by reading CLAUDE.md end to end then reading /shared/src/index.ts to understand what already exists.
 
 ### 11.1 Before asking for code
 
@@ -485,6 +486,49 @@ When in doubt, STOP and ask the developer. Do not guess on:
 - Any change that would require altering the signed envelope schema (breaks backward compatibility)
 
 ---
+
+---
+
+## 16. Environment specifics
+
+### 16.1 Primary development environment
+- **OS:** Windows 11
+- **Terminal:** PowerShell (not cmd, not Git Bash)
+- **Node:** 20+
+- **Package manager:** pnpm 10+
+- **Editor:** Antigravity (primary), with Claude Code in terminal as companion
+
+When providing shell commands, use **PowerShell syntax**, not Unix/bash. Examples:
+- Use `New-Item -ItemType Directory -Force -Path ...` not `mkdir -p ...`
+- Use `Test-Path` and `Get-Content` for file checks
+- Use `Get-ChildItem -Recurse` not `find` or `ls -R`
+- Use backslashes in paths when typed manually (PowerShell accepts both but backslashes match the OS)
+
+### 16.2 Save-before-verify discipline
+In any editor, file existence is not the same as file content. Before running anything that depends on a file:
+1. Paste content
+2. Ctrl+S immediately
+3. Verify with `Get-Content <file> | Measure-Object -Line` in terminal
+4. Only then run tests or commands
+
+Creating a file without saving is a silent failure mode that costs hours to debug otherwise.
+
+### 16.3 Git hygiene
+- `.gitignore` must use `**/node_modules/` pattern (matches nested pnpm node_modules, not just root)
+- Always run `git status` before `git commit` — read the output, don't skim
+- Before first commit on a new machine: verify `git ls-files | Measure-Object` shows a reasonable count (under ~50 for this project until mobile app is added)
+- Line endings: the `.gitattributes` file enforces LF across platforms; do not override
+
+### 16.4 Monorepo notes (pnpm workspaces)
+- Each workspace (`shared`, `backend`, `mobile`) has its own `package.json` and its own `node_modules/` folder
+- This is correct and expected — pnpm uses symlinks back to a shared store
+- `pnpm --filter @oneto/<package> <command>` runs a command in a specific workspace
+- `pnpm -r <command>` runs recursively across all workspaces
+
+### 16.5 Lessons learned (living log)
+- Initial envelope tests: 16/16 passed (happy path + 13 red-team cases + canonicalization determinism)
+- Confirmed: Ed25519 signing/verification round-trips correctly with `@noble/ed25519` + the `sha512Sync` shim
+- Confirmed: canonicalization produces identical bytes regardless of object key order
 
 **Last updated:** [DATE]
 **Document owner:** [YOUR NAME]
