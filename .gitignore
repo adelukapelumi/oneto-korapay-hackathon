@@ -1,0 +1,28 @@
+node_modules/
+dist/
+build/
+coverage/
+
+.env
+.env.*
+!.env.example
+
+.DS_Store
+Thumbs.db
+.vscode/settings.json
+.idea/
+
+*.log
+.turbo/
+.next/
+.expo/
+
+# Mobile
+mobile/ios/Pods/
+mobile/android/build/
+mobile/android/.gradle/
+*.keystore
+!debug.keystore
+
+# Build outputs
+*.tsbuildinfo
