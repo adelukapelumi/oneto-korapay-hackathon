@@ -1,0 +1,70 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  STUDENT
+  MERCHANT
+  ADMIN
+}
+
+enum Status {
+  ACTIVE
+  FROZEN
+  FLAGGED
+  PENDING_VERIFICATION
+}
+
+model User {
+  id                  String        @id @default(cuid()) // "u_" prefix will be enforced in service layer
+  phone               String        @unique
+  verifiedBalanceKobo BigInt        @default(0)
+  publicKey           String?
+  sequenceNumber      Int           @default(1)
+  role                Role          @default(STUDENT)
+  status              Status        @default(PENDING_VERIFICATION)
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  ledgerEntries       LedgerEntry[]
+
+  @@index([phone])
+}
+
+enum LedgerEntryType {
+  DEBIT
+  CREDIT
+}
+
+model LedgerEntry {
+  id               String          @id @default(cuid())
+  transactionId    String
+  userId           String
+  type             LedgerEntryType
+  amountKobo       BigInt
+  balanceAfterKobo BigInt
+  description      String
+  envelopeJson     Json?
+  createdAt        DateTime        @default(now())
+
+  user             User            @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
+  @@index([transactionId])
+}
+
+model PaymentTopup {
+  id              String   @id @default(cuid())
+  reference       String   @unique
+  userId          String
+  amountKobo      BigInt
+  status          String   @default("PENDING")
+  korapayResponse Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}

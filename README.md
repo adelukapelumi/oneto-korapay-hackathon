@@ -1,0 +1,1 @@
+oneto is an offline-capable payment system piloting at Covenant University, Nigeria. The core feature: two phones can complete a payment without internet, using cryptographically signed QR codes, with later reconciliation to a central server.

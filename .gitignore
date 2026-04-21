@@ -26,3 +26,7 @@ mobile/android/.gradle/
 
 # Build outputs
 *.tsbuildinfo
+
+# Compiled TS output
+shared/dist/
+**/*.tsbuildinfo
