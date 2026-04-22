@@ -1,9 +1,9 @@
-import { IsString } from 'class-validator';
+import { IsEmail, IsString } from 'class-validator';
 
 // Thin wrapper for NestJS DI / Swagger. Actual validation is done by Zod.
 export class VerifyOtpDto {
-  @IsString()
-  phone!: string;
+  @IsEmail()
+  email!: string;
 
   @IsString()
   code!: string;

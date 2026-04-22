@@ -23,14 +23,14 @@ export class AuthController {
    * POST /auth/otp/request
    *
    * Rate limiting and validation happen inside AuthService.requestOtp,
-   * keyed by the normalized phone number after zod parsing.
+   * keyed by the normalized email address after zod parsing.
    */
   @Post("otp/request")
   @HttpCode(HttpStatus.OK)
   @UsePipes(new ZodValidationPipe(RequestOtpSchema))
   async requestOtp(@Body() body: RequestOtpDtoType) {
-    await this.authService.requestOtp(body.phone);
-    return { success: true, message: "OTP sent if the phone number is valid" };
+    await this.authService.requestOtp(body.email);
+    return { success: true, message: "OTP sent if the email address is valid" };
   }
 
   /**
@@ -43,7 +43,7 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @UsePipes(new ZodValidationPipe(VerifyOtpSchema))
   async verifyOtp(@Body() body: VerifyOtpDtoType) {
-    const result = await this.authService.verifyOtp(body.phone, body.code);
+    const result = await this.authService.verifyOtp(body.email, body.code);
     return { success: true, accessToken: result.accessToken };
   }
 }

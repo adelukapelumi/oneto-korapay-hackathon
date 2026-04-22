@@ -5,7 +5,7 @@ import { AuthController } from "./auth.controller";
 import { AuthService } from "./auth.service";
 import { OtpStoreService } from "./otp-store.service";
 import { JwtWrapperService } from "./jwt.service";
-import { SmsModule } from "../sms/sms.module";
+import { OtpChannelModule } from "../otp-channel/otp-channel.module";
 
 @Module({
   imports: [
@@ -16,7 +16,7 @@ import { SmsModule } from "../sms/sms.module";
         signOptions: { expiresIn: "15m" },
       }),
     }),
-    SmsModule,
+    OtpChannelModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, OtpStoreService, JwtWrapperService],

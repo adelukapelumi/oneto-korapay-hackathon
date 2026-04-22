@@ -4,15 +4,17 @@ import {
 } from "./otp-store.service";
 import { E164 } from "../common/phone";
 
-// Helper: create a branded phone without going through libphonenumber
-// parsing. In real code we always go through normalizePhone, but for
-// unit tests of OtpStoreService in isolation, we fake the brand.
-const phone = (s: string): E164 => s as unknown as E164;
+// Helper: create a branded E164 value for use as an OTP target key.
+// In practice, this now represents an email address, but OtpStoreService
+// is channel-agnostic — it just uses the branded string as a map key.
+// We keep the E164 branded type unchanged here; it will be renamed to a
+// generic target type in a future session.
+const target = (s: string): E164 => s as unknown as E164;
 
 describe("OtpStoreService", () => {
   let store: OtpStoreService;
-  const ALICE = phone("+2348011111111");
-  const BOB = phone("+2348022222222");
+  const ALICE = target("alice@stu.cu.edu.ng");
+  const BOB = target("bob@stu.cu.edu.ng");
 
   beforeEach(() => {
     store = new OtpStoreService();
@@ -151,9 +153,9 @@ describe("OtpStoreService", () => {
     });
   });
 
-  // ------- isolation between phones -------
+  // ------- isolation between targets -------
 
-  describe("per-phone isolation", () => {
+  describe("per-target isolation", () => {
     it("keeps Alice's and Bob's OTPs separate", async () => {
       await store.saveOtp(ALICE, "111111");
       await store.saveOtp(BOB, "222222");
@@ -178,7 +180,7 @@ describe("OtpStoreService", () => {
     });
   });
 
-  // ------- rate limiting (the bit Gemini got wrong before) -------
+  // ------- rate limiting -------
 
   describe("request rate limiting", () => {
     it("allows up to maxRequestsPerWindow in the window", () => {
@@ -224,7 +226,7 @@ describe("OtpStoreService", () => {
       expect(() => store.checkAndRecordRequest(ALICE, afterWindow)).not.toThrow();
     });
 
-    it("tracks rate limits per phone separately (no IP-rotation bypass equivalent)", () => {
+    it("tracks rate limits per target separately (no cross-target interference)", () => {
       const t0 = 1_000_000;
       for (let i = 0; i < 5; i++) {
         store.checkAndRecordRequest(ALICE, t0 + i);

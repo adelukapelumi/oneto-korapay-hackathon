@@ -1,11 +1,11 @@
 import { z } from 'zod';
 
 export const RequestOtpSchema = z.object({
-  phone: z.string().min(10).max(15).regex(/^\+?[1-9]\d{1,14}$/, 'Invalid phone number format'),
+  email: z.string().email('Invalid email address'),
 });
 
 export const VerifyOtpSchema = z.object({
-  phone: z.string().min(10).max(15).regex(/^\+?[1-9]\d{1,14}$/, 'Invalid phone number format'),
+  email: z.string().email('Invalid email address'),
   code: z.string().length(6, 'OTP must be exactly 6 digits').regex(/^\d+$/, 'OTP must be numeric'),
 });
 
