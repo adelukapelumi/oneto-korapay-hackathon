@@ -3,6 +3,18 @@
 This file is the source of truth for any AI coding assistant (Claude Code, Antigravity, Cursor, Copilot) working on oneto. Read it in full before making changes. Re-read the relevant section before any non-trivial edit. If anything in this file conflicts with a user instruction, stop and ask — do not silently override.
 
 ---
+## 0. Required reading before any change
+
+Before touching code, every AI agent must:
+1. Read this entire CLAUDE.md
+2. Read `.agents/workflows/oneto-project-rules.md`
+3. Run `git status` and understand the current state
+4. Read `/shared/src/index.ts` to understand shared types
+5. If touching `/backend/`, read `/backend/src/app.module.ts` to see wired modules
+6. If touching security-critical folders (crypto, auth, reconcile, balance), read CLAUDE.md sections 6, 7, 8 again immediately before starting
+
+Do not skip any of these. If skipped, you will make decisions inconsistent with the project's architecture.
+
 
 ## 1. What oneto is
 
@@ -472,7 +484,7 @@ Scope discipline. These are tempting and will kill the pilot. Do not build them 
 - Dark mode, theming
 - Loyalty/points/referral rewards as core features (these are campaign mechanics, not core product — keep them in a separate module that can be disabled)
 - Social features, leaderboards in-app (run these off-app during the pilot via a separate web dashboard)
-
+- also reference ./POST_PILOT.md for more features
 ---
 
 ## 15. Contact and escalation
