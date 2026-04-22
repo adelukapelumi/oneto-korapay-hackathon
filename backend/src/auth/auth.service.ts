@@ -11,6 +11,7 @@ import { OtpStoreService, OtpRateLimitExceededError } from "./otp-store.service"
 import { JwtWrapperService } from "./jwt.service";
 import { IOtpProvider } from "../otp-channel/otp-provider.interface";
 import { E164 } from "../common/phone";
+import { normalizeEmail, InvalidEmailError } from "../common/email";
 
 @Injectable()
 export class AuthService {
@@ -20,14 +21,6 @@ export class AuthService {
     private readonly jwtService: JwtWrapperService,
     @Inject("OTP_PROVIDER") private readonly otpProvider: IOtpProvider,
   ) { }
-
-  /**
-   * Normalize an email address: lowercase + trim.
-   * This is the email equivalent of phone normalization.
-   */
-  private normalizeEmail(rawEmail: string): string {
-    return rawEmail.toLowerCase().trim();
-  }
 
   /**
    * Request an OTP be sent to an email address.
@@ -49,10 +42,14 @@ export class AuthService {
    * will be renamed to a generic OTP target type in a future session.
    */
   async requestOtp(rawEmail: string): Promise<void> {
-    const email = this.normalizeEmail(rawEmail);
-
-    if (!email) {
-      throw new BadRequestException("Invalid email address");
+    let email: string;
+    try {
+      email = normalizeEmail(rawEmail);
+    } catch (err) {
+      if (err instanceof InvalidEmailError) {
+        throw new BadRequestException("Invalid email address");
+      }
+      throw err;
     }
 
     try {
@@ -92,10 +89,14 @@ export class AuthService {
    * This is deliberate — OTP verification IS the account creation for oneto.
    */
   async verifyOtp(rawEmail: string, code: string): Promise<{ accessToken: string }> {
-    const email = this.normalizeEmail(rawEmail);
-
-    if (!email) {
-      throw new BadRequestException("Invalid email address");
+    let email: string;
+    try {
+      email = normalizeEmail(rawEmail);
+    } catch (err) {
+      if (err instanceof InvalidEmailError) {
+        throw new BadRequestException("Invalid email address");
+      }
+      throw err;
     }
 
     const isValid = await this.otpStore.verifyOtp(email as unknown as E164, code);
