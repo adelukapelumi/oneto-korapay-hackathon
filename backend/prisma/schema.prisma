@@ -56,7 +56,7 @@ model LedgerEntry {
   user             User            @relation(fields: [userId], references: [id])
 
   @@index([userId, createdAt])
-  @@index([transactionId])
+  @@unique([transactionId, userId])
 }
 
 model PaymentTopup {
