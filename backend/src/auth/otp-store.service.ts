@@ -1,5 +1,4 @@
-import { Injectable } from "@nestjs/common";
-import * as argon2 from "argon2";
+import { Injectable, OnModuleInit, OnModuleDestroy } from "@nestjs/common"; import * as argon2 from "argon2";
 import { E164 } from "../common/phone";
 
 /**
@@ -29,6 +28,8 @@ export interface OtpStoreConfig {
   rateLimitWindowMs: number;
   /** Max OTP requests per phone per window. */
   maxRequestsPerWindow: number;
+  /** Cleanup sweep interval in milliseconds. Default 60 seconds. */
+  cleanupIntervalMs: number;
 }
 
 const DEFAULT_CONFIG: OtpStoreConfig = {
@@ -36,6 +37,7 @@ const DEFAULT_CONFIG: OtpStoreConfig = {
   maxFailedAttempts: 3,
   rateLimitWindowMs: 60 * 1000,
   maxRequestsPerWindow: 5,
+  cleanupIntervalMs: 60 * 1000,
 };
 
 export class OtpRateLimitExceededError extends Error {
@@ -46,27 +48,77 @@ export class OtpRateLimitExceededError extends Error {
 }
 
 @Injectable()
-export class OtpStoreService {
+export class OtpStoreService implements OnModuleInit, OnModuleDestroy {
   private readonly otps = new Map<string, OtpRecord>();
   private readonly rateLimits = new Map<string, RateLimitRecord>();
   private readonly config: OtpStoreConfig;
+  private cleanupTimer: NodeJS.Timeout | null = null;
 
   constructor(config: Partial<OtpStoreConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+  }
+
+  onModuleInit(): void {
+    // Start the periodic cleanup sweep. In tests this can be disabled by
+    // instantiating OtpStoreService directly without calling onModuleInit.
+    this.cleanupTimer = setInterval(
+      () => this.sweepExpired(),
+      this.config.cleanupIntervalMs,
+    );
+    // Prevents the interval from keeping the Node process alive (important
+    // for graceful shutdown).
+    this.cleanupTimer.unref();
+  }
+
+  onModuleDestroy(): void {
+    if (this.cleanupTimer !== null) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
+  }
+
+  /**
+   * Remove expired OTP records and stale rate-limit windows.
+   *
+   * Runs every cleanupIntervalMs via setInterval started in onModuleInit.
+   * Can also be called manually in tests to verify cleanup behavior.
+   */
+  sweepExpired(nowMs: number = Date.now()): { otpsRemoved: number; rateLimitsRemoved: number } {
+    let otpsRemoved = 0;
+    let rateLimitsRemoved = 0;
+
+    // Sweep OTPs whose TTL has passed.
+    for (const [key, record] of this.otps) {
+      if (nowMs > record.expiresAt) {
+        this.otps.delete(key);
+        otpsRemoved++;
+      }
+    }
+
+    // Sweep rate-limit records whose window is fully in the past.
+    const windowStart = nowMs - this.config.rateLimitWindowMs;
+    for (const [key, record] of this.rateLimits) {
+      const activeRequests = record.requestsInWindow.filter((ts) => ts > windowStart);
+      if (activeRequests.length === 0) {
+        this.rateLimits.delete(key);
+        rateLimitsRemoved++;
+      } else if (activeRequests.length !== record.requestsInWindow.length) {
+        // Trim stale timestamps even if the record isn't fully empty.
+        record.requestsInWindow = activeRequests;
+      }
+    }
+
+    return { otpsRemoved, rateLimitsRemoved };
   }
 
   /**
    * Check whether a new OTP may be requested for this phone right now.
    * Throws OtpRateLimitExceededError if the caller is over the per-minute
    * limit. Otherwise records the request timestamp.
-   *
-   * Call this BEFORE generating an OTP, not after, so that the rate-limit
-   * check is not dependent on the OTP actually being sent successfully.
    */
   checkAndRecordRequest(phone: E164, nowMs: number = Date.now()): void {
     const record = this.rateLimits.get(phone) ?? { requestsInWindow: [] };
 
-    // Drop timestamps outside the window.
     const windowStart = nowMs - this.config.rateLimitWindowMs;
     record.requestsInWindow = record.requestsInWindow.filter((ts) => ts > windowStart);
 
@@ -80,12 +132,6 @@ export class OtpStoreService {
     this.rateLimits.set(phone, record);
   }
 
-  /**
-   * Save a new OTP for a phone. Replaces any existing OTP for that phone.
-   *
-   * The OTP is hashed with Argon2 before storage. The plaintext is never
-   * retained — if we need to resend, we must generate a new one.
-   */
   async saveOtp(phone: E164, otp: string, nowMs: number = Date.now()): Promise<void> {
     const hash = await argon2.hash(otp);
     this.otps.set(phone, {
@@ -95,16 +141,6 @@ export class OtpStoreService {
     });
   }
 
-  /**
-   * Verify an OTP for a phone.
-   *
-   * Returns true on success AND burns the OTP record.
-   * Returns false if: no record, expired, wrong code.
-   * After maxFailedAttempts wrong guesses, the record is also burned.
-   *
-   * Timing: argon2.verify runs in constant time, so an attacker cannot
-   * distinguish "wrong OTP" from "right OTP but expired" via timing.
-   */
   async verifyOtp(phone: E164, otp: string, nowMs: number = Date.now()): Promise<boolean> {
     const record = this.otps.get(phone);
     if (!record) return false;
@@ -128,20 +164,16 @@ export class OtpStoreService {
     return false;
   }
 
-  /**
-   * Test-only / admin-only: wipe all state.
-   * Used in unit tests to isolate runs. Never call from production code.
-   */
   _clearForTests(): void {
     this.otps.clear();
     this.rateLimits.clear();
   }
 
-  /**
-   * Test-only introspection: how many OTP records exist?
-   * Used to verify burn behavior. Never call from production code.
-   */
   _sizeForTests(): number {
     return this.otps.size;
+  }
+
+  _rateLimitsSizeForTests(): number {
+    return this.rateLimits.size;
   }
 }

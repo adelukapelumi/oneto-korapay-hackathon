@@ -272,4 +272,42 @@ describe("OtpStoreService", () => {
       expect(record!.hash.startsWith("$argon2")).toBe(true);
     });
   });
+
+  describe("periodic cleanup", () => {
+    const phone = (s: string) => s as unknown as E164;
+
+    it("removes expired OTP records on sweepExpired", async () => {
+      const t0 = 1_000_000;
+      await store.saveOtp(phone("alice@stu.cu.edu.ng"), "123456", t0);
+      expect(store._sizeForTests()).toBe(1);
+
+      // Move time forward past TTL
+      const result = store.sweepExpired(t0 + 6 * 60 * 1000);
+
+      expect(result.otpsRemoved).toBe(1);
+      expect(store._sizeForTests()).toBe(0);
+    });
+
+    it("keeps non-expired OTP records during sweep", async () => {
+      const t0 = 1_000_000;
+      await store.saveOtp(phone("bob@stu.cu.edu.ng"), "222222", t0);
+
+      const result = store.sweepExpired(t0 + 1 * 60 * 1000); // 1 min later
+
+      expect(result.otpsRemoved).toBe(0);
+      expect(store._sizeForTests()).toBe(1);
+    });
+
+    it("removes stale rate-limit records with no active requests", () => {
+      const t0 = 1_000_000;
+      store.checkAndRecordRequest(phone("cara@stu.cu.edu.ng"), t0);
+      expect(store._rateLimitsSizeForTests()).toBe(1);
+
+      // Sweep well after the rate limit window
+      const result = store.sweepExpired(t0 + 120_000);
+
+      expect(result.rateLimitsRemoved).toBe(1);
+      expect(store._rateLimitsSizeForTests()).toBe(0);
+    });
+  });
 });

@@ -15,6 +15,53 @@ Before touching code, every AI agent must:
 
 Do not skip any of these. If skipped, you will make decisions inconsistent with the project's architecture.
 
+## 0.5 Current implementation state
+
+Snapshot of what exists vs what's planned. Update this section when major components are added, removed, or change status. When in doubt about whether something is "real," this section is the source of truth.
+
+### Built and tested
+
+- `/shared` package: Ed25519 signing/verification, deterministic canonicalization, TransactionEnvelope schema with red-team tests. 16 tests passing.
+- `/backend/src/common/phone.ts`: libphonenumber-js-based normalization for Nigerian mobile numbers. Used as the E.164 branded type (currently also repurposed for email OTP target keys until a rename).
+- `/backend/src/common/email.ts`: zod-based email normalization (lowercase + trim + format validation).
+- `/backend/src/auth/otp-store.service.ts`: in-memory OTP store with Argon2 hashing, burn-after-3-fails, TTL expiry, phone/email-keyed rate limiting, and periodic cleanup via setInterval lifecycle hook. 25 tests passing.
+- `/backend/src/auth/auth.service.ts`: email OTP flow (request + verify), user upsert on first successful verify, status gating for FROZEN and FLAGGED accounts, JWT issuance. 27 tests passing.
+- `/backend/src/otp-channel/`: channel-agnostic OTP provider interface. Fake provider (console log, dev/test) and Resend provider (production, verified domain `getoneto.com`).
+- `/backend/src/app.module.ts`: global IP-keyed throttler (100 req/min default) as defense-in-depth layer above service-level target-keyed rate limiting.
+- Prisma schema: User, LedgerEntry, PaymentTopup models. Compound unique constraint `@@unique([transactionId, userId])` on LedgerEntry prevents double-spend at the database layer.
+- Email infrastructure: `getoneto.com` domain verified with SPF + DKIM. Real emails delivering to CU inboxes instantly.
+
+### Stubbed (route exists, throws NotImplementedException)
+
+- `POST /reconcile` (envelope submission endpoint)
+- `POST /topup/korapay/initiate`
+- `POST /topup/korapay/webhook`
+- Public key registration endpoint (not even stubbed — does not exist yet)
+
+### Not yet built
+
+- Korapay webhook handler (HMAC verification, idempotent credit, atomic DB transaction)
+- /reconcile implementation (envelope validation, serializable transactions, sequence monotonicity, balance update)
+- Mobile app (React Native / Expo) — keypair generation, QR scan, local SQLite ledger, offline-first UI
+- Merchant onboarding flow (business name, bank account, cashout)
+- Admin dashboard (user management, cashout approvals, fraud review)
+- Real database (Postgres) provisioned and connected — currently schema-only
+- Deployment (Railway/Render setup, CI/CD, monitoring)
+
+### Known limitations of current state
+
+- OTP store is in-memory. Crashes lose all active OTP records. Acceptable for single-instance pilot, not for production.
+- JWT secret lives in `backend/.env` as base64 string. No rotation strategy yet.
+- Clock skew tolerance in `/shared` is 300s — will be tightened to 120s during /reconcile session.
+- Transaction ID is 64-bit truncated SHA-256. Safe for pilot scale; may extend to 128-bit for aesthetics.
+
+### Deferred to post-pilot
+
+See `/POST_PILOT.md` at repo root for the full list. High-level categories: Redis-backed OTP and throttler storage, licensed NIN/BVN verification, PSSP/MMO license pursuit, professional penetration test, Google Workspace for team email, end-to-end integration tests with a real test database.
+
+### How to use this section
+
+When an AI agent says "I'll add X" or an audit flags "Y is missing," check this section first. If something is listed as "built and tested," it's real — go audit the code. If it's "stubbed" or "not yet built," that's an intentional TODO, not a bug. If you make something new real, move it from the "not yet built" list to "built and tested" and update the relevant test counts.
 
 ## 1. What oneto is
 
@@ -485,6 +532,10 @@ Scope discipline. These are tempting and will kill the pilot. Do not build them 
 - Loyalty/points/referral rewards as core features (these are campaign mechanics, not core product — keep them in a separate module that can be disabled)
 - Social features, leaderboards in-app (run these off-app during the pilot via a separate web dashboard)
 - also reference ./POST_PILOT.md for more features
+- KYC beyond email verification
+- NIN or BVN collection or verification
+- Bulk personal data storage beyond email, optional phone, and pseudonymous user ID
+- Device fingerprinting
 ---
 
 ## 15. Contact and escalation
