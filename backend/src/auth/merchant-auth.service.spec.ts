@@ -58,7 +58,8 @@ describe("MerchantAuthService", () => {
 
   const validMerchantData: MerchantSignupData = {
     businessName: "Test Business",
-    cashoutBankName: "Test Bank",
+    cashoutBankName: "Wema Bank",
+    cashoutBankCode: "035",
     cashoutAccountNumber: "1234567890",
     cashoutAccountName: "Test Account Name",
   };
@@ -153,6 +154,7 @@ describe("MerchantAuthService", () => {
           businessName: validMerchantData.businessName,
           businessAddress: undefined,
           cashoutBankName: validMerchantData.cashoutBankName,
+          cashoutBankCode: validMerchantData.cashoutBankCode,
           cashoutAccountNumber: validMerchantData.cashoutAccountNumber,
           cashoutAccountName: validMerchantData.cashoutAccountName,
         },
@@ -161,6 +163,7 @@ describe("MerchantAuthService", () => {
           businessName: validMerchantData.businessName,
           businessAddress: undefined,
           cashoutBankName: validMerchantData.cashoutBankName,
+          cashoutBankCode: validMerchantData.cashoutBankCode,
           cashoutAccountNumber: validMerchantData.cashoutAccountNumber,
           cashoutAccountName: validMerchantData.cashoutAccountName,
         },

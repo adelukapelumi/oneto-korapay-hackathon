@@ -9,6 +9,6 @@ import { AuthModule } from '../auth/auth.module';
   imports: [PrismaModule, AuthModule],
   controllers: [TopupController],
   providers: [TopupService, KorapayService],
-  exports: [TopupService],
+  exports: [TopupService, KorapayService],
 })
 export class TopupModule {}

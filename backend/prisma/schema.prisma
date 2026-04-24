@@ -20,6 +20,15 @@ enum Status {
   PENDING_VERIFICATION
 }
 
+enum CashoutStatus {
+  PENDING
+  APPROVED
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
 model User {
   id                  String        @id @default(cuid()) // "u_" prefix will be enforced in service layer
   email               String        @unique
@@ -35,6 +44,8 @@ model User {
   ledgerEntries       LedgerEntry[]
   processedSequences ProcessedSequence[]
   merchantProfile    MerchantProfile?
+  cashouts           Cashout[] @relation("MerchantCashouts")
+  approvedCashouts   Cashout[] @relation("AdminApprovals")
 
   @@index([email])
 }
@@ -91,6 +102,7 @@ model MerchantProfile {
   businessName         String
   businessAddress      String?
   cashoutBankName      String
+  cashoutBankCode      String
   cashoutAccountNumber String
   cashoutAccountName   String
   verifiedAt           DateTime? // null = unverified, set once admin approves
@@ -99,4 +111,28 @@ model MerchantProfile {
   user                 User      @relation(fields: [userId], references: [id])
 
   @@index([businessName])
+}
+
+model Cashout {
+  id                   String        @id @default(cuid())
+  merchantUserId       String
+  amountKobo           BigInt
+  status               CashoutStatus @default(PENDING)
+  cashoutBankName      String
+  cashoutBankCode      String
+  cashoutAccountNumber String
+  cashoutAccountName   String
+  korapayReference     String?       @unique
+  korapayResponse      Json?
+  failureReason        String?
+  requestedAt          DateTime      @default(now())
+  approvedAt           DateTime?
+  approvedByUserId     String?
+  completedAt          DateTime?
+
+  merchant             User          @relation("MerchantCashouts", fields: [merchantUserId], references: [id])
+  approvedBy           User?         @relation("AdminApprovals", fields: [approvedByUserId], references: [id])
+
+  @@index([merchantUserId, requestedAt])
+  @@index([status])
 }

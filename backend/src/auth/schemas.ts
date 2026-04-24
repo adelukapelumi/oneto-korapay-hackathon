@@ -18,6 +18,7 @@ export const RequestMerchantOtpSchema = z.object({
   businessAddress: z.string().max(500).optional(),
   phone: z.string().optional(),
   cashoutBankName: z.string().min(2).max(100),
+  cashoutBankCode: z.string().regex(/^[0-9]{3}$/, 'Bank code must be 3 digits'),
   cashoutAccountNumber: z.string().regex(/^\d{10}$/, 'Account number must be 10 digits'),
   cashoutAccountName: z.string().min(2).max(200),
 });

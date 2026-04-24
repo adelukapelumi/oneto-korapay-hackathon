@@ -1,4 +1,5 @@
 import { MeModule } from "./me/me.module";
+import { CashoutModule } from "./cashout/cashout.module";
 import { Module } from "@nestjs/common";
 import { APP_GUARD } from "@nestjs/core";
 import { ThrottlerModule, ThrottlerGuard } from "@nestjs/throttler";
@@ -29,6 +30,8 @@ import { TopupModule } from "./topup/topup.module";
     AuthModule,
     ReconcileModule,
     TopupModule,
+    MeModule,
+    CashoutModule,
   ],
   controllers: [],
   providers: [

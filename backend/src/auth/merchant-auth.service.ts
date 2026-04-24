@@ -12,6 +12,7 @@ export interface MerchantSignupData {
   businessAddress?: string;
   phone?: string;
   cashoutBankName: string;
+  cashoutBankCode: string;
   cashoutAccountNumber: string;
   cashoutAccountName: string;
 }
@@ -141,6 +142,7 @@ export class MerchantAuthService {
           businessName: merchantData.businessName,
           businessAddress: merchantData.businessAddress,
           cashoutBankName: merchantData.cashoutBankName,
+          cashoutBankCode: merchantData.cashoutBankCode,
           cashoutAccountNumber: merchantData.cashoutAccountNumber,
           cashoutAccountName: merchantData.cashoutAccountName,
         },
@@ -149,6 +151,7 @@ export class MerchantAuthService {
           businessName: merchantData.businessName,
           businessAddress: merchantData.businessAddress,
           cashoutBankName: merchantData.cashoutBankName,
+          cashoutBankCode: merchantData.cashoutBankCode,
           cashoutAccountNumber: merchantData.cashoutAccountNumber,
           cashoutAccountName: merchantData.cashoutAccountName,
         },

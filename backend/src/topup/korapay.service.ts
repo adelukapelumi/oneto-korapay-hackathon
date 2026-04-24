@@ -18,6 +18,24 @@ export interface KorapayCheckoutResponse {
   };
 }
 
+export interface InitiatePayoutParams {
+  reference: string;
+  amountKobo: number;
+  bankCode: string;
+  accountNumber: string;
+  accountName: string;
+  narration: string;
+}
+
+export interface KorapayPayoutResponse {
+  status: boolean;
+  message: string;
+  data: {
+    reference: string;
+    status: string;
+  };
+}
+
 @Injectable()
 export class KorapayService {
   private readonly logger = new Logger(KorapayService.name);
@@ -101,6 +119,58 @@ export class KorapayService {
         throw error;
       }
       this.logger.error(`Failed to reach Korapay API: ${error}`);
+      throw new InternalServerErrorException('Failed to communicate with payment gateway');
+    }
+  }
+
+  async initiatePayout(params: InitiatePayoutParams): Promise<{ reference: string; status: string }> {
+    const amountNgn = Number((params.amountKobo / 100).toFixed(2));
+
+    const payload = {
+      reference: params.reference,
+      destination: {
+        type: 'bank_account',
+        amount: amountNgn,
+        currency: 'NGN',
+        narration: params.narration,
+        bank_account: {
+          bank: params.bankCode,
+          account: params.accountNumber,
+        },
+      },
+    };
+
+    try {
+      const response = await fetch(`${this.baseUrl}/transactions/disburse`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.secretKey}`,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        this.logger.error(`Korapay payout failed: ${response.status} ${errorText}`);
+        throw new InternalServerErrorException('Payout failed');
+      }
+
+      const json = (await response.json()) as KorapayPayoutResponse;
+      if (!json.status || !json.data) {
+        this.logger.error(`Korapay payout returned invalid response: ${JSON.stringify(json)}`);
+        throw new InternalServerErrorException('Invalid payout response');
+      }
+
+      return {
+        reference: json.data.reference,
+        status: json.data.status,
+      };
+    } catch (error) {
+      if (error instanceof InternalServerErrorException) {
+        throw error;
+      }
+      this.logger.error(`Failed to reach Korapay Payout API: ${error}`);
       throw new InternalServerErrorException('Failed to communicate with payment gateway');
     }
   }
