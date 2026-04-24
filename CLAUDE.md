@@ -7,7 +7,7 @@ This file is the source of truth for any AI coding assistant (Claude Code, Antig
 
 Before touching code, every AI agent must:
 1. Read this entire CLAUDE.md
-2. Read `.agents/workflows/oneto-project-rules.md`
+2. Read `.agents/rules/oneto-project-rules.md`
 3. Run `git status` and understand the current state
 4. Read `/shared/src/index.ts` to understand shared types
 5. If touching `/backend/`, read `/backend/src/app.module.ts` to see wired modules
@@ -26,6 +26,7 @@ Snapshot of what exists vs what's planned. Update this section when major compon
 - `/backend/src/common/email.ts`: zod-based email normalization (lowercase + trim + format validation).
 - `/backend/src/auth/otp-store.service.ts`: in-memory OTP store with Argon2 hashing, burn-after-3-fails, TTL expiry, phone/email-keyed rate limiting, and periodic cleanup via setInterval lifecycle hook. 25 tests passing.
 - `/backend/src/auth/auth.service.ts`: email OTP flow (request + verify), user upsert on first successful verify, status gating for FROZEN and FLAGGED accounts, JWT issuance. 27 tests passing.
+- `/backend/src/topup/`: Korapay checkout initiation + webhook handler with HMAC-SHA256 verification, Serializable Prisma transactions, idempotent credit via unique constraint on PaymentTopup.reference. 15 tests passing.
 - `/backend/src/otp-channel/`: channel-agnostic OTP provider interface. Fake provider (console log, dev/test) and Resend provider (production, verified domain `getoneto.com`).
 - `/backend/src/app.module.ts`: global IP-keyed throttler (100 req/min default) as defense-in-depth layer above service-level target-keyed rate limiting.
 - Prisma schema: User, LedgerEntry, PaymentTopup models. Compound unique constraint `@@unique([transactionId, userId])` on LedgerEntry prevents double-spend at the database layer.
@@ -34,14 +35,11 @@ Snapshot of what exists vs what's planned. Update this section when major compon
 ### Stubbed (route exists, throws NotImplementedException)
 
 - `POST /reconcile` (envelope submission endpoint)
-- `POST /topup/korapay/initiate`
-- `POST /topup/korapay/webhook`
 - Public key registration endpoint (not even stubbed — does not exist yet)
 
 ### Not yet built
 
-- Korapay webhook handler (HMAC verification, idempotent credit, atomic DB transaction)
-- /reconcile implementation (envelope validation, serializable transactions, sequence monotonicity, balance update)
+- /reconcile implementation (envelope validation, serializable transactions, per-user sequence uniqueness, balance update, public key registration endpoint)
 - Mobile app (React Native / Expo) — keypair generation, QR scan, local SQLite ledger, offline-first UI
 - Merchant onboarding flow (business name, bank account, cashout)
 - Admin dashboard (user management, cashout approvals, fraud review)
@@ -52,7 +50,7 @@ Snapshot of what exists vs what's planned. Update this section when major compon
 
 - OTP store is in-memory. Crashes lose all active OTP records. Acceptable for single-instance pilot, not for production.
 - JWT secret lives in `backend/.env` as base64 string. No rotation strategy yet.
-- Clock skew tolerance in `/shared` is 300s — will be tightened to 120s during /reconcile session.
+- Clock skew tolerance in `/shared` is 300s — will be tightened to 120s during /reconcile session. Offline envelopes ship with 60s expiry.
 - Transaction ID is 64-bit truncated SHA-256. Safe for pilot scale; may extend to 128-bit for aesthetics.
 
 ### Deferred to post-pilot
@@ -106,7 +104,7 @@ The primary developer is a junior engineer, final-year university student, solo 
 
 1. **Top-up (online):** Student pays naira via Korapay. Server verifies webhook signature. Server increments the student's `verifiedBalanceKobo`. Two ledger rows written.
 2. **Offline payment:** Merchant generates a payment request QR (amount + merchant ID + nonce). Student scans, confirms, the student's app constructs and signs a transaction envelope, displays the signed envelope as a second QR. Merchant scans the signed envelope and verifies the signature locally. Both phones store the envelope in their local SQLite ledgers as `pending_reconciliation`.
-3. **Reconciliation:** When either phone reconnects, it pushes pending envelopes to `/reconcile`. Server verifies signature, checks sequence monotonicity, checks claimed balance consistency with server state, writes double-entry ledger rows, updates both users' `verifiedBalanceKobo`.
+3. **Reconciliation:** The merchant (recipient) submits pending envelopes to `/reconcile` when online. Server verifies signature, confirms the authenticated user matches `recipientUserId` in the envelope, checks that `senderSequenceNumber` has not been used before (per-user uniqueness, NOT strict monotonic ordering — envelopes may arrive out of order from different merchants), checks current server balance is sufficient to cover the debit, writes double-entry ledger rows in a Serializable transaction, updates both users' `verifiedBalanceKobo`.
 4. **Merchant cashout:** Merchant requests cashout via app. Admin reviews (manual during pilot). Korapay Transfer API sends naira to the merchant's bank account. Operating account debited in the ledger.
 
 ---
@@ -146,7 +144,7 @@ Lock these in `package.json`. Do not upgrade casually. Security-critical librari
 ### 4.3 Infrastructure
 
 - **Hosting:** Railway or Render for pilot. Not raw AWS — too easy to misconfigure.
-- **Auth:** Phone + OTP via Termii (cheaper Nigerian SMS) or Twilio Verify. No passwords for end users.
+- **Auth:** Email + OTP via Resend (CU bans SIMs on campus; SMS not viable). Phone is optional and highly recommended for merchants. No passwords for end users.
 - **Payments:** Korapay for top-ups and cashouts. Verify all webhooks via HMAC signature.
 - **Monitoring:** Sentry for errors, Axiom or Logtail for logs, UptimeRobot for heartbeat checks.
 - **Secrets:** Doppler or Infisical for environment variable management. Never commit `.env` files. Never paste secrets into Claude Code or Antigravity prompts.
@@ -246,9 +244,10 @@ export interface TransactionEnvelope {
 
 **Invariants that must always hold:**
 - `transactionId` is SHA-256 of canonical JSON of all other fields (without `signature`), truncated to 16 hex chars.
-- `senderBalanceAfterKobo === senderBalanceBeforeKobo - amountKobo`. Verify at sign time and verify time.
+- `senderBalanceAfterKobo === senderBalanceBeforeKobo - amountKobo`. Verify at sign time (mobile). Server does NOT require these to match server-side balance at reconcile time — the server computes its own authoritative balance after each debit and credit. The envelope's balance fields are the sender's claim at signing time; out-of-order reconciliation means they may not match server state.
 - `amountKobo > 0`.
 - `amountKobo <= MAX_OFFLINE_TRANSACTION_KOBO` (currently `200_000` = ₦2,000). Constant lives in `/shared/types/limits.ts`.
+- `senderSequenceNumber` is unique per-sender across all time. The server tracks all consumed sequence numbers and rejects re-use. Envelopes may arrive out of order and still be processed.
 
 ---
 
@@ -261,8 +260,9 @@ export interface TransactionEnvelope {
 3. **Never accept an unsigned message as authoritative.** If it is not signed and verified, it is client state, not truth.
 4. **Always verify signatures against the server-registered public key** for that user. The public key embedded in the envelope must match the registered one; a mismatch is a rejection.
 5. **Canonicalize before signing.** Sort JSON keys alphabetically, no whitespace, UTF-8 encoding. Use the same canonicalization function on both client and server. Live in `/shared/canonicalize.ts`.
-6. **Timestamps must be verified.** Reject envelopes with `expiresAt` in the past or `timestamp` more than 5 minutes in the future (clock skew tolerance).
+6. **Timestamps must be verified.** Reject envelopes with `expiresAt` in the past. Reject envelopes with `timestamp` more than 120 seconds in the future (clock skew tolerance).
 7. **Constant-time comparison for signatures.** Use `nacl.sign.detached.verify` or `crypto.timingSafeEqual` — never `===`.
+8. **Public key rotation policy (pilot):** When a user re-registers a new public key, the old key is immediately replaced. Any envelopes signed with the old key that have not yet been reconciled will be rejected. Users are warned in-app to complete pending transactions before reinstalling. Post-pilot: multiple active keys per user with explicit revocation.
 
 ### 7.2 Signing flow (mobile)
 
@@ -292,13 +292,16 @@ function verifyEnvelope(
 ): VerifyResult {
   // 1. Check envelope shape via zod schema. Reject if shape invalid.
   // 2. Check envelope.senderPublicKey === registeredPublicKey.
-  // 3. Check timestamp freshness and expiry.
+  // 3. Check timestamp freshness (within 120s clock skew tolerance) and expiry.
   // 4. Check amountKobo > 0 and <= MAX_OFFLINE_TRANSACTION_KOBO.
-  // 5. Check balanceAfter === balanceBefore - amount.
+  // 5. Check envelope self-consistency: balanceAfter === balanceBefore - amount.
   // 6. Canonicalize envelope without signature field.
   // 7. Verify Ed25519 signature using constant-time comparison.
-  // 8. Return { ok: true } or { ok: false, reason: "..." }.
-  // Run all 8 checks. Log which one failed for debugging, but return
+  // 8. Check senderSequenceNumber has not already been consumed (anti-replay).
+  // 9. Check server's authoritative balance for sender >= amountKobo (anti-overdraft).
+  // 10. Check authenticated user ID === envelope.recipientUserId (identity binding).
+  // 11. Return { ok: true } or { ok: false, reason: "..." }.
+  // Run all 11 checks. Log which one failed for debugging, but return
   // a generic "invalid envelope" to the client to avoid oracle attacks.
 }
 ```
