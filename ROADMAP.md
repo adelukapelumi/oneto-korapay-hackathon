@@ -24,7 +24,7 @@ Roughly 40% of pilot MVP scope complete.
 
 Gets the server ready to actually handle transactions.
 
-### 1.1 Reconcile endpoint ⬜
+### 1.1 Reconcile endpoint 🟢
 - Public key registration endpoint (`POST /auth/keys/register`, authenticated)
 - Reconcile endpoint (`POST /reconcile`, merchant-auth, envelope validation)
 - Tighten clock skew tolerance to 120 seconds

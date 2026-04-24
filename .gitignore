@@ -29,4 +29,5 @@ mobile/android/.gradle/
 
 # Compiled TS output
 shared/dist/
-**/*.tsbuildinfo
+**/*.tsbuildinfo.claude/
+.claude/

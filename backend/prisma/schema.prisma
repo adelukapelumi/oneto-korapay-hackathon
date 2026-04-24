@@ -34,6 +34,7 @@ model User {
 
   ledgerEntries       LedgerEntry[]
   processedSequences ProcessedSequence[]
+  merchantProfile    MerchantProfile?
 
   @@index([email])
 }
@@ -84,3 +85,18 @@ model ProcessedSequence {
   @@index([userId, createdAt])
 }
 
+model MerchantProfile {
+  id                   String    @id @default(cuid())
+  userId               String    @unique
+  businessName         String
+  businessAddress      String?
+  cashoutBankName      String
+  cashoutAccountNumber String
+  cashoutAccountName   String
+  verifiedAt           DateTime? // null = unverified, set once admin approves
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  user                 User      @relation(fields: [userId], references: [id])
+
+  @@index([businessName])
+}
