@@ -7,6 +7,8 @@ import { OtpStoreService } from "./otp-store.service";
 import { JwtWrapperService } from "./jwt.service";
 import { OtpChannelModule } from "../otp-channel/otp-channel.module";
 import { JwtAuthGuard } from "./jwt-auth.guard";
+import { KeysController } from "./keys.controller";
+import { PrismaModule } from "../prisma/prisma.module";
 
 @Module({
   imports: [
@@ -18,8 +20,9 @@ import { JwtAuthGuard } from "./jwt-auth.guard";
       }),
     }),
     OtpChannelModule,
+    PrismaModule,
   ],
-  controllers: [AuthController],
+  controllers: [AuthController, KeysController],
   providers: [AuthService, OtpStoreService, JwtWrapperService, JwtAuthGuard],
   exports: [AuthService, JwtWrapperService, JwtAuthGuard],
 })

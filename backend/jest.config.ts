@@ -9,4 +9,10 @@ export default {
   coverageDirectory: '../coverage',
   testEnvironment: 'node',
   testTimeout: 15000,
+  moduleNameMapper: {
+    '^@oneto/shared$': '<rootDir>/../../shared/src/index',
+  },
+  transformIgnorePatterns: [
+    '/node_modules/(?!@noble/ed25519|@noble/hashes)/',
+  ],
 };

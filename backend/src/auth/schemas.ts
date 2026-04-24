@@ -11,3 +11,11 @@ export const VerifyOtpSchema = z.object({
 
 export type RequestOtpDtoType = z.infer<typeof RequestOtpSchema>;
 export type VerifyOtpDtoType = z.infer<typeof VerifyOtpSchema>;
+
+export const RegisterKeySchema = z.object({
+  publicKey: z.string().regex(/^ed25519:[0-9a-f]{64}$/, 'Invalid public key format'),
+  rotationSignature: z.string().regex(/^ed25519:[0-9a-f]{128}$/, 'Invalid rotation signature format').optional(),
+});
+
+export type RegisterKeyDtoType = z.infer<typeof RegisterKeySchema>;
+

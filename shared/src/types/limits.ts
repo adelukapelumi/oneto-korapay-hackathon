@@ -14,7 +14,7 @@ export const MAX_USER_BALANCE_KOBO = 5_000_000;
 
 // Envelope timing
 export const ENVELOPE_TTL_SECONDS = 60; // envelope expires 60s after signing
-export const CLOCK_SKEW_TOLERANCE_SECONDS = 300; // accept timestamps up to 5 min in future
+export const CLOCK_SKEW_TOLERANCE_SECONDS = 120; // accept timestamps up to 2 min in future
 
 // Sequence number starting value
 export const INITIAL_SEQUENCE_NUMBER = 1;

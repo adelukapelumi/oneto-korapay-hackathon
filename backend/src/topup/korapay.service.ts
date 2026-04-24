@@ -29,6 +29,12 @@ export class KorapayService {
     this.baseUrl = this.configService.get<string>('KORAPAY_BASE_URL') || 'https://api.korapay.com/merchant/api/v1';
   }
 
+  /**
+   * Korapay signs ONLY the `data` object, re-stringified with their secret key.
+   * Per docs: https://developers.korapay.com/docs/webhooks
+   * NOT the raw request body. Auditors may flag this as an anti-pattern — it follows Korapay's official contract.
+   */
+
   verifyWebhookSignature(dataObject: unknown, signatureHeader: string | undefined): boolean {
     if (!signatureHeader || !this.secretKey || !dataObject) {
       return false;
@@ -56,7 +62,7 @@ export class KorapayService {
 
   async initiateCheckout(params: InitiateCheckoutParams): Promise<{ paymentUrl: string }> {
     const amountNgn = params.amountKobo / 100;
-    
+
     const payload = {
       amount: amountNgn,
       reference: params.reference,
