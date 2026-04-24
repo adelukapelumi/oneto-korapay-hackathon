@@ -6,6 +6,7 @@ import { AuthService } from "./auth.service";
 import { OtpStoreService } from "./otp-store.service";
 import { JwtWrapperService } from "./jwt.service";
 import { OtpChannelModule } from "../otp-channel/otp-channel.module";
+import { JwtAuthGuard } from "./jwt-auth.guard";
 
 @Module({
   imports: [
@@ -19,7 +20,7 @@ import { OtpChannelModule } from "../otp-channel/otp-channel.module";
     OtpChannelModule,
   ],
   controllers: [AuthController],
-  providers: [AuthService, OtpStoreService, JwtWrapperService],
-  exports: [AuthService, JwtWrapperService],
+  providers: [AuthService, OtpStoreService, JwtWrapperService, JwtAuthGuard],
+  exports: [AuthService, JwtWrapperService, JwtAuthGuard],
 })
 export class AuthModule { }
