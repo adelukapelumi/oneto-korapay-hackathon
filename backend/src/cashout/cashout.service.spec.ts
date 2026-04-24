@@ -269,6 +269,25 @@ describe('CashoutService', () => {
       await expect((service as any).executePayout(cashoutId)).resolves.toBeUndefined();
       // Error is caught and logged in executePayout
     });
+
+    it('detects state change during executePayout (Fix 2)', async () => {
+      let findUniqueCallCount = 0;
+      mockPrisma.cashout.findUnique.mockImplementation(() => {
+        findUniqueCallCount++;
+        // First call (outside tx): APPROVED
+        // Second call (inside tx): PROCESSING (simulating concurrent execution)
+        const status = findUniqueCallCount === 1 ? CashoutStatus.APPROVED : CashoutStatus.PROCESSING;
+        return Promise.resolve({ ...mockCashout, status });
+      });
+
+      await (service as any).executePayout(cashoutId);
+
+      expect(mockPrisma.cashout.update).toHaveBeenCalledWith({
+        where: { id: cashoutId },
+        data: { status: CashoutStatus.FAILED, failureReason: 'state_changed_during_execute' },
+      });
+      expect(mockKorapay.initiatePayout).not.toHaveBeenCalled();
+    });
   });
 
   describe('handlePayoutWebhook', () => {
@@ -299,7 +318,7 @@ describe('CashoutService', () => {
     });
 
     it('20. handlePayoutWebhook: transfer.failed -> restores merchant balance', async () => {
-      const failPayload = { ...payload, event: 'transfer.failed', data: { reference: 'ref_123', reason: 'Declined' } };
+      const failPayload = { ...payload, event: 'transfer.failed', data: { reference: 'ref_123', status: 'failed', reason: 'Declined' } };
       mockKorapay.verifyWebhookSignature.mockReturnValue(true);
       mockPrisma.cashout.findUnique.mockResolvedValue({
         id: 'c_123',
@@ -349,6 +368,21 @@ describe('CashoutService', () => {
       const unknownEvent = { ...payload, event: 'unknown.event' };
       const result = await service.handlePayoutWebhook(unknownEvent, signature);
       expect(result.success).toBe(true);
+    });
+
+    it('detects event/status mismatch in webhook (Fix 3)', async () => {
+      mockKorapay.verifyWebhookSignature.mockReturnValue(true);
+      const spoofPayload = {
+        event: 'transfer.success',
+        data: {
+          reference: 'ref_123',
+          status: 'failed', // mismatch
+        },
+      };
+
+      const result = await service.handlePayoutWebhook(spoofPayload, signature);
+      expect(result.success).toBe(true);
+      expect(mockPrisma.cashout.update).not.toHaveBeenCalled();
     });
   });
 });

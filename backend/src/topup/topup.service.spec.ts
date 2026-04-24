@@ -80,7 +80,7 @@ describe('TopupService', () => {
       mockKorapay.verifyWebhookSignature.mockReturnValue(true);
       const payload = {
         event: 'charge.success',
-        data: { reference: 'top_123', amount: 500, customer: { email: 'test@cu.edu.ng' } },
+        data: { reference: 'top_123', amount: 500, status: 'success', customer: { email: 'test@cu.edu.ng' } },
       };
       
       mockPrisma.user.findUnique.mockResolvedValue({ id: 'u_123', email: 'test@cu.edu.ng' });
@@ -111,7 +111,7 @@ describe('TopupService', () => {
       mockKorapay.verifyWebhookSignature.mockReturnValue(true);
       const payload = {
         event: 'charge.success',
-        data: { reference: 'top_123', amount: 500, customer: { email: 'test@cu.edu.ng' } },
+        data: { reference: 'top_123', amount: 500, status: 'success', customer: { email: 'test@cu.edu.ng' } },
       };
       
       mockPrisma.user.findUnique.mockResolvedValue({ id: 'u_123', email: 'test@cu.edu.ng' });
@@ -131,7 +131,7 @@ describe('TopupService', () => {
       mockKorapay.verifyWebhookSignature.mockReturnValue(true);
       const payload = {
         event: 'charge.success',
-        data: { reference: 'top_123', amount: 500, customer: { email: 'unknown@test.com' } },
+        data: { reference: 'top_123', amount: 500, status: 'success', customer: { email: 'unknown@test.com' } },
       };
       
       mockPrisma.user.findUnique.mockResolvedValue(null);
@@ -145,7 +145,7 @@ describe('TopupService', () => {
       mockKorapay.verifyWebhookSignature.mockReturnValue(true);
       const payload = {
         event: 'charge.failed',
-        data: { reference: 'top_fail', amount: 500, customer: { email: 'test@cu.edu.ng' } },
+        data: { reference: 'top_fail', amount: 500, status: 'failed', customer: { email: 'test@cu.edu.ng' } },
       };
       
       mockPrisma.user.findUnique.mockResolvedValue({ id: 'u_123', email: 'test@cu.edu.ng' });
@@ -170,6 +170,24 @@ describe('TopupService', () => {
       const result = await service.handleWebhook(payload, 'good-sig');
       expect(result).toEqual({ success: true });
       expect(mockPrisma.paymentTopup.create).not.toHaveBeenCalled();
+    });
+
+    it('detects event/status mismatch in webhook (Fix 3)', async () => {
+      mockKorapay.verifyWebhookSignature.mockReturnValue(true);
+      const spoofPayload = {
+        event: 'charge.success',
+        data: {
+          reference: 'top_123',
+          status: 'failed', // mismatch
+          amount: 500,
+          customer: { email: 'test@cu.edu.ng' }
+        },
+      };
+
+      const result = await service.handleWebhook(spoofPayload, 'good-sig');
+      expect(result).toEqual({ success: true });
+      expect(mockPrisma.paymentTopup.create).not.toHaveBeenCalled();
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
     });
   });
 });

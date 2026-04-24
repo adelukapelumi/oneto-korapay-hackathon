@@ -113,6 +113,15 @@ export class CashoutService {
     try {
       const success = await this.prisma.$transaction(
         async (tx) => {
+          // Fix 2: Re-fetch cashout inside transaction to prevent race conditions
+          const freshCashout = await tx.cashout.findUnique({
+            where: { id: cashoutId },
+          });
+
+          if (!freshCashout || freshCashout.status !== CashoutStatus.APPROVED) {
+            throw new Error('cashout_state_changed');
+          }
+
           const merchant = await tx.user.findUnique({
             where: { id: cashout.merchantUserId },
           });
@@ -241,6 +250,13 @@ export class CashoutService {
         );
       }
     } catch (error: any) {
+      if (error.message === 'cashout_state_changed') {
+        await this.prisma.cashout.update({
+          where: { id: cashoutId },
+          data: { status: CashoutStatus.FAILED, failureReason: 'state_changed_during_execute' },
+        });
+        return;
+      }
       this.logger.error(`Execute payout critical failure for ${cashoutId}: ${error.message}`);
     }
   }
@@ -253,6 +269,17 @@ export class CashoutService {
 
     const reference = payload.data.reference;
     const event = payload.event;
+
+    // Fix 3: Webhook event spoofing protection
+    const eventStatusMap: Record<string, string> = {
+      'transfer.success': 'success',
+      'transfer.failed': 'failed',
+    };
+    const expectedDataStatus = eventStatusMap[event];
+    if (expectedDataStatus && payload.data?.status !== expectedDataStatus) {
+      this.logger.warn({ event, dataStatus: payload.data?.status }, 'Webhook event/status mismatch');
+      return { success: true }; // return 200 to stop Korapay retries, but don't process
+    }
 
     const cashout = await this.prisma.cashout.findUnique({
       where: { korapayReference: reference },

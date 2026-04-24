@@ -144,6 +144,20 @@ export class ReconcileService {
       // If all checks pass, execute a Serializable Prisma transaction.
       return await this.prisma.$transaction(async (tx) => {
         try {
+          // Fix 1: Re-fetch sender inside transaction to prevent race conditions
+          const freshSender = await tx.user.findUnique({
+            where: { id: envelope.senderUserId },
+            select: { verifiedBalanceKobo: true, status: true },
+          });
+
+          if (!freshSender || freshSender.verifiedBalanceKobo < BigInt(envelope.amountKobo)) {
+            throw new Error('balance_changed_during_reconcile');
+          }
+
+          if (freshSender.status === 'FROZEN' || freshSender.status === 'FLAGGED') {
+            throw new Error('balance_changed_during_reconcile'); // Re-use for consistent rejection
+          }
+
           // 1. Insert ProcessedSequence row.
           await tx.processedSequence.create({
             data: {
@@ -160,7 +174,7 @@ export class ReconcileService {
               userId: envelope.senderUserId,
               type: 'DEBIT',
               amountKobo: BigInt(envelope.amountKobo),
-              balanceAfterKobo: sender.verifiedBalanceKobo - BigInt(envelope.amountKobo),
+              balanceAfterKobo: freshSender.verifiedBalanceKobo - BigInt(envelope.amountKobo),
               description: `Payment to ${envelope.recipientUserId}`,
               envelopeJson: envelope as any,
             },
@@ -211,7 +225,10 @@ export class ReconcileService {
         }
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
-    } catch (error) {
+    } catch (error: any) {
+      if (error.message === 'balance_changed_during_reconcile') {
+        return this.reject(envelopeInput?.transactionId || 'unknown', 'insufficient_balance', envelopeInput);
+      }
       this.logger.error(`Internal error reconciling envelope ${transactionId}:`, error);
       return {
         transactionId,

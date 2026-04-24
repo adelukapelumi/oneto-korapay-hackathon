@@ -456,4 +456,27 @@ describe('ReconcileService', () => {
       reason: 'invalid_envelope',
     });
   });
+
+  it('detects balance change during transaction (Fix 1)', async () => {
+    const amount = 1000;
+    const draft = createValidEnvelopeDraft(senderId, recipientId, senderKey.publicKeyString, amount);
+    const envelope = signEnvelope(draft, senderKey.privateKey);
+
+    let findUniqueCallCount = 0;
+    mockPrisma.user.findUnique.mockImplementation((args: any) => {
+      const where = args?.where;
+      if (where?.id === senderId) {
+        findUniqueCallCount++;
+        // First call (outside tx): full balance
+        // Second call (inside tx): reduced balance
+        const balance = findUniqueCallCount === 1 ? 2000 : 500;
+        return Promise.resolve(createTestUser(senderId, senderKey.publicKeyString, balance));
+      }
+      if (where?.id === recipientId) return Promise.resolve(createTestUser(recipientId, 'dummy'));
+      return Promise.resolve(null);
+    });
+
+    const result = await service.reconcileOneInternal(recipientId, envelope);
+    expect(result).toMatchObject({ status: 'rejected', reason: 'insufficient_balance' });
+  });
 });

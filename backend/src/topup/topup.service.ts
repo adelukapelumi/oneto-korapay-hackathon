@@ -47,6 +47,17 @@ export class TopupService {
 
     const { event, data } = payload;
 
+    // Fix 3: Webhook event spoofing protection
+    const eventStatusMap: Record<string, string> = {
+      'charge.success': 'success',
+      'charge.failed': 'failed',
+    };
+    const expectedDataStatus = eventStatusMap[event];
+    if (expectedDataStatus && payload.data?.status !== expectedDataStatus) {
+      this.logger.warn({ event, dataStatus: payload.data?.status }, 'Webhook event/status mismatch');
+      return { success: true }; // return 200 to stop Korapay retries, but don't process
+    }
+
     if (event !== 'charge.success' && event !== 'charge.failed') {
       this.logger.log(`Ignoring unhandled event type: ${event}`);
       return { success: true };
