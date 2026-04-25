@@ -3,6 +3,15 @@
   "private": true,
   "version": "0.0.1",
   "description": "Offline-capable payments",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@prisma/client",
+      "@prisma/engines",
+      "prisma",
+      "argon2",
+      "esbuild"
+    ]
+  },
   "scripts": {
     "test": "pnpm -r test",
     "build": "pnpm -r build",
