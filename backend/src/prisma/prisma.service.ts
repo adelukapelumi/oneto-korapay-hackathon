@@ -4,8 +4,19 @@ import { PrismaNeon } from '@prisma/adapter-neon';
 import { Pool, neonConfig } from '@neondatabase/serverless';
 import ws from 'ws';
 
-// Required for Neon's WebSocket-based serverless driver in Node.js.
 neonConfig.webSocketConstructor = ws;
+
+// Process-level safety net so a transient WebSocket close
+// from Neon's serverless driver does not crash the entire app.
+// These listeners are attached once at module load.
+process.on('uncaughtException', (err: Error) => {
+  if (err.message?.includes('Connection terminated') || err.message?.includes('WebSocket')) {
+    console.warn('[PrismaService] Caught Neon connection error (will reconnect):', err.message);
+    return;
+  }
+  // Re-throw non-Neon errors so we don't silently hide bugs.
+  throw err;
+});
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
@@ -20,18 +31,18 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
     const pool = new Pool({ connectionString });
 
-    // Swallow connection-error events so a transient WebSocket close
-    // doesn't crash the entire Node process. Prisma will reconnect
-    // on the next query automatically.
     pool.on('error', (err: Error) => {
-      // Logger is not yet available in constructor — use console here.
       console.warn('[PrismaService] Pool error (will reconnect):', err.message);
     });
 
+    pool.on('connect', (client: { on: (event: string, listener: (err: Error) => void) => void }) => {
+      client.on('error', (err: Error) => {
+        console.warn('[PrismaService] Client error (will reconnect):', err.message);
+      });
+    });
+
     const adapter = new PrismaNeon(pool);
-
     super({ adapter });
-
     this.pool = pool;
   }
 
