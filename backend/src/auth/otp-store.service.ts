@@ -1,4 +1,5 @@
-import { Injectable, OnModuleInit, OnModuleDestroy } from "@nestjs/common"; import * as argon2 from "argon2";
+import { Injectable, OnModuleInit, OnModuleDestroy, Optional } from "@nestjs/common";
+import * as argon2 from "argon2";
 import { E164 } from "../common/phone";
 
 /**
@@ -54,7 +55,7 @@ export class OtpStoreService implements OnModuleInit, OnModuleDestroy {
   private readonly config: OtpStoreConfig;
   private cleanupTimer: NodeJS.Timeout | null = null;
 
-  constructor(config: Partial<OtpStoreConfig> = {}) {
+  constructor(@Optional() config: Partial<OtpStoreConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
   }
 
