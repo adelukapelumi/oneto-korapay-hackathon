@@ -1,4 +1,4 @@
-- DropIndex
+-- DropIndex
 DROP INDEX "LedgerEntry_transactionId_idx";
 
 -- CreateIndex

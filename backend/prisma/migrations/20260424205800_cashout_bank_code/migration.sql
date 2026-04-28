@@ -1,4 +1,4 @@
-- AlterTable
+-- AlterTable
 ALTER TABLE "MerchantProfile" ADD COLUMN "cashoutBankCode" TEXT NOT NULL DEFAULT '';
 
 -- AlterTable

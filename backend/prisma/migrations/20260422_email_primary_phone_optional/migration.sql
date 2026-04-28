@@ -1,4 +1,4 @@
-- AlterTable: add email column (required, no default — will fail on non-empty tables;
+-- AlterTable: add email column (required, no default — will fail on non-empty tables;
 -- this is expected since the pilot database is empty or will be re-seeded)
 ALTER TABLE "User" ADD COLUMN "email" TEXT NOT NULL;
 
