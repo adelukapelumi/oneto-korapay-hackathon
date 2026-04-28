@@ -1,4 +1,4 @@
-CREATE TABLE "MerchantProfile" (
+REATE TABLE "MerchantProfile" (
   "id" TEXT NOT NULL,
   "userId" TEXT NOT NULL,
   "businessName" TEXT NOT NULL,
