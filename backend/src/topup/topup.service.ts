@@ -1,7 +1,7 @@
-import { Injectable, Logger, UnauthorizedException, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, UnauthorizedException, BadRequestException, InternalServerErrorException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { KorapayService } from './korapay.service';
-import { Prisma } from '@prisma/client';
+import { Prisma, LedgerEntryType } from '@prisma/client';
 import * as crypto from 'crypto';
 
 @Injectable()
@@ -122,12 +122,51 @@ export class TopupService {
             },
           });
 
-          await tx.user.update({
+          const operatingAccount = await tx.user.findUnique({
+            where: { id: 'u_operating' },
+          });
+
+          if (!operatingAccount) {
+            throw new Error('Operating account missing');
+          }
+
+          const updatedUser = await tx.user.update({
             where: { id: user.id },
             data: {
               verifiedBalanceKobo: {
-                increment: amountKobo,
+                increment: BigInt(amountKobo),
               },
+            },
+          });
+
+          const updatedOperating = await tx.user.update({
+            where: { id: 'u_operating' },
+            data: {
+              verifiedBalanceKobo: {
+                decrement: BigInt(amountKobo),
+              },
+            },
+          });
+
+          await tx.ledgerEntry.create({
+            data: {
+              transactionId: reference,
+              userId: user.id,
+              type: LedgerEntryType.CREDIT,
+              amountKobo: BigInt(amountKobo),
+              balanceAfterKobo: updatedUser.verifiedBalanceKobo,
+              description: `Top-up via Korapay ${reference}`,
+            },
+          });
+
+          await tx.ledgerEntry.create({
+            data: {
+              transactionId: reference,
+              userId: 'u_operating',
+              type: LedgerEntryType.DEBIT,
+              amountKobo: BigInt(amountKobo),
+              balanceAfterKobo: updatedOperating.verifiedBalanceKobo,
+              description: `Top-up credit to user ${user.id} ${reference}`,
             },
           });
         },
@@ -139,6 +178,7 @@ export class TopupService {
         return { success: true };
       }
       this.logger.error(`Transaction failed for webhook reference ${reference}: ${err}`);
+      throw new InternalServerErrorException('Webhook processing failed');
     }
 
     return { success: true };

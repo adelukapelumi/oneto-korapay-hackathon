@@ -2,8 +2,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { TopupService } from './topup.service';
 import { KorapayService } from './korapay.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { BadRequestException, UnauthorizedException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { BadRequestException, UnauthorizedException, InternalServerErrorException } from '@nestjs/common';
+import { Prisma, LedgerEntryType } from '@prisma/client';
 
 describe('TopupService', () => {
   let service: TopupService;
@@ -16,6 +16,9 @@ describe('TopupService', () => {
       update: jest.fn(),
     },
     paymentTopup: {
+      create: jest.fn(),
+    },
+    ledgerEntry: {
       create: jest.fn(),
     },
     $transaction: jest.fn(),
@@ -76,35 +79,123 @@ describe('TopupService', () => {
       await expect(service.handleWebhook({ data: {} }, 'bad-sig')).rejects.toThrow(UnauthorizedException);
     });
 
-    it('charge.success: creates PaymentTopup, increments user balance, returns success', async () => {
+    it('charge.success: creates PaymentTopup, credits user, and debits u_operating', async () => {
       mockKorapay.verifyWebhookSignature.mockReturnValue(true);
       const payload = {
         event: 'charge.success',
         data: { reference: 'top_123', amount: 500, status: 'success', customer: { email: 'test@cu.edu.ng' } },
       };
       
-      mockPrisma.user.findUnique.mockResolvedValue({ id: 'u_123', email: 'test@cu.edu.ng' });
-      
-      // Mock the transaction execution
-      mockPrisma.$transaction.mockImplementation(async (callback) => {
-        return callback(mockPrisma);
+      mockPrisma.user.findUnique.mockImplementation(async ({ where }) => {
+        if (where.id === 'u_123' || where.email === 'test@cu.edu.ng') return { id: 'u_123', email: 'test@cu.edu.ng' };
+        if (where.id === 'u_operating') return { id: 'u_operating' };
+        return null;
       });
+
+      mockPrisma.user.update.mockImplementation(async ({ where }) => {
+        if (where.id === 'u_123') return { verifiedBalanceKobo: BigInt(50000) };
+        if (where.id === 'u_operating') return { verifiedBalanceKobo: BigInt(-50000) };
+        return {};
+      });
+      
+      mockPrisma.$transaction.mockImplementation(async (callback) => callback(mockPrisma));
 
       const result = await service.handleWebhook(payload, 'good-sig');
 
       expect(result).toEqual({ success: true });
-      expect(mockPrisma.paymentTopup.create).toHaveBeenCalledWith(expect.objectContaining({
-        data: expect.objectContaining({
-          reference: 'top_123',
-          userId: 'u_123',
-          amountKobo: BigInt(50000), // 500 * 100
-          status: 'SUCCESS',
-        }),
-      }));
       expect(mockPrisma.user.update).toHaveBeenCalledWith(expect.objectContaining({
         where: { id: 'u_123' },
-        data: { verifiedBalanceKobo: { increment: 50000 } },
+        data: { verifiedBalanceKobo: { increment: BigInt(50000) } },
       }));
+      expect(mockPrisma.user.update).toHaveBeenCalledWith(expect.objectContaining({
+        where: { id: 'u_operating' },
+        data: { verifiedBalanceKobo: { decrement: BigInt(50000) } },
+      }));
+    });
+
+    it('charge.success: writes two ledger entries with the SAME transactionId', async () => {
+      mockKorapay.verifyWebhookSignature.mockReturnValue(true);
+      const payload = {
+        event: 'charge.success',
+        data: { reference: 'top_123', amount: 500, status: 'success', customer: { email: 'test@cu.edu.ng' } },
+      };
+      
+      mockPrisma.user.findUnique.mockImplementation(async ({ where }) => {
+        if (where.id === 'u_123' || where.email === 'test@cu.edu.ng') return { id: 'u_123', email: 'test@cu.edu.ng' };
+        if (where.id === 'u_operating') return { id: 'u_operating' };
+        return null;
+      });
+
+      mockPrisma.user.update.mockImplementation(async ({ where }) => {
+        if (where.id === 'u_123') return { verifiedBalanceKobo: BigInt(50000) };
+        if (where.id === 'u_operating') return { verifiedBalanceKobo: BigInt(-50000) };
+        return {};
+      });
+      
+      mockPrisma.$transaction.mockImplementation(async (callback) => callback(mockPrisma));
+
+      const result = await service.handleWebhook(payload, 'good-sig');
+
+      expect(result).toEqual({ success: true });
+      expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({
+          transactionId: 'top_123',
+          userId: 'u_123',
+          type: LedgerEntryType.CREDIT,
+        }),
+      }));
+      expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({
+          transactionId: 'top_123',
+          userId: 'u_operating',
+          type: LedgerEntryType.DEBIT,
+        }),
+      }));
+    });
+
+    it('charge.success: rolls back if u_operating does not exist', async () => {
+      mockKorapay.verifyWebhookSignature.mockReturnValue(true);
+      const payload = {
+        event: 'charge.success',
+        data: { reference: 'top_missing_op', amount: 500, status: 'success', customer: { email: 'test@cu.edu.ng' } },
+      };
+      
+      mockPrisma.user.findUnique.mockImplementation(async ({ where }) => {
+        if (where.id === 'u_123' || where.email === 'test@cu.edu.ng') {
+          return { id: 'u_123', email: 'test@cu.edu.ng' };
+        }
+        if (where.id === 'u_operating') {
+          return null; // missing!
+        }
+        return null;
+      });
+
+      mockPrisma.user.update.mockClear();
+
+      mockPrisma.$transaction.mockImplementation(async (callback) => {
+        return callback(mockPrisma);
+      });
+
+      await expect(service.handleWebhook(payload, 'good-sig')).rejects.toThrow(InternalServerErrorException);
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('charge.success: transaction throws non-P2002 error → throws 500', async () => {
+      mockKorapay.verifyWebhookSignature.mockReturnValue(true);
+      const payload = {
+        event: 'charge.success',
+        data: { reference: 'top_123', amount: 500, status: 'success', customer: { email: 'test@cu.edu.ng' } },
+      };
+      
+      mockPrisma.user.findUnique.mockImplementation(async ({ where }) => {
+        if (where.email === 'test@cu.edu.ng') return { id: 'u_123', email: 'test@cu.edu.ng' };
+        if (where.id === 'u_operating') return { id: 'u_operating' };
+        return null;
+      });
+
+      mockPrisma.$transaction.mockRejectedValue(new Error('DB crash'));
+
+      await expect(service.handleWebhook(payload, 'good-sig')).rejects.toThrow(InternalServerErrorException);
     });
 
     it('charge.success with duplicate reference: returns success idempotently WITHOUT double-crediting', async () => {
@@ -114,7 +205,11 @@ describe('TopupService', () => {
         data: { reference: 'top_123', amount: 500, status: 'success', customer: { email: 'test@cu.edu.ng' } },
       };
       
-      mockPrisma.user.findUnique.mockResolvedValue({ id: 'u_123', email: 'test@cu.edu.ng' });
+      mockPrisma.user.findUnique.mockImplementation(async ({ where }) => {
+        if (where.email === 'test@cu.edu.ng') return { id: 'u_123', email: 'test@cu.edu.ng' };
+        if (where.id === 'u_operating') return { id: 'u_operating' };
+        return null;
+      });
       
       const p2002Error = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
         code: 'P2002',
@@ -148,7 +243,10 @@ describe('TopupService', () => {
         data: { reference: 'top_fail', amount: 500, status: 'failed', customer: { email: 'test@cu.edu.ng' } },
       };
       
-      mockPrisma.user.findUnique.mockResolvedValue({ id: 'u_123', email: 'test@cu.edu.ng' });
+      mockPrisma.user.findUnique.mockImplementation(async ({ where }) => {
+        if (where.email === 'test@cu.edu.ng') return { id: 'u_123', email: 'test@cu.edu.ng' };
+        return null;
+      });
 
       const result = await service.handleWebhook(payload, 'good-sig');
       expect(result).toEqual({ success: true });
