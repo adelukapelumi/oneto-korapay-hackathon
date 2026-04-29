@@ -328,4 +328,49 @@ describe("AuthService", () => {
       expect(result.accessToken).toBe("token_active");
     });
   });
+
+  // ------- Group 7: admin defense-in-depth -------
+
+  describe("admin defense-in-depth", () => {
+    beforeEach(() => resetMocks());
+
+    it("requestOtp for an ADMIN-role email returns success but does NOT call the OTP channel send method", async () => {
+      mockPrisma.user.findUnique.mockResolvedValue(makeUser({ role: "ADMIN" }));
+
+      await expect(authService.requestOtp("admin@getoneto.internal")).resolves.toBeUndefined();
+
+      expect(mockPrisma.user.findUnique).toHaveBeenCalledWith({
+        where: { email: "admin@getoneto.internal" },
+        select: { role: true },
+      });
+      expect(mockOtpStore.checkAndRecordRequest).not.toHaveBeenCalled();
+      expect(mockOtpProvider.sendOtp).not.toHaveBeenCalled();
+    });
+
+    it("verifyOtp for an ADMIN-role email rejects with the standard \"invalid OTP\" error even if an OTP somehow exists", async () => {
+      mockPrisma.user.findUnique.mockResolvedValue(makeUser({ role: "ADMIN" }));
+      mockOtpStore.verifyOtp.mockResolvedValue(true);
+
+      await expect(authService.verifyOtp("admin@getoneto.internal", "123456")).rejects.toThrow(UnauthorizedException);
+      await expect(authService.verifyOtp("admin@getoneto.internal", "123456")).rejects.toThrow("Invalid or expired code");
+      
+      expect(mockOtpStore.verifyOtp).not.toHaveBeenCalled();
+    });
+
+    it("requestOtp for a STUDENT-role email still works normally", async () => {
+      mockPrisma.user.findUnique.mockResolvedValue(makeUser({ role: "STUDENT" }));
+
+      await authService.requestOtp("alice@stu.cu.edu.ng");
+
+      expect(mockOtpProvider.sendOtp).toHaveBeenCalledTimes(1);
+    });
+
+    it("requestOtp for a non-existent email still works normally", async () => {
+      mockPrisma.user.findUnique.mockResolvedValue(null);
+
+      await authService.requestOtp("nobody@stu.cu.edu.ng");
+
+      expect(mockOtpProvider.sendOtp).toHaveBeenCalledTimes(1);
+    });
+  });
 });

@@ -4,7 +4,9 @@ import {
   BadRequestException,
   ForbiddenException,
   Inject,
+  Logger,
 } from "@nestjs/common";
+import { Role } from "@prisma/client";
 import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { OtpStoreService, OtpRateLimitExceededError } from "./otp-store.service";
@@ -15,6 +17,8 @@ import { normalizeEmail, InvalidEmailError } from "../common/email";
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly otpStore: OtpStoreService,
@@ -50,6 +54,19 @@ export class AuthService {
         throw new BadRequestException("Invalid email address");
       }
       throw err;
+    }
+
+    // Defense in depth: Check if this email belongs to an ADMIN.
+    // If so, pretend we succeeded (so attackers can't enumerate admin emails)
+    // but do not actually send an OTP.
+    const existingUser = await this.prisma.user.findUnique({
+      where: { email },
+      select: { role: true },
+    });
+    
+    if (existingUser?.role === Role.ADMIN) {
+      this.logger.warn("Auth: blocked OTP request for ADMIN role.");
+      return;
     }
 
     try {
@@ -97,6 +114,18 @@ export class AuthService {
         throw new BadRequestException("Invalid email address");
       }
       throw err;
+    }
+
+    // Defense in depth: Even if an OTP was somehow issued, block verification for ADMIN.
+    const existingUser = await this.prisma.user.findUnique({
+      where: { email },
+      select: { role: true },
+    });
+    
+    if (existingUser?.role === Role.ADMIN) {
+      this.logger.warn("Auth: blocked OTP request for ADMIN role.");
+      // Throw the generic error to avoid leaking the admin status.
+      throw new UnauthorizedException("Invalid or expired code");
     }
 
     const isValid = await this.otpStore.verifyOtp(email as unknown as E164, code);
