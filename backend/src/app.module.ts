@@ -9,6 +9,7 @@ import { PrismaModule } from "./prisma/prisma.module";
 import { AuthModule } from "./auth/auth.module";
 import { ReconcileModule } from "./reconcile/reconcile.module";
 import { TopupModule } from "./topup/topup.module";
+import { HealthModule } from "./health/health.module";
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { TopupModule } from "./topup/topup.module";
     TopupModule,
     MeModule,
     CashoutModule,
+    HealthModule,
   ],
   controllers: [],
   providers: [
