@@ -243,7 +243,8 @@ export class ReconcileService {
       transactionId,
       senderUserId: envelope?.senderUserId,
       recipientUserId: envelope?.recipientUserId,
-      internalReason,
+      reason: internalReason,
+      amountKobo: envelope?.amountKobo,
     }, 'Envelope rejected');
 
     return {

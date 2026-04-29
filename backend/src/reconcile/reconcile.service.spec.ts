@@ -479,4 +479,42 @@ describe('ReconcileService', () => {
     const result = await service.reconcileOneInternal(recipientId, envelope);
     expect(result).toMatchObject({ status: 'rejected', reason: 'insufficient_balance' });
   });
+
+  it('rejected envelope log payload does not include signature, publicKey, or sequenceNumber', async () => {
+    const draft = createValidEnvelopeDraft(senderId, recipientId, senderKey.publicKeyString, 1000);
+    const envelope = signEnvelope(draft, senderKey.privateKey);
+
+    mockPrisma.user.findUnique.mockImplementation((args: any) => {
+      const where = args?.where;
+      if (where?.id === senderId) return Promise.resolve(createTestUser(senderId, senderKey.publicKeyString, 0)); // balance 0
+      if (where?.id === recipientId) return Promise.resolve(createTestUser(recipientId, 'dummy'));
+      return Promise.resolve(null);
+    });
+
+    const warnSpy = jest.spyOn(service['logger'], 'warn').mockImplementation();
+
+    await service.reconcileOneInternal(recipientId, envelope);
+
+    expect(warnSpy).toHaveBeenCalled();
+    const logArg = warnSpy.mock.calls[0]![0];
+
+    expect(logArg).toMatchObject({
+      transactionId: envelope.transactionId,
+      senderUserId: senderId,
+      recipientUserId: recipientId,
+      reason: 'insufficient_balance',
+      amountKobo: envelope.amountKobo,
+    });
+
+    expect(logArg).not.toHaveProperty('signature');
+    expect(logArg).not.toHaveProperty('senderPublicKey');
+    expect(logArg).not.toHaveProperty('senderSequenceNumber');
+    expect(logArg).not.toHaveProperty('requestNonce');
+    expect(logArg).not.toHaveProperty('timestamp');
+    expect(logArg).not.toHaveProperty('expiresAt');
+    expect(logArg).not.toHaveProperty('senderBalanceBeforeKobo');
+    expect(logArg).not.toHaveProperty('senderBalanceAfterKobo');
+
+    warnSpy.mockRestore();
+  });
 });
