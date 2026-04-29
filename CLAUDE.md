@@ -31,11 +31,25 @@ Snapshot of what exists vs what's planned. Update this section when major compon
 - `/backend/src/app.module.ts`: global IP-keyed throttler (100 req/min default) as defense-in-depth layer above service-level target-keyed rate limiting.
 - Prisma schema: User, LedgerEntry, PaymentTopup models. Compound unique constraint `@@unique([transactionId, userId])` on LedgerEntry prevents double-spend at the database layer.
 - Email infrastructure: `getoneto.com` domain verified with SPF + DKIM. Real emails delivering to CU inboxes instantly.
+- `/backend/src/reconcile/`: reconcile endpoint with merchant role enforcement, public key registration with signed rotation, Serializable transactions, per-user sequence uniqueness, identity binding, generic external errors. 22 tests passing.
+- `/backend/src/auth/merchant-auth.*`: separate merchant signup flow with MerchantProfile (cashoutBankCode, cashoutBankName, account details). 12 tests passing.
+- `/backend/src/cashout/`: manual admin approval flow, Korapay Payout API integration, balance reservation pattern with compensating ledger entries on Korapay failure, transfer.success/failed webhook handling. 23 tests passing.
+- `/backend/src/me/`: GET /me profile endpoint, GET /me/ledger with cursor pagination. 11 tests passing.
+- `/backend/src/auth/keys.controller.ts`: public key registration with first-time bootstrap and signed rotation for replacement. 6 tests passing.
+- Backend deployed: Railway, https://oneto-production.up.railway.app, Frankfurt region.
+- Database: Railway Postgres, Frankfurt region, single consolidated migration `0_init` from schema.prisma source of truth.
+
+Total: 150 backend tests + 16 shared tests = 166 tests passing.
 
 ### Stubbed (route exists, throws NotImplementedException)
 
-- `POST /reconcile` (envelope submission endpoint)
-- Public key registration endpoint (not even stubbed — does not exist yet)
+(none — backend feature-complete)
+
+### Not yet built
+
+- Mobile app (React Native / Expo) — keypair generation, QR scan, local SQLite ledger, offline-first UI
+- Admin dashboard (user management, cashout approvals, fraud review)
+- Monitoring (Sentry + UptimeRobot)
 
 ### Not yet built
 
@@ -596,6 +610,6 @@ Creating a file without saving is a silent failure mode that costs hours to debu
 - Confirmed: Ed25519 signing/verification round-trips correctly with `@noble/ed25519` + the `sha512Sync` shim
 - Confirmed: canonicalization produces identical bytes regardless of object key order
 
-**Last updated:** [DATE]
-**Document owner:** [YOUR NAME]
+**Last updated:** 2026-04-28
+**Document owner:** Pelumi Adeluka
 **Review cadence:** every two weeks during pilot, monthly after.

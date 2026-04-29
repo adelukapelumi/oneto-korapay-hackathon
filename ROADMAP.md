@@ -4,19 +4,33 @@ Single-page view of what's left to ship a pilot-ready MVP for college week at Co
 
 Status legend: ⬜ not started, 🟡 in progress, 🟢 done, 🔵 blocked/waiting
 
-Last updated: 2026-04-24
+Last updated: 2026-04-28
 
 ---
 
 ## Current state snapshot
 
-- Backend auth module complete (email OTP via Resend, 49 tests)
-- Korapay top-up flow complete (webhook HMAC verified, Serializable transaction, 15 tests)
-- Shared crypto foundation complete (Ed25519, envelope schema, 16 tests)
-- Total: 82 tests passing, clean builds, committed and pushed
-- What's missing: reconcile endpoint, mobile app, merchant flow, deployment
+Backend: 100% feature-complete. 150 tests passing across 10 spec files.
 
-Roughly 40% of pilot MVP scope complete.
+- Auth module (email OTP via Resend) — 27 tests
+- OTP store with rate limiting — 25 tests
+- Shared crypto (Ed25519, envelope schema, canonicalization) — 16 tests
+- Korapay top-up flow with HMAC webhook — 15 tests
+- Reconcile endpoint with merchant role enforcement, key rotation — 22 tests
+- Merchant onboarding with separate /auth/merchant endpoints — 12 tests
+- Merchant cashout flow with manual admin approval — 23 tests
+- Me + ledger endpoints with cursor pagination — 11 tests
+- Public key registration with signed rotation — 6 tests
+- Korapay service tests — 6 tests
+- Two security audit rounds completed; three real bugs fixed (race conditions, webhook spoofing, role enforcement).
+
+Database: Railway Postgres provisioned in Frankfurt, all 7 migrations consolidated into `0_init`, u_operating seeded.
+
+Backend deployment: Live at https://oneto-production.up.railway.app. Pre-deploy migration step runs on every deploy.
+
+What remains: webhook URL update on Korapay, mobile app (Phase 2), admin minimum (Phase 3.2), monitoring (Phase 4.5), pre-launch ops (Phase 5).
+
+Overall pilot completion: ~60%.
 
 ---
 
@@ -33,20 +47,20 @@ Gets the server ready to actually handle transactions.
 - Red-team tests: tampered envelope, replay, wrong recipient, expired, overdraft
 - Target: ~20-25 tests, all passing
 
-### 1.2 Merchant onboarding backend ⬜
+### 1.2 Merchant onboarding backend 🟢
 - Merchant signup endpoint (email required, phone recommended, business name, bank account)
 - Merchant-specific role and status flow
 - DTO validation, unique business name within region
 - Target: ~8-10 tests
 
-### 1.3 Merchant cashout flow ⬜
+### 1.3 Merchant cashout flow 🟢
 - Cashout request endpoint (merchant-auth)
 - Admin review queue endpoint (admin-auth)
 - Korapay Payout API integration for actual bank transfer
 - Ledger entries for cashout (merchant DEBIT, operating account CREDIT)
 - Target: ~12 tests
 
-### 1.4 Me + ledger endpoints ⬜
+### 1.4 Me + ledger endpoints 🟢
 - `GET /me` — profile + verified balance
 - `GET /me/ledger` — paginated transaction history
 - Target: ~6 tests
@@ -140,13 +154,13 @@ What the oneto team uses to operate the pilot.
 
 Getting it running on the public internet.
 
-### 4.1 Database ⬜
+### 4.1 Database 🟢
 - Provision Postgres (Neon or Railway)
 - Run Prisma migrations against real DB
 - Seed operating account (`u_operating`)
 - Verify connection from backend
 
-### 4.2 Backend deployment ⬜
+### 4.2 Backend deployment 🟢 
 - Railway or Render project setup
 - Environment variables from Doppler/Infisical or direct secrets
 - Public URL for Korapay webhook
@@ -277,3 +291,6 @@ Major architectural or strategic decisions and when they were made. Add new rows
 | 2026-04 | Merchant-only reconcile submission | Aligns incentives (only receivers benefit from reconciliation) |
 | 2026-04 | Per-user sequence uniqueness, not strict monotonicity | Supports out-of-order merchant reconciliation |
 | 2026-04 | Option A public key rotation (strict replacement) | Simpler code, small financial exposure, covered by pilot reserve |
+| 2026-04-28 | Switched from Render to Railway for backend hosting | Render free tier requires payment-clear delays; Railway accepted Raenest card immediately |
+| 2026-04-28 | Switched from Neon to Railway Postgres | Neon serverless adapter (v5.19.1) has URL parsing bugs that broke production runtime; ISP blocks port 5432 forced workarounds that failed |
+| 2026-04-28 | Consolidated 7 migrations into single 0_init | Prior migrations had UTF-8 BOM corruption and partial-dash damage; regenerated cleanly from schema.prisma |
