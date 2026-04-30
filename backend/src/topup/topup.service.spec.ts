@@ -4,6 +4,7 @@ import { KorapayService } from './korapay.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { BadRequestException, UnauthorizedException, InternalServerErrorException } from '@nestjs/common';
 import { Prisma, LedgerEntryType } from '@prisma/client';
+import { MAX_USER_BALANCE_KOBO } from '@oneto/shared';
 
 describe('TopupService', () => {
   let service: TopupService;
@@ -17,6 +18,7 @@ describe('TopupService', () => {
     },
     paymentTopup: {
       create: jest.fn(),
+      update: jest.fn(),
     },
     ledgerEntry: {
       create: jest.fn(),
@@ -87,8 +89,8 @@ describe('TopupService', () => {
       };
       
       mockPrisma.user.findUnique.mockImplementation(async ({ where }) => {
-        if (where.id === 'u_123' || where.email === 'test@cu.edu.ng') return { id: 'u_123', email: 'test@cu.edu.ng' };
-        if (where.id === 'u_operating') return { id: 'u_operating' };
+        if (where.id === 'u_123' || where.email === 'test@cu.edu.ng') return { id: 'u_123', email: 'test@cu.edu.ng', verifiedBalanceKobo: BigInt(0) };
+        if (where.id === 'u_operating') return { id: 'u_operating', verifiedBalanceKobo: BigInt(0) };
         return null;
       });
 
@@ -121,8 +123,8 @@ describe('TopupService', () => {
       };
       
       mockPrisma.user.findUnique.mockImplementation(async ({ where }) => {
-        if (where.id === 'u_123' || where.email === 'test@cu.edu.ng') return { id: 'u_123', email: 'test@cu.edu.ng' };
-        if (where.id === 'u_operating') return { id: 'u_operating' };
+        if (where.id === 'u_123' || where.email === 'test@cu.edu.ng') return { id: 'u_123', email: 'test@cu.edu.ng', verifiedBalanceKobo: BigInt(0) };
+        if (where.id === 'u_operating') return { id: 'u_operating', verifiedBalanceKobo: BigInt(0) };
         return null;
       });
 
@@ -162,7 +164,7 @@ describe('TopupService', () => {
       
       mockPrisma.user.findUnique.mockImplementation(async ({ where }) => {
         if (where.id === 'u_123' || where.email === 'test@cu.edu.ng') {
-          return { id: 'u_123', email: 'test@cu.edu.ng' };
+          return { id: 'u_123', email: 'test@cu.edu.ng', verifiedBalanceKobo: BigInt(0) };
         }
         if (where.id === 'u_operating') {
           return null; // missing!
@@ -188,8 +190,8 @@ describe('TopupService', () => {
       };
       
       mockPrisma.user.findUnique.mockImplementation(async ({ where }) => {
-        if (where.email === 'test@cu.edu.ng') return { id: 'u_123', email: 'test@cu.edu.ng' };
-        if (where.id === 'u_operating') return { id: 'u_operating' };
+        if (where.email === 'test@cu.edu.ng') return { id: 'u_123', email: 'test@cu.edu.ng', verifiedBalanceKobo: BigInt(0) };
+        if (where.id === 'u_operating') return { id: 'u_operating', verifiedBalanceKobo: BigInt(0) };
         return null;
       });
 
@@ -206,8 +208,8 @@ describe('TopupService', () => {
       };
       
       mockPrisma.user.findUnique.mockImplementation(async ({ where }) => {
-        if (where.email === 'test@cu.edu.ng') return { id: 'u_123', email: 'test@cu.edu.ng' };
-        if (where.id === 'u_operating') return { id: 'u_operating' };
+        if (where.email === 'test@cu.edu.ng') return { id: 'u_123', email: 'test@cu.edu.ng', verifiedBalanceKobo: BigInt(0) };
+        if (where.id === 'u_operating') return { id: 'u_operating', verifiedBalanceKobo: BigInt(0) };
         return null;
       });
       
@@ -244,7 +246,7 @@ describe('TopupService', () => {
       };
       
       mockPrisma.user.findUnique.mockImplementation(async ({ where }) => {
-        if (where.email === 'test@cu.edu.ng') return { id: 'u_123', email: 'test@cu.edu.ng' };
+        if (where.email === 'test@cu.edu.ng') return { id: 'u_123', email: 'test@cu.edu.ng', verifiedBalanceKobo: BigInt(0) };
         return null;
       });
 
@@ -286,6 +288,70 @@ describe('TopupService', () => {
       expect(result).toEqual({ success: true });
       expect(mockPrisma.paymentTopup.create).not.toHaveBeenCalled();
       expect(mockPrisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('charge.success: fails if user balance would exceed cap', async () => {
+      mockKorapay.verifyWebhookSignature.mockReturnValue(true);
+      const amount = 500; // 50000 kobo
+      const payload = {
+        event: 'charge.success',
+        data: { reference: 'top_cap_exceeded', amount, status: 'success', customer: { email: 'test@cu.edu.ng' } },
+      };
+      
+      mockPrisma.user.findUnique.mockImplementation(async ({ where }) => {
+        if (where.id === 'u_123' || where.email === 'test@cu.edu.ng') {
+          // Current balance is already at cap minus 1000 kobo
+          return { id: 'u_123', email: 'test@cu.edu.ng', verifiedBalanceKobo: BigInt(MAX_USER_BALANCE_KOBO - 1000) };
+        }
+        return null;
+      });
+
+      mockPrisma.paymentTopup.update.mockResolvedValue({});
+      mockPrisma.$transaction.mockImplementation(async (callback) => callback(mockPrisma));
+
+      const result = await service.handleWebhook(payload, 'good-sig');
+
+      expect(result).toEqual({ success: true });
+      expect(mockPrisma.paymentTopup.update).toHaveBeenCalledWith(expect.objectContaining({
+        where: { reference: 'top_cap_exceeded' },
+        data: expect.objectContaining({
+          status: 'FAILED',
+        }),
+      }));
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('charge.success: succeeds if user balance reaches exactly the cap', async () => {
+      mockKorapay.verifyWebhookSignature.mockReturnValue(true);
+      const amount = 500; // 50000 kobo
+      const payload = {
+        event: 'charge.success',
+        data: { reference: 'top_at_cap', amount, status: 'success', customer: { email: 'test@cu.edu.ng' } },
+      };
+      
+      mockPrisma.user.findUnique.mockImplementation(async ({ where }) => {
+        if (where.id === 'u_123' || where.email === 'test@cu.edu.ng') {
+          // Balance after topup will be exactly MAX_USER_BALANCE_KOBO
+          return { id: 'u_123', email: 'test@cu.edu.ng', verifiedBalanceKobo: BigInt(MAX_USER_BALANCE_KOBO - 50000) };
+        }
+        if (where.id === 'u_operating') return { id: 'u_operating', verifiedBalanceKobo: BigInt(0) };
+        return null;
+      });
+
+      mockPrisma.user.update.mockImplementation(async ({ where }) => {
+        if (where.id === 'u_123') return { verifiedBalanceKobo: BigInt(MAX_USER_BALANCE_KOBO) };
+        if (where.id === 'u_operating') return { verifiedBalanceKobo: BigInt(-MAX_USER_BALANCE_KOBO) };
+        return {};
+      });
+      mockPrisma.$transaction.mockImplementation(async (callback) => callback(mockPrisma));
+
+      const result = await service.handleWebhook(payload, 'good-sig');
+
+      expect(result).toEqual({ success: true });
+      expect(mockPrisma.user.update).toHaveBeenCalledWith(expect.objectContaining({
+        where: { id: 'u_123' },
+        data: { verifiedBalanceKobo: { increment: BigInt(50000) } },
+      }));
     });
   });
 });

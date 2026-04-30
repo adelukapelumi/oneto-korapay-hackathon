@@ -5,6 +5,7 @@ import {
   TransactionEnvelopeSchema,
   verifyEnvelope,
   MAX_OFFLINE_TRANSACTION_KOBO,
+  MAX_USER_BALANCE_KOBO,
 } from '@oneto/shared';
 import { Prisma } from '@prisma/client';
 
@@ -191,6 +192,10 @@ export class ReconcileService {
             throw new Error(`Recipient ${envelope.recipientUserId} not found during transaction`);
           }
 
+          if (recipient.verifiedBalanceKobo + BigInt(envelope.amountKobo) > BigInt(MAX_USER_BALANCE_KOBO)) {
+            throw new Error('recipient_balance_cap_exceeded');
+          }
+
           await tx.ledgerEntry.create({
             data: {
               transactionId: envelope.transactionId,
@@ -228,6 +233,9 @@ export class ReconcileService {
     } catch (error: any) {
       if (error.message === 'balance_changed_during_reconcile') {
         return this.reject(envelopeInput?.transactionId || 'unknown', 'insufficient_balance', envelopeInput);
+      }
+      if (error.message === 'recipient_balance_cap_exceeded') {
+        return this.reject(envelopeInput?.transactionId || 'unknown', 'recipient_balance_cap_exceeded', envelopeInput);
       }
       this.logger.error(`Internal error reconciling envelope ${transactionId}:`, error);
       return {

@@ -2,6 +2,7 @@ import { Injectable, Logger, UnauthorizedException, BadRequestException, Interna
 import { PrismaService } from '../prisma/prisma.service';
 import { KorapayService } from './korapay.service';
 import { Prisma, LedgerEntryType } from '@prisma/client';
+import { MAX_USER_BALANCE_KOBO } from '@oneto/shared';
 import * as crypto from 'crypto';
 
 @Injectable()
@@ -121,6 +122,41 @@ export class TopupService {
               korapayResponse: payload,
             },
           });
+
+          const freshUser = await tx.user.findUnique({
+            where: { id: user.id },
+            select: { verifiedBalanceKobo: true },
+          });
+
+          if (!freshUser) {
+            throw new Error('User missing during transaction');
+          }
+
+          if (freshUser.verifiedBalanceKobo + BigInt(amountKobo) > BigInt(MAX_USER_BALANCE_KOBO)) {
+            this.logger.warn(
+              {
+                reference,
+                userId: user.id,
+                attemptedAmountKobo: amountKobo,
+                currentBalanceKobo: freshUser.verifiedBalanceKobo.toString(),
+              },
+              'Top-up failed: balance cap exceeded',
+            );
+            // We already created the PaymentTopup record above with status SUCCESS.
+            // We need to update it to FAILED because we are not going to credit the user.
+            // Alternatively, we could have created it with FAILED if we knew.
+            // Let's change the flow to create it AFTER the check, or update it.
+            // Actually, the constraint says "The transaction commits (the FAILED PaymentTopup is the only effect)".
+            // So I should create it with FAILED status here and return.
+            await tx.paymentTopup.update({
+              where: { reference },
+              data: {
+                status: 'FAILED',
+                korapayResponse: { ...payload, internal_failure: 'balance_cap_exceeded' },
+              },
+            });
+            return;
+          }
 
           const operatingAccount = await tx.user.findUnique({
             where: { id: 'u_operating' },

@@ -6,6 +6,7 @@ import {
   signEnvelope,
   EnvelopeDraft,
   MAX_OFFLINE_TRANSACTION_KOBO,
+  MAX_USER_BALANCE_KOBO,
   toKobo,
   toUserId,
   toTransactionId,
@@ -41,6 +42,10 @@ describe('ReconcileService', () => {
 
     service = module.get<ReconcileService>(ReconcileService);
     prisma = module.get<PrismaService>(PrismaService);
+    jest.clearAllMocks();
+  });
+
+  afterEach(() => {
     jest.clearAllMocks();
   });
 
@@ -516,5 +521,51 @@ describe('ReconcileService', () => {
     expect(logArg).not.toHaveProperty('senderBalanceAfterKobo');
 
     warnSpy.mockRestore();
+  });
+
+  it('rejects envelope if recipient balance would exceed cap', async () => {
+    const amount = 5000;
+    const draft = createValidEnvelopeDraft(senderId, recipientId, senderKey.publicKeyString, amount);
+    const envelope = signEnvelope(draft, senderKey.privateKey);
+
+    mockPrisma.user.findUnique.mockImplementation((args: any) => {
+      const where = args?.where;
+      if (where?.id === senderId) return Promise.resolve(createTestUser(senderId, senderKey.publicKeyString));
+      if (where?.id === recipientId) {
+        // Recipient is already at cap minus 1000 kobo
+        return Promise.resolve(createTestUser(recipientId, 'dummy', MAX_USER_BALANCE_KOBO - 1000));
+      }
+      return Promise.resolve(null);
+    });
+
+    mockPrisma.processedSequence.create.mockResolvedValue({});
+    mockPrisma.ledgerEntry.create.mockResolvedValue({});
+    mockPrisma.user.update.mockResolvedValue({});
+
+    const result = await service.reconcileOneInternal(recipientId, envelope);
+    expect(result).toMatchObject({ status: 'rejected', reason: 'recipient_balance_cap_exceeded' });
+  });
+
+  it('succeeds if recipient balance reaches exactly the cap', async () => {
+    const amount = 5000;
+    const draft = createValidEnvelopeDraft(senderId, recipientId, senderKey.publicKeyString, amount);
+    const envelope = signEnvelope(draft, senderKey.privateKey);
+
+    mockPrisma.user.findUnique.mockImplementation((args: any) => {
+      const where = args?.where;
+      if (where?.id === senderId) return Promise.resolve(createTestUser(senderId, senderKey.publicKeyString));
+      if (where?.id === recipientId) {
+        // Recipient will be exactly at cap after 5000 credit
+        return Promise.resolve(createTestUser(recipientId, 'dummy', MAX_USER_BALANCE_KOBO - 5000));
+      }
+      return Promise.resolve(null);
+    });
+
+    mockPrisma.processedSequence.create.mockResolvedValue({});
+    mockPrisma.ledgerEntry.create.mockResolvedValue({});
+    mockPrisma.user.update.mockResolvedValue({});
+
+    const result = await service.reconcileOneInternal(recipientId, envelope);
+    expect(result).toEqual({ transactionId: envelope.transactionId, status: 'success' });
   });
 });
