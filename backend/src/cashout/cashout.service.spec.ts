@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { CashoutService } from './cashout.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { KorapayService } from '../topup/korapay.service';
-import { CashoutStatus, Role, Status, LedgerEntryType } from '@prisma/client';
+import { Prisma, CashoutStatus, Role, Status, LedgerEntryType } from '@prisma/client';
 import { ForbiddenException, BadRequestException, ConflictException } from '@nestjs/common';
 
 describe('CashoutService', () => {
@@ -134,30 +134,38 @@ describe('CashoutService', () => {
     };
 
     it('8. approveCashout: non-ADMIN -> ForbiddenException', async () => {
-      mockPrisma.cashout.findUnique.mockResolvedValue(mockCashout);
       mockPrisma.user.findUnique.mockResolvedValue({ id: adminId, role: Role.MERCHANT });
       await expect(service.approveCashout(cashoutId, adminId)).rejects.toThrow(ForbiddenException);
+      // Update should never be called if admin check fails
+      expect(mockPrisma.cashout.update).not.toHaveBeenCalled();
     });
 
-    it('9. approveCashout: cashout already APPROVED -> ConflictException', async () => {
-      mockPrisma.cashout.findUnique.mockResolvedValue({ ...mockCashout, status: CashoutStatus.APPROVED });
-      await expect(service.approveCashout(cashoutId, adminId)).rejects.toThrow(ConflictException);
+    it('9. approveCashout: cashout already APPROVED -> BadRequestException (P2025)', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({ id: adminId, role: Role.ADMIN });
+      // Conditional update with status: PENDING won't match an APPROVED row → P2025
+      mockPrisma.cashout.update.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Record not found', { code: 'P2025', clientVersion: '5.x' }),
+      );
+      await expect(service.approveCashout(cashoutId, adminId)).rejects.toThrow(BadRequestException);
     });
 
-    it('10. approveCashout: cashout COMPLETED -> ConflictException', async () => {
-      mockPrisma.cashout.findUnique.mockResolvedValue({ ...mockCashout, status: CashoutStatus.COMPLETED });
-      await expect(service.approveCashout(cashoutId, adminId)).rejects.toThrow(ConflictException);
+    it('10. approveCashout: cashout COMPLETED -> BadRequestException (P2025)', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({ id: adminId, role: Role.ADMIN });
+      // Conditional update with status: PENDING won't match a COMPLETED row → P2025
+      mockPrisma.cashout.update.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Record not found', { code: 'P2025', clientVersion: '5.x' }),
+      );
+      await expect(service.approveCashout(cashoutId, adminId)).rejects.toThrow(BadRequestException);
     });
 
     it('11. approveCashout: PENDING -> APPROVED transition happens', async () => {
-      mockPrisma.cashout.findUnique.mockResolvedValue(mockCashout);
       mockPrisma.user.findUnique.mockResolvedValue({ id: adminId, role: Role.ADMIN });
       mockPrisma.cashout.update.mockResolvedValue({ ...mockCashout, status: CashoutStatus.APPROVED });
 
       const result = await service.approveCashout(cashoutId, adminId);
       expect(result.success).toBe(true);
       expect(mockPrisma.cashout.update).toHaveBeenCalledWith({
-        where: { id: cashoutId },
+        where: { id: cashoutId, status: CashoutStatus.PENDING },
         data: expect.objectContaining({
           status: CashoutStatus.APPROVED,
           approvedByUserId: adminId,
@@ -166,7 +174,6 @@ describe('CashoutService', () => {
     });
 
     it('12. approveCashout: triggers executePayout', async () => {
-      mockPrisma.cashout.findUnique.mockResolvedValue(mockCashout);
       mockPrisma.user.findUnique.mockResolvedValue({ id: adminId, role: Role.ADMIN });
       mockPrisma.cashout.update.mockResolvedValue({ ...mockCashout, status: CashoutStatus.APPROVED });
       
@@ -174,6 +181,34 @@ describe('CashoutService', () => {
 
       await service.approveCashout(cashoutId, adminId);
       expect(executePayoutSpy).toHaveBeenCalledWith(cashoutId);
+    });
+
+    it('approveCashout: race condition — second admin gets P2025, no payout fired', async () => {
+      // Attack: two admins click approve simultaneously. The first succeeds;
+      // the second's conditional UPDATE matches zero rows (status already APPROVED).
+      mockPrisma.user.findUnique.mockResolvedValue({ id: adminId, role: Role.ADMIN });
+      mockPrisma.cashout.update.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Record not found', { code: 'P2025', clientVersion: '5.x' }),
+      );
+      const executePayoutSpy = jest.spyOn(service as any, 'executePayout').mockResolvedValue(undefined);
+
+      await expect(service.approveCashout(cashoutId, adminId)).rejects.toThrow(BadRequestException);
+      // Critical: executePayout must NOT be called for the losing admin
+      expect(executePayoutSpy).not.toHaveBeenCalled();
+    });
+
+    it('approveCashout: happy path — WHERE includes both id and status PENDING', async () => {
+      // Regression: verify the atomic conditional update pattern is correct
+      mockPrisma.user.findUnique.mockResolvedValue({ id: adminId, role: Role.ADMIN });
+      mockPrisma.cashout.update.mockResolvedValue({ ...mockCashout, status: CashoutStatus.APPROVED });
+
+      await service.approveCashout(cashoutId, adminId);
+
+      const updateCall = mockPrisma.cashout.update.mock.calls[0][0];
+      expect(updateCall.where).toEqual({ id: cashoutId, status: CashoutStatus.PENDING });
+      expect(updateCall.data.status).toBe(CashoutStatus.APPROVED);
+      expect(updateCall.data.approvedByUserId).toBe(adminId);
+      expect(updateCall.data.approvedAt).toBeInstanceOf(Date);
     });
   });
 

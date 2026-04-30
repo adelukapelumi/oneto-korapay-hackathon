@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { KorapayService } from '../topup/korapay.service';
-import { CashoutStatus, LedgerEntryType } from '@prisma/client';
+import { Prisma, CashoutStatus, LedgerEntryType } from '@prisma/client';
 import * as crypto from 'crypto';
 
 @Injectable()
@@ -69,29 +69,34 @@ export class CashoutService {
   }
 
   async approveCashout(cashoutId: string, adminUserId: string) {
-    const cashout = await this.prisma.cashout.findUnique({
-      where: { id: cashoutId },
-    });
-
-    if (!cashout || cashout.status !== CashoutStatus.PENDING) {
-      throw new ConflictException('invalid_cashout_state');
-    }
-
     const admin = await this.prisma.user.findUnique({ where: { id: adminUserId } });
     if (!admin || admin.role !== 'ADMIN') {
       throw new ForbiddenException('Only admins can approve cashouts');
     }
 
-    const updated = await this.prisma.cashout.update({
-      where: { id: cashoutId },
-      data: {
-        status: CashoutStatus.APPROVED,
-        approvedAt: new Date(),
-        approvedByUserId: adminUserId,
-      },
-    });
+    // Atomic conditional update: the WHERE clause includes status = PENDING,
+    // so only ONE concurrent caller can match and update. The second caller
+    // matches zero rows and Prisma raises P2025 ("record not found").
+    try {
+      await this.prisma.cashout.update({
+        where: {
+          id: cashoutId,
+          status: CashoutStatus.PENDING,
+        },
+        data: {
+          status: CashoutStatus.APPROVED,
+          approvedAt: new Date(),
+          approvedByUserId: adminUserId,
+        },
+      });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
+        throw new BadRequestException('Cashout is not in PENDING status or does not exist');
+      }
+      throw err;
+    }
 
-    // Trigger payout execution async
+    // Only ONE caller reaches here; safe to fire payout
     this.executePayout(cashoutId).catch((err) => {
       this.logger.error(`Async payout execution failed for ${cashoutId}: ${err.message}`);
     });
