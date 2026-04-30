@@ -6,4 +6,9 @@ export class HealthController {
   check(): { status: string } {
     return { status: 'ok' };
   }
+
+  @Get('debug-sentry')
+  debugSentry(): never {
+    throw new Error('Sentry test error from /health/debug-sentry');
+  }
 }

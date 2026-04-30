@@ -10,6 +10,8 @@ import { AuthModule } from "./auth/auth.module";
 import { ReconcileModule } from "./reconcile/reconcile.module";
 import { TopupModule } from "./topup/topup.module";
 import { HealthModule } from "./health/health.module";
+import { SentryModule, SentryGlobalFilter } from '@sentry/nestjs/setup';
+import { APP_FILTER } from '@nestjs/core';
 
 @Module({
   imports: [
@@ -19,6 +21,7 @@ import { HealthModule } from "./health/health.module";
     //
     // Config: 100 requests per minute per IP. Tune down before pilot launch
     // based on expected legitimate traffic patterns.
+    SentryModule.forRoot(),
     ThrottlerModule.forRoot([
       {
         ttl: 60_000,
@@ -37,6 +40,10 @@ import { HealthModule } from "./health/health.module";
   ],
   controllers: [],
   providers: [
+    {
+      provide: APP_FILTER,
+      useClass: SentryGlobalFilter,
+    },
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,

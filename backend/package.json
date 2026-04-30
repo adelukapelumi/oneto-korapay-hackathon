@@ -32,6 +32,7 @@
         "@noble/hashes": "1.4.0",
         "@oneto/shared": "workspace:*",
         "@prisma/client": "5.19.1",
+        "@sentry/nestjs": "^10.51.0",
         "argon2": "0.41.1",
         "class-transformer": "^0.5.1",
         "class-validator": "^0.14.1",
