@@ -7,6 +7,8 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { UserThrottlerGuard } from '../common/user-throttler.guard';
+import { Throttle } from '@nestjs/throttler';
 import { ReconcileService, ReconcileResult } from './reconcile.service';
 import { z } from 'zod';
 
@@ -19,7 +21,8 @@ export class ReconcileController {
   constructor(private readonly reconcileService: ReconcileService) {}
 
   @Post()
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, UserThrottlerGuard)
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
   async reconcile(@Req() req: any, @Body() body: any): Promise<ReconcileResult[]> {
     const userId = req.user?.sub;
     if (!userId) {

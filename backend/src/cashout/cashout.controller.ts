@@ -2,13 +2,16 @@ import { Controller, Post, Get, Body, Param, UseGuards, Request, Headers, HttpCo
 import { CashoutService } from './cashout.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/role.guard';
+import { UserThrottlerGuard } from '../common/user-throttler.guard';
+import { Throttle } from '@nestjs/throttler';
 
 @Controller('cashout')
 export class CashoutController {
   constructor(private readonly cashoutService: CashoutService) {}
 
   @Post('request')
-  @UseGuards(JwtAuthGuard, RolesGuard(['MERCHANT']))
+  @UseGuards(JwtAuthGuard, UserThrottlerGuard, RolesGuard(['MERCHANT']))
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   async requestCashout(@Request() req: any) {
     const cashout = await this.cashoutService.requestCashout(req.user.sub);
     return {
@@ -34,7 +37,8 @@ export class CashoutController {
   }
 
   @Post('approve/:id')
-  @UseGuards(JwtAuthGuard, RolesGuard(['ADMIN']))
+  @UseGuards(JwtAuthGuard, UserThrottlerGuard, RolesGuard(['ADMIN']))
+  @Throttle({ default: { limit: 30, ttl: 60000 } })
   async approveCashout(@Param('id') id: string, @Request() req: any) {
     return this.cashoutService.approveCashout(id, req.user.sub);
   }

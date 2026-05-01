@@ -3,10 +3,13 @@ import { CashoutController } from './cashout.controller';
 import { CashoutService } from './cashout.service';
 import { JwtWrapperService } from '../auth/jwt.service';
 import { CashoutStatus } from '@prisma/client';
+import { Reflector } from '@nestjs/core';
+import { UserThrottlerGuard } from '../common/user-throttler.guard';
 
 describe('CashoutController', () => {
   let controller: CashoutController;
   let service: CashoutService;
+  let reflector: Reflector;
 
   const mockService = {
     requestCashout: jest.fn(),
@@ -26,10 +29,14 @@ describe('CashoutController', () => {
         { provide: CashoutService, useValue: mockService },
         { provide: JwtWrapperService, useValue: mockJwtService },
       ],
-    }).compile();
+    })
+    .overrideGuard(UserThrottlerGuard)
+    .useValue({ canActivate: () => true })
+    .compile();
 
     controller = module.get<CashoutController>(CashoutController);
     service = module.get<CashoutService>(CashoutService);
+    reflector = module.get<Reflector>(Reflector);
     jest.clearAllMocks();
   });
 
@@ -74,5 +81,31 @@ describe('CashoutController', () => {
     const result = await controller.handleWebhook(payload, 'sig');
     expect(result.success).toBe(true);
     expect(service.handlePayoutWebhook).toHaveBeenCalledWith(payload, 'sig');
+  });
+
+  describe('Rate Limiting Metadata', () => {
+    it('requestCashout should have correct @Throttle limits (5 req/min)', () => {
+      const limit = reflector.get('THROTTLER:LIMITdefault', controller.requestCashout);
+      const ttl = reflector.get('THROTTLER:TTLdefault', controller.requestCashout);
+      expect(limit).toBe(5);
+      expect(ttl).toBe(60000);
+    });
+
+    it('requestCashout should use UserThrottlerGuard', () => {
+      const guards = Reflect.getMetadata('__guards__', controller.requestCashout);
+      expect(guards).toContain(UserThrottlerGuard);
+    });
+
+    it('approveCashout should have correct @Throttle limits (30 req/min)', () => {
+      const limit = reflector.get('THROTTLER:LIMITdefault', controller.approveCashout);
+      const ttl = reflector.get('THROTTLER:TTLdefault', controller.approveCashout);
+      expect(limit).toBe(30);
+      expect(ttl).toBe(60000);
+    });
+
+    it('approveCashout should use UserThrottlerGuard', () => {
+      const guards = Reflect.getMetadata('__guards__', controller.approveCashout);
+      expect(guards).toContain(UserThrottlerGuard);
+    });
   });
 });
