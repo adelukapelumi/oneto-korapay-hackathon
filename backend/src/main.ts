@@ -1,4 +1,6 @@
 import './instrument';
+import helmet from 'helmet';
+
 
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
@@ -12,6 +14,8 @@ async function bootstrap() {
   });
 
   app.useLogger(app.get(Logger));
+  app.use(helmet());
+
 
   const configService = app.get(ConfigService);
   const port = configService.get<string>('PORT') || 3000;
