@@ -265,7 +265,7 @@ describe('TopupService', () => {
 
     it('unknown event: logs, returns success, no DB writes', async () => {
       mockKorapay.verifyWebhookSignature.mockReturnValue(true);
-      const payload = { event: 'transfer.success', data: {} };
+      const payload = { event: 'transfer.success', data: { reference: 'some-ref', amount: 100 } };
       
       const result = await service.handleWebhook(payload, 'good-sig');
       expect(result).toEqual({ success: true });
@@ -352,6 +352,44 @@ describe('TopupService', () => {
         where: { id: 'u_123' },
         data: { verifiedBalanceKobo: { increment: BigInt(50000) } },
       }));
+    });
+
+    it('rejects malformed payload (missing reference) with BadRequestException', async () => {
+      mockKorapay.verifyWebhookSignature.mockReturnValue(true);
+      const malformedPayload = {
+        event: 'charge.success',
+        data: { amount: 500, status: 'success', customer: { email: 'test@cu.edu.ng' } },
+        // missing data.reference
+      };
+
+      await expect(service.handleWebhook(malformedPayload, 'good-sig')).rejects.toThrow(BadRequestException);
+    });
+
+    it('accepts payload with extra unknown fields (passthrough)', async () => {
+      mockKorapay.verifyWebhookSignature.mockReturnValue(true);
+      const extraFieldsPayload = {
+        event: 'charge.success',
+        data: { 
+          reference: 'top_extra', 
+          amount: 500, 
+          status: 'success', 
+          customer: { email: 'test@cu.edu.ng' },
+          extra_internal_field: 'should-be-allowed' 
+        },
+        metadata: { some_meta: 123 }
+      };
+
+      mockPrisma.user.findUnique.mockImplementation(async ({ where }) => {
+        if (where.id === 'u_123' || where.email === 'test@cu.edu.ng') return { id: 'u_123', email: 'test@cu.edu.ng', verifiedBalanceKobo: BigInt(0) };
+        if (where.id === 'u_operating') return { id: 'u_operating', verifiedBalanceKobo: BigInt(0) };
+        return null;
+      });
+
+      mockPrisma.user.update.mockResolvedValue({ verifiedBalanceKobo: BigInt(50000) });
+      mockPrisma.$transaction.mockImplementation(async (callback) => callback(mockPrisma));
+
+      const result = await service.handleWebhook(extraFieldsPayload, 'good-sig');
+      expect(result).toEqual({ success: true });
     });
   });
 });

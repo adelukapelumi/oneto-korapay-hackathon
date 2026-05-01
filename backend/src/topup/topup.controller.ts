@@ -28,7 +28,7 @@ export class TopupController {
   @Post('korapay/webhook')
   @HttpCode(HttpStatus.OK)
   async webhook(
-    @Body() payload: any,
+    @Body() payload: unknown,
     @Headers('x-korapay-signature') signature: string
   ): Promise<{ success: true }> {
     return this.topupService.handleWebhook(payload, signature);

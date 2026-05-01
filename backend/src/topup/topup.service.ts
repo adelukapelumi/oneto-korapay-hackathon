@@ -4,6 +4,7 @@ import { KorapayService } from './korapay.service';
 import { Prisma, LedgerEntryType } from '@prisma/client';
 import { MAX_USER_BALANCE_KOBO } from '@oneto/shared';
 import * as crypto from 'crypto';
+import { KorapayWebhookSchema } from './korapay-webhook.schema';
 
 @Injectable()
 export class TopupService {
@@ -41,12 +42,22 @@ export class TopupService {
     };
   }
 
-  async handleWebhook(payload: any, signatureHeader: string | undefined): Promise<{ success: true }> {
-    if (!payload || !this.korapayService.verifyWebhookSignature(payload.data, signatureHeader)) {
+  async handleWebhook(payload: unknown, signatureHeader: string | undefined): Promise<{ success: true }> {
+    // 1. Verify signature on RAW payload.data
+    const rawData = (payload as any)?.data;
+    if (!payload || !this.korapayService.verifyWebhookSignature(rawData, signatureHeader)) {
       throw new UnauthorizedException('Invalid webhook signature');
     }
 
-    const { event, data } = payload;
+    // 2. Schema validate
+    const parseResult = KorapayWebhookSchema.safeParse(payload);
+    if (!parseResult.success) {
+      this.logger.warn({ issues: parseResult.error.issues }, 'Webhook payload failed schema validation');
+      throw new BadRequestException('Invalid webhook payload structure');
+    }
+    const validated = parseResult.data;
+
+    const { event, data } = validated;
 
     // Fix 3: Webhook event spoofing protection
     const eventStatusMap: Record<string, string> = {
@@ -54,8 +65,8 @@ export class TopupService {
       'charge.failed': 'failed',
     };
     const expectedDataStatus = eventStatusMap[event];
-    if (expectedDataStatus && payload.data?.status !== expectedDataStatus) {
-      this.logger.warn({ event, dataStatus: payload.data?.status }, 'Webhook event/status mismatch');
+    if (expectedDataStatus && data.status !== expectedDataStatus) {
+      this.logger.warn({ event, dataStatus: data.status }, 'Webhook event/status mismatch');
       return { success: true }; // return 200 to stop Korapay retries, but don't process
     }
 
@@ -64,14 +75,9 @@ export class TopupService {
       return { success: true };
     }
 
-    const reference = data?.reference;
-    const amountNgn = data?.amount;
-    const customerEmail = data?.customer?.email;
-
-    if (!reference) {
-      this.logger.warn('Webhook payload missing reference');
-      return { success: true };
-    }
+    const reference = data.reference;
+    const amountNgn = data.amount;
+    const customerEmail = data.customer?.email;
 
     const amountKobo = Math.round(Number(amountNgn || 0) * 100);
 
@@ -87,7 +93,7 @@ export class TopupService {
             userId: user?.id || 'UNKNOWN',
             amountKobo: BigInt(amountKobo),
             status: 'FAILED',
-            korapayResponse: payload,
+            korapayResponse: validated as unknown as Prisma.InputJsonValue,
           },
         });
       } catch (err) {
@@ -119,7 +125,7 @@ export class TopupService {
               userId: user.id,
               amountKobo: BigInt(amountKobo),
               status: 'SUCCESS',
-              korapayResponse: payload,
+              korapayResponse: validated as unknown as Prisma.InputJsonValue,
             },
           });
 
@@ -152,7 +158,7 @@ export class TopupService {
               where: { reference },
               data: {
                 status: 'FAILED',
-                korapayResponse: { ...payload, internal_failure: 'balance_cap_exceeded' },
+                korapayResponse: { ...validated, internal_failure: 'balance_cap_exceeded' } as unknown as Prisma.InputJsonValue,
               },
             });
             return;
