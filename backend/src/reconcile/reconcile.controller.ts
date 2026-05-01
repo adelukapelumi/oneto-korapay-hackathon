@@ -12,9 +12,18 @@ import { Throttle } from '@nestjs/throttler';
 import { ReconcileService, ReconcileResult } from './reconcile.service';
 import { z } from 'zod';
 
+// Each envelope element is left as unknown here; the service parses each one
+// against TransactionEnvelopeSchema from /shared, which is the authoritative
+// boundary check for envelope shape and invariants.
 const ReconcileDtoSchema = z.object({
-  envelopes: z.array(z.any()).min(1).max(50),
+  envelopes: z.array(z.unknown()).min(1).max(50),
 });
+
+// Shape of the request after JwtAuthGuard has attached the verified payload.
+// Defined locally to avoid widening the Express Request type globally.
+interface AuthenticatedRequest {
+  user?: { sub?: string };
+}
 
 @Controller('reconcile')
 export class ReconcileController {
@@ -23,7 +32,10 @@ export class ReconcileController {
   @Post()
   @UseGuards(JwtAuthGuard, UserThrottlerGuard)
   @Throttle({ default: { limit: 20, ttl: 60000 } })
-  async reconcile(@Req() req: any, @Body() body: any): Promise<ReconcileResult[]> {
+  async reconcile(
+    @Req() req: AuthenticatedRequest,
+    @Body() body: unknown,
+  ): Promise<ReconcileResult[]> {
     const userId = req.user?.sub;
     if (!userId) {
       throw new BadRequestException('User ID not found in token');
