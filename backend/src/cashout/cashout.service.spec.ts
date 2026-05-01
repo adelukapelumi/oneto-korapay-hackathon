@@ -65,6 +65,11 @@ describe('CashoutService', () => {
     },
   };
 
+  const mockOperating = {
+    id: operatingId,
+    verifiedBalanceKobo: BigInt(100000),
+  };
+
   describe('requestCashout', () => {
     it('1. requestCashout: non-MERCHANT role -> ForbiddenException', async () => {
       mockPrisma.user.findUnique.mockResolvedValue({ ...mockMerchant, role: Role.STUDENT });
@@ -133,195 +138,168 @@ describe('CashoutService', () => {
       status: CashoutStatus.PENDING,
     };
 
+    beforeEach(() => {
+      mockPrisma.user.findUnique.mockImplementation((args: any) => {
+        if (args.where.id === adminId) return Promise.resolve({ id: adminId, role: Role.ADMIN });
+        if (args.where.id === merchantId) return Promise.resolve(mockMerchant);
+        if (args.where.id === operatingId) return Promise.resolve(mockOperating);
+        return Promise.resolve(null);
+      });
+      mockPrisma.cashout.update.mockResolvedValue(mockCashout);
+    });
+
     it('8. approveCashout: non-ADMIN -> ForbiddenException', async () => {
       mockPrisma.user.findUnique.mockResolvedValue({ id: adminId, role: Role.MERCHANT });
       await expect(service.approveCashout(cashoutId, adminId)).rejects.toThrow(ForbiddenException);
-      // Update should never be called if admin check fails
-      expect(mockPrisma.cashout.update).not.toHaveBeenCalled();
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
     });
 
-    it('9. approveCashout: cashout already APPROVED -> BadRequestException (P2025)', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue({ id: adminId, role: Role.ADMIN });
-      // Conditional update with status: PENDING won't match an APPROVED row → P2025
+    it('9. approveCashout: cashout already PROCESSING/APPROVED/COMPLETED -> BadRequestException (P2025)', async () => {
       mockPrisma.cashout.update.mockRejectedValue(
         new Prisma.PrismaClientKnownRequestError('Record not found', { code: 'P2025', clientVersion: '5.x' }),
       );
       await expect(service.approveCashout(cashoutId, adminId)).rejects.toThrow(BadRequestException);
     });
 
-    it('10. approveCashout: cashout COMPLETED -> BadRequestException (P2025)', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue({ id: adminId, role: Role.ADMIN });
-      // Conditional update with status: PENDING won't match a COMPLETED row → P2025
-      mockPrisma.cashout.update.mockRejectedValue(
-        new Prisma.PrismaClientKnownRequestError('Record not found', { code: 'P2025', clientVersion: '5.x' }),
-      );
-      await expect(service.approveCashout(cashoutId, adminId)).rejects.toThrow(BadRequestException);
-    });
-
-    it('11. approveCashout: PENDING -> APPROVED transition happens', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue({ id: adminId, role: Role.ADMIN });
-      mockPrisma.cashout.update.mockResolvedValue({ ...mockCashout, status: CashoutStatus.APPROVED });
-
+    it('11. approveCashout: PENDING -> PROCESSING transition happens in transaction', async () => {
       const result = await service.approveCashout(cashoutId, adminId);
       expect(result.success).toBe(true);
       expect(mockPrisma.cashout.update).toHaveBeenCalledWith({
         where: { id: cashoutId, status: CashoutStatus.PENDING },
         data: expect.objectContaining({
-          status: CashoutStatus.APPROVED,
+          status: CashoutStatus.PROCESSING,
           approvedByUserId: adminId,
+          korapayReference: expect.stringContaining('cashout_'),
         }),
       });
+      expect(mockPrisma.$transaction).toHaveBeenCalledWith(expect.any(Function), { isolationLevel: 'Serializable' });
     });
 
-    it('12. approveCashout: triggers executePayout', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue({ id: adminId, role: Role.ADMIN });
-      mockPrisma.cashout.update.mockResolvedValue({ ...mockCashout, status: CashoutStatus.APPROVED });
-      
-      const executePayoutSpy = jest.spyOn(service as any, 'executePayout').mockResolvedValue(undefined);
+    it('12. approveCashout: triggers initiateKorapayPayout', async () => {
+      const initiateKorapayPayoutSpy = jest.spyOn(service as any, 'initiateKorapayPayout').mockResolvedValue(undefined);
 
       await service.approveCashout(cashoutId, adminId);
-      expect(executePayoutSpy).toHaveBeenCalledWith(cashoutId);
+      expect(initiateKorapayPayoutSpy).toHaveBeenCalledWith(cashoutId, expect.stringContaining('cashout_'));
     });
 
     it('approveCashout: race condition — second admin gets P2025, no payout fired', async () => {
-      // Attack: two admins click approve simultaneously. The first succeeds;
-      // the second's conditional UPDATE matches zero rows (status already APPROVED).
-      mockPrisma.user.findUnique.mockResolvedValue({ id: adminId, role: Role.ADMIN });
       mockPrisma.cashout.update.mockRejectedValue(
         new Prisma.PrismaClientKnownRequestError('Record not found', { code: 'P2025', clientVersion: '5.x' }),
       );
-      const executePayoutSpy = jest.spyOn(service as any, 'executePayout').mockResolvedValue(undefined);
+      const initiateKorapayPayoutSpy = jest.spyOn(service as any, 'initiateKorapayPayout').mockResolvedValue(undefined);
 
       await expect(service.approveCashout(cashoutId, adminId)).rejects.toThrow(BadRequestException);
-      // Critical: executePayout must NOT be called for the losing admin
-      expect(executePayoutSpy).not.toHaveBeenCalled();
+      expect(initiateKorapayPayoutSpy).not.toHaveBeenCalled();
     });
 
-    it('approveCashout: happy path — WHERE includes both id and status PENDING', async () => {
-      // Regression: verify the atomic conditional update pattern is correct
-      mockPrisma.user.findUnique.mockResolvedValue({ id: adminId, role: Role.ADMIN });
-      mockPrisma.cashout.update.mockResolvedValue({ ...mockCashout, status: CashoutStatus.APPROVED });
+    it('Atomic transaction test: Mock the inner transaction to throw mid-way', async () => {
+      // Throw mid-way: operating account missing
+      mockPrisma.user.findUnique.mockImplementation((args: any) => {
+        if (args.where.id === adminId) return Promise.resolve({ id: adminId, role: Role.ADMIN });
+        if (args.where.id === merchantId) return Promise.resolve(mockMerchant);
+        if (args.where.id === operatingId) return Promise.resolve(null); // MISSING
+        return Promise.resolve(null);
+      });
 
+      await expect(service.approveCashout(cashoutId, adminId)).rejects.toThrow(BadRequestException);
+      // Ensure no balance updates or ledger entries happened (they were inside tx)
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
+      expect(mockPrisma.ledgerEntry.create).not.toHaveBeenCalled();
+      expect(mockKorapay.initiatePayout).not.toHaveBeenCalled();
+    });
+
+    it('Insufficient Merchant Balance: rollback and throw BadRequest', async () => {
+      mockPrisma.user.findUnique.mockImplementation((args: any) => {
+        if (args.where.id === adminId) return Promise.resolve({ id: adminId, role: Role.ADMIN });
+        if (args.where.id === merchantId) return Promise.resolve({ ...mockMerchant, verifiedBalanceKobo: BigInt(1000) });
+        if (args.where.id === operatingId) return Promise.resolve(mockOperating);
+        return Promise.resolve(null);
+      });
+
+      await expect(service.approveCashout(cashoutId, adminId)).rejects.toThrow(BadRequestException);
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('approveCashout: happy path — WHERE includes both id and status PENDING (regression)', async () => {
+      // Regression: verify the atomic conditional update pattern is correct
       await service.approveCashout(cashoutId, adminId);
 
       const updateCall = mockPrisma.cashout.update.mock.calls[0][0];
       expect(updateCall.where).toEqual({ id: cashoutId, status: CashoutStatus.PENDING });
-      expect(updateCall.data.status).toBe(CashoutStatus.APPROVED);
+      expect(updateCall.data.status).toBe(CashoutStatus.PROCESSING);
       expect(updateCall.data.approvedByUserId).toBe(adminId);
       expect(updateCall.data.approvedAt).toBeInstanceOf(Date);
+      expect(updateCall.data.korapayReference).toEqual(expect.stringContaining('cashout_'));
+    });
+
+    it('approveCashout: uses Serializable isolation level', async () => {
+      await service.approveCashout(cashoutId, adminId);
+      expect(mockPrisma.$transaction).toHaveBeenCalledWith(expect.any(Function), { isolationLevel: 'Serializable' });
+    });
+
+    it('Happy path: status PROCESSING, balances updated, Korapay called', async () => {
+      const result = await service.approveCashout(cashoutId, adminId);
+      expect(result.success).toBe(true);
+
+      // Verify merchant debit
+      expect(mockPrisma.user.update).toHaveBeenCalledWith({
+        where: { id: merchantId },
+        data: { verifiedBalanceKobo: BigInt(0) },
+      });
+      expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ userId: merchantId, type: LedgerEntryType.DEBIT })
+      }));
+
+      // Verify operating credit
+      expect(mockPrisma.user.update).toHaveBeenCalledWith({
+        where: { id: operatingId },
+        data: { verifiedBalanceKobo: mockOperating.verifiedBalanceKobo + BigInt(5000) },
+      });
+      expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ userId: operatingId, type: LedgerEntryType.CREDIT })
+      }));
     });
   });
 
-  describe('executePayout', () => {
+  describe('initiateKorapayPayout', () => {
     const cashoutId = 'c_123';
+    const korapayRef = 'cashout_ref_123';
     const mockCashout = {
       id: cashoutId,
       merchantUserId: merchantId,
       amountKobo: BigInt(5000),
-      status: CashoutStatus.APPROVED,
+      status: CashoutStatus.PROCESSING,
       cashoutBankName: 'Wema Bank',
       cashoutBankCode: '035',
       cashoutAccountNumber: '1234567890',
       cashoutAccountName: 'Test Merchant',
     };
 
-    it('13. executePayout: balance changed -> status FAILED', async () => {
-      mockPrisma.cashout.findUnique.mockResolvedValue(mockCashout);
-      mockPrisma.user.findUnique.mockImplementation((args: any) => {
-        if (args.where.id === merchantId) return Promise.resolve({ ...mockMerchant, verifiedBalanceKobo: BigInt(1000) });
-        return Promise.resolve(null);
-      });
-
-      await (service as any).executePayout(cashoutId);
-
-      expect(mockPrisma.cashout.update).toHaveBeenCalledWith({
-        where: { id: cashoutId },
-        data: { status: CashoutStatus.FAILED, failureReason: 'balance_changed' },
-      });
-      expect(mockKorapay.initiatePayout).not.toHaveBeenCalled();
-    });
-
-    it('14. executePayout: happy path writes ledger entries and calls Korapay', async () => {
+    beforeEach(() => {
       mockPrisma.cashout.findUnique.mockResolvedValue(mockCashout);
       mockPrisma.user.findUnique.mockImplementation((args: any) => {
         if (args.where.id === merchantId) return Promise.resolve(mockMerchant);
-        if (args.where.id === operatingId) return Promise.resolve({ id: operatingId, verifiedBalanceKobo: BigInt(0) });
+        if (args.where.id === operatingId) return Promise.resolve(mockOperating);
         return Promise.resolve(null);
       });
-      mockKorapay.initiatePayout.mockResolvedValue({ reference: 'ref', status: 'processing' });
-
-      await (service as any).executePayout(cashoutId);
-
-      expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledWith(expect.objectContaining({
-        data: expect.objectContaining({ type: LedgerEntryType.DEBIT, userId: merchantId })
-      }));
-      expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledWith(expect.objectContaining({
-        data: expect.objectContaining({ type: LedgerEntryType.CREDIT, userId: operatingId })
-      }));
-      expect(mockKorapay.initiatePayout).toHaveBeenCalledWith(expect.objectContaining({
-        bankCode: '035'
-      }));
     });
 
-    it('15. executePayout: Korapay API throws -> rolls back balance', async () => {
-      mockPrisma.cashout.findUnique.mockResolvedValue(mockCashout);
-      mockPrisma.user.findUnique.mockImplementation((args: any) => {
-        if (args.where.id === merchantId) return Promise.resolve(mockMerchant);
-        if (args.where.id === operatingId) return Promise.resolve({ id: operatingId, verifiedBalanceKobo: BigInt(0) });
-        return Promise.resolve(null);
-      });
+    it('Korapay API Immediate Failure: compensating entries, status FAILED', async () => {
       mockKorapay.initiatePayout.mockRejectedValue(new Error('API Down'));
 
-      await (service as any).executePayout(cashoutId);
+      await (service as any).initiateKorapayPayout(cashoutId, korapayRef);
 
       // Reversal should happen: CREDIT merchant, DEBIT operating
       expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledWith(expect.objectContaining({
         data: expect.objectContaining({ type: LedgerEntryType.CREDIT, userId: merchantId })
       }));
+      expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ type: LedgerEntryType.DEBIT, userId: operatingId })
+      }));
       expect(mockPrisma.cashout.update).toHaveBeenCalledWith({
         where: { id: cashoutId },
         data: { status: CashoutStatus.FAILED, failureReason: 'payout_initiation_failed' },
       });
-    });
-
-    it('16. executePayout: uses Serializable isolation', async () => {
-      mockPrisma.cashout.findUnique.mockResolvedValue(mockCashout);
-      mockPrisma.user.findUnique.mockResolvedValue(mockMerchant);
-      
-      await (service as any).executePayout(cashoutId);
-      
-      expect(mockPrisma.$transaction).toHaveBeenCalledWith(expect.any(Function), { isolationLevel: 'Serializable' });
-    });
-
-    it('17. executePayout: operating account missing -> throws', async () => {
-      mockPrisma.cashout.findUnique.mockResolvedValue(mockCashout);
-      mockPrisma.user.findUnique.mockImplementation((args: any) => {
-        if (args.where.id === merchantId) return Promise.resolve(mockMerchant);
-        if (args.where.id === operatingId) return Promise.resolve(null);
-        return Promise.resolve(null);
-      });
-
-      await expect((service as any).executePayout(cashoutId)).resolves.toBeUndefined();
-      // Error is caught and logged in executePayout
-    });
-
-    it('detects state change during executePayout (Fix 2)', async () => {
-      let findUniqueCallCount = 0;
-      mockPrisma.cashout.findUnique.mockImplementation(() => {
-        findUniqueCallCount++;
-        // First call (outside tx): APPROVED
-        // Second call (inside tx): PROCESSING (simulating concurrent execution)
-        const status = findUniqueCallCount === 1 ? CashoutStatus.APPROVED : CashoutStatus.PROCESSING;
-        return Promise.resolve({ ...mockCashout, status });
-      });
-
-      await (service as any).executePayout(cashoutId);
-
-      expect(mockPrisma.cashout.update).toHaveBeenCalledWith({
-        where: { id: cashoutId },
-        data: { status: CashoutStatus.FAILED, failureReason: 'state_changed_during_execute' },
-      });
-      expect(mockKorapay.initiatePayout).not.toHaveBeenCalled();
     });
   });
 

@@ -74,87 +74,56 @@ export class CashoutService {
       throw new ForbiddenException('Only admins can approve cashouts');
     }
 
-    // Atomic conditional update: the WHERE clause includes status = PENDING,
-    // so only ONE concurrent caller can match and update. The second caller
-    // matches zero rows and Prisma raises P2025 ("record not found").
-    try {
-      await this.prisma.cashout.update({
-        where: {
-          id: cashoutId,
-          status: CashoutStatus.PENDING,
-        },
-        data: {
-          status: CashoutStatus.APPROVED,
-          approvedAt: new Date(),
-          approvedByUserId: adminUserId,
-        },
-      });
-    } catch (err) {
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
-        throw new BadRequestException('Cashout is not in PENDING status or does not exist');
-      }
-      throw err;
-    }
-
-    // Only ONE caller reaches here; safe to fire payout
-    this.executePayout(cashoutId).catch((err) => {
-      this.logger.error(`Async payout execution failed for ${cashoutId}: ${err.message}`);
-    });
-
-    return { success: true };
-  }
-
-  private async executePayout(cashoutId: string) {
-    const cashout = await this.prisma.cashout.findUnique({
-      where: { id: cashoutId },
-    });
-
-    if (!cashout || cashout.status !== CashoutStatus.APPROVED) {
-      return;
-    }
-
     const korapayReference = `cashout_${crypto.randomBytes(12).toString('hex')}`;
 
     try {
-      const success = await this.prisma.$transaction(
+      await this.prisma.$transaction(
         async (tx) => {
-          // Fix 2: Re-fetch cashout inside transaction to prevent race conditions
-          const freshCashout = await tx.cashout.findUnique({
-            where: { id: cashoutId },
+          // 1. Atomic status update: PENDING -> PROCESSING
+          // The WHERE clause ensures only one admin can approve a pending request.
+          // If status is already changed (e.g. by another admin), update throws P2025.
+          const cashout = await tx.cashout.update({
+            where: {
+              id: cashoutId,
+              status: CashoutStatus.PENDING,
+            },
+            data: {
+              status: CashoutStatus.PROCESSING,
+              approvedAt: new Date(),
+              approvedByUserId: adminUserId,
+              korapayReference,
+            },
           });
 
-          if (!freshCashout || freshCashout.status !== CashoutStatus.APPROVED) {
-            throw new Error('cashout_state_changed');
-          }
-
+          // 2. Fetch merchant and check balance
           const merchant = await tx.user.findUnique({
             where: { id: cashout.merchantUserId },
           });
 
-          if (!merchant || merchant.verifiedBalanceKobo < cashout.amountKobo) {
-            await tx.cashout.update({
-              where: { id: cashoutId },
-              data: { status: CashoutStatus.FAILED, failureReason: 'balance_changed' },
-            });
-            return false;
+          if (!merchant) {
+            throw new Error('merchant_not_found');
           }
 
+          if (merchant.verifiedBalanceKobo < cashout.amountKobo) {
+            throw new Error('insufficient_balance');
+          }
+
+          // 3. Fetch operating account
           const operatingAccount = await tx.user.findUnique({
             where: { id: this.OPERATING_USER_ID },
           });
 
           if (!operatingAccount) {
-            throw new Error('Operating account missing');
+            throw new Error('operating_account_missing');
           }
 
-          // Update Cashout status
-          await tx.cashout.update({
-            where: { id: cashoutId },
-            data: { status: CashoutStatus.PROCESSING, korapayReference },
+          // 4. Debit merchant
+          const newMerchantBalance = merchant.verifiedBalanceKobo - cashout.amountKobo;
+          await tx.user.update({
+            where: { id: merchant.id },
+            data: { verifiedBalanceKobo: newMerchantBalance },
           });
 
-          // Debit merchant
-          const newMerchantBalance = merchant.verifiedBalanceKobo - cashout.amountKobo;
           await tx.ledgerEntry.create({
             data: {
               transactionId: korapayReference,
@@ -165,13 +134,14 @@ export class CashoutService {
               description: `Cashout payout ${korapayReference}`,
             },
           });
+
+          // 5. Credit operating account
+          const newOperatingBalance = operatingAccount.verifiedBalanceKobo + cashout.amountKobo;
           await tx.user.update({
-            where: { id: merchant.id },
-            data: { verifiedBalanceKobo: newMerchantBalance },
+            where: { id: operatingAccount.id },
+            data: { verifiedBalanceKobo: newOperatingBalance },
           });
 
-          // Credit operating account
-          const newOperatingBalance = operatingAccount.verifiedBalanceKobo + cashout.amountKobo;
           await tx.ledgerEntry.create({
             data: {
               transactionId: korapayReference,
@@ -182,87 +152,100 @@ export class CashoutService {
               description: `Cashout payout from merchant ${merchant.id}`,
             },
           });
-          await tx.user.update({
-            where: { id: operatingAccount.id },
-            data: { verifiedBalanceKobo: newOperatingBalance },
-          });
-
-          return true;
         },
         { isolationLevel: 'Serializable' },
       );
-
-      if (!success) return;
-
-      // Outside transaction: call Korapay
-      try {
-        await this.korapayService.initiatePayout({
-          reference: korapayReference,
-          amountKobo: Number(cashout.amountKobo),
-          bankCode: cashout.cashoutBankCode,
-          accountNumber: cashout.cashoutAccountNumber,
-          accountName: cashout.cashoutAccountName,
-          narration: `Cashout ${korapayReference}`,
-        });
-      } catch (error: any) {
-        this.logger.error(`Korapay payout initiation failed for ${cashoutId}: ${error.message}`);
-        // ROLL BACK balance reservation via compensating entries
-        await this.prisma.$transaction(
-          async (tx) => {
-            const merchant = await tx.user.findUnique({ where: { id: cashout.merchantUserId } });
-            const operating = await tx.user.findUnique({ where: { id: this.OPERATING_USER_ID } });
-
-            if (merchant && operating) {
-              const reverseRef = `${korapayReference}_rev`;
-              
-              await tx.ledgerEntry.create({
-                data: {
-                  transactionId: reverseRef,
-                  userId: merchant.id,
-                  type: LedgerEntryType.CREDIT,
-                  amountKobo: cashout.amountKobo,
-                  balanceAfterKobo: merchant.verifiedBalanceKobo + cashout.amountKobo,
-                  description: `Cashout reversal ${korapayReference}`,
-                },
-              });
-              await tx.user.update({
-                where: { id: merchant.id },
-                data: { verifiedBalanceKobo: { increment: cashout.amountKobo } },
-              });
-
-              await tx.ledgerEntry.create({
-                data: {
-                  transactionId: reverseRef,
-                  userId: operating.id,
-                  type: LedgerEntryType.DEBIT,
-                  amountKobo: cashout.amountKobo,
-                  balanceAfterKobo: operating.verifiedBalanceKobo - cashout.amountKobo,
-                  description: `Cashout reversal to merchant ${merchant.id}`,
-                },
-              });
-              await tx.user.update({
-                where: { id: operating.id },
-                data: { verifiedBalanceKobo: { decrement: cashout.amountKobo } },
-              });
-            }
-
-            await tx.cashout.update({
-              where: { id: cashoutId },
-              data: { status: CashoutStatus.FAILED, failureReason: 'payout_initiation_failed' },
-            });
-          },
-          { isolationLevel: 'Serializable' },
-        );
+    } catch (err: any) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
+        throw new BadRequestException('Cashout is not in PENDING status or does not exist');
       }
+      if (err.message === 'insufficient_balance') {
+        throw new BadRequestException('insufficient_balance_for_cashout');
+      }
+      if (err.message === 'operating_account_missing' || err.message === 'merchant_not_found') {
+        throw new BadRequestException(err.message);
+      }
+      throw err;
+    }
+
+    // Only reached if transaction committed successfully.
+    // Fire-and-forget Korapay call.
+    this.initiateKorapayPayout(cashoutId, korapayReference).catch((err) => {
+      this.logger.error(`Async Korapay payout initiation failed for ${cashoutId}: ${err.message}`);
+    });
+
+    return { success: true };
+  }
+
+  private async initiateKorapayPayout(cashoutId: string, korapayReference: string) {
+    const cashout = await this.prisma.cashout.findUnique({
+      where: { id: cashoutId },
+    });
+
+    if (!cashout || cashout.status !== CashoutStatus.PROCESSING) {
+      return;
+    }
+
+    try {
+      await this.korapayService.initiatePayout({
+        reference: korapayReference,
+        amountKobo: Number(cashout.amountKobo),
+        bankCode: cashout.cashoutBankCode,
+        accountNumber: cashout.cashoutAccountNumber,
+        accountName: cashout.cashoutAccountName,
+        narration: `Cashout ${korapayReference}`,
+      });
     } catch (error: any) {
-      if (error.message === 'cashout_state_changed') {
-        await this.prisma.cashout.update({
-          where: { id: cashoutId },
-          data: { status: CashoutStatus.FAILED, failureReason: 'state_changed_during_execute' },
-        });
-        return;
-      }
-      this.logger.error(`Execute payout critical failure for ${cashoutId}: ${error.message}`);
+      this.logger.error(`Korapay payout initiation failed for ${cashoutId}: ${error.message}`);
+
+      // Manual reversal of balance reservation since Korapay initiation failed immediately.
+      // This pattern remains to ensure ledger consistency.
+      await this.prisma.$transaction(
+        async (tx) => {
+          const merchant = await tx.user.findUnique({ where: { id: cashout.merchantUserId } });
+          const operating = await tx.user.findUnique({ where: { id: this.OPERATING_USER_ID } });
+
+          if (merchant && operating) {
+            const reverseRef = `${korapayReference}_rev`;
+
+            await tx.ledgerEntry.create({
+              data: {
+                transactionId: reverseRef,
+                userId: merchant.id,
+                type: LedgerEntryType.CREDIT,
+                amountKobo: cashout.amountKobo,
+                balanceAfterKobo: merchant.verifiedBalanceKobo + cashout.amountKobo,
+                description: `Cashout reversal ${korapayReference}`,
+              },
+            });
+            await tx.user.update({
+              where: { id: merchant.id },
+              data: { verifiedBalanceKobo: { increment: cashout.amountKobo } },
+            });
+
+            await tx.ledgerEntry.create({
+              data: {
+                transactionId: reverseRef,
+                userId: operating.id,
+                type: LedgerEntryType.DEBIT,
+                amountKobo: cashout.amountKobo,
+                balanceAfterKobo: operating.verifiedBalanceKobo - cashout.amountKobo,
+                description: `Cashout reversal to merchant ${merchant.id}`,
+              },
+            });
+            await tx.user.update({
+              where: { id: operating.id },
+              data: { verifiedBalanceKobo: { decrement: cashout.amountKobo } },
+            });
+          }
+
+          await tx.cashout.update({
+            where: { id: cashoutId },
+            data: { status: CashoutStatus.FAILED, failureReason: 'payout_initiation_failed' },
+          });
+        },
+        { isolationLevel: 'Serializable' },
+      );
     }
   }
 
