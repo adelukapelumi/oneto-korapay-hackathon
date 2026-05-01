@@ -11,7 +11,13 @@ import { JwtAuthGuard } from './jwt-auth.guard';
 import { PrismaService } from '../prisma/prisma.service';
 import { RegisterKeySchema } from './schemas';
 import * as ed from '@noble/ed25519';
-import { fromHex, publicKeyFromString } from '@oneto/shared';
+import { fromHex, publicKeyFromString, toPublicKeyString } from '@oneto/shared';
+
+// Shape of the request after JwtAuthGuard has attached the verified payload.
+// Defined locally to avoid widening the Express Request type globally.
+interface AuthenticatedRequest {
+  user?: { sub?: string };
+}
 
 @Controller('auth/keys')
 export class KeysController {
@@ -19,7 +25,7 @@ export class KeysController {
 
   @Post('register')
   @UseGuards(JwtAuthGuard)
-  async register(@Req() req: any, @Body() body: any) {
+  async register(@Req() req: AuthenticatedRequest, @Body() body: unknown) {
     const userId = req.user?.sub;
     if (!userId) {
       throw new UnauthorizedException('User ID not found in token');
@@ -46,7 +52,11 @@ export class KeysController {
         throw new BadRequestException('rotation_signature_required');
       }
 
-      const oldPubBytes = publicKeyFromString(user.publicKey as any);
+      // user.publicKey was previously written by this same endpoint, so it
+      // already matches the regex enforced by RegisterKeySchema. The branded
+      // assertion via toPublicKeyString cannot fail at runtime here and lets
+      // us avoid a raw `any` cast on a security-critical branded type.
+      const oldPubBytes = publicKeyFromString(toPublicKeyString(user.publicKey));
       const sigHex = rotationSignature.slice('ed25519:'.length);
       const sigBytes = fromHex(sigHex);
       const messageBytes = new TextEncoder().encode(newPublicKey);

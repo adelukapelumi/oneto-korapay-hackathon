@@ -6,6 +6,7 @@ import {
   verifyEnvelope,
   MAX_OFFLINE_TRANSACTION_KOBO,
   MAX_USER_BALANCE_KOBO,
+  toPublicKeyString,
 } from '@oneto/shared';
 import { Prisma } from '@prisma/client';
 
@@ -21,13 +22,13 @@ export class ReconcileService {
 
   async reconcile(
     authenticatedUserId: string,
-    envelopes: any[],
+    envelopes: unknown[],
   ): Promise<ReconcileResult[]> {
     const results: ReconcileResult[] = [];
 
     for (const envelopeInput of envelopes) {
       const internalResult = await this.reconcileOneInternal(authenticatedUserId, envelopeInput);
-      
+
       if (internalResult.status === 'rejected') {
         results.push({
           transactionId: internalResult.transactionId,
@@ -48,17 +49,24 @@ export class ReconcileService {
    */
   async reconcileOneInternal(
     authenticatedUserId: string,
-    envelopeInput: any,
+    envelopeInput: unknown,
   ): Promise<ReconcileResult> {
-    const transactionId = envelopeInput?.transactionId || 'unknown';
+    // Best-effort transactionId for logs/responses when the input is malformed
+    // and zod parsing has not yet run.
+    const transactionId = this.extractTransactionId(envelopeInput);
+
+    // Snapshot of the parsed envelope, captured for the outer catch block so
+    // it can include validated context in error responses without re-parsing.
+    let validatedEnvelope: TransactionEnvelope | undefined;
 
     try {
       // a. Envelope shape validation via the zod schema from /shared.
       const parseResult = TransactionEnvelopeSchema.safeParse(envelopeInput);
       if (!parseResult.success) {
-        return this.reject(transactionId, 'schema_invalid', envelopeInput);
+        return this.reject(transactionId, 'schema_invalid');
       }
       const envelope = parseResult.data;
+      validatedEnvelope = envelope;
 
       // b. envelope.recipientUserId === authenticatedUserId.
       if (envelope.recipientUserId !== authenticatedUserId) {
@@ -96,9 +104,11 @@ export class ReconcileService {
         return this.reject(envelope.transactionId, 'timestamp_out_of_window', envelope);
       }
 
-      // f & g & h & i: Use shared verifyEnvelope for consistency
-      // But we need to map them back to the specific reasons required.
-      const verification = verifyEnvelope(envelope, sender.publicKey as any, nowMs);
+      // f & g & h & i: Use shared verifyEnvelope for consistency.
+      // sender.publicKey equals envelope.senderPublicKey here (checked above)
+      // and envelope.senderPublicKey already passed the regex enforced by
+      // TransactionEnvelopeSchema, so toPublicKeyString cannot throw.
+      const verification = verifyEnvelope(envelope, toPublicKeyString(sender.publicKey), nowMs);
 
 
       if (!verification.ok) {
@@ -177,7 +187,7 @@ export class ReconcileService {
               amountKobo: BigInt(envelope.amountKobo),
               balanceAfterKobo: freshSender.verifiedBalanceKobo - BigInt(envelope.amountKobo),
               description: `Payment to ${envelope.recipientUserId}`,
-              envelopeJson: envelope as any,
+              envelopeJson: envelope as unknown as Prisma.InputJsonValue,
             },
           });
 
@@ -204,7 +214,7 @@ export class ReconcileService {
               amountKobo: BigInt(envelope.amountKobo),
               balanceAfterKobo: recipient.verifiedBalanceKobo + BigInt(envelope.amountKobo),
               description: `Payment from ${envelope.senderUserId}`,
-              envelopeJson: envelope as any,
+              envelopeJson: envelope as unknown as Prisma.InputJsonValue,
             },
           });
 
@@ -230,23 +240,29 @@ export class ReconcileService {
         }
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
-    } catch (error: any) {
-      if (error.message === 'balance_changed_during_reconcile') {
-        return this.reject(envelopeInput?.transactionId || 'unknown', 'insufficient_balance', envelopeInput);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      const txId = validatedEnvelope?.transactionId ?? transactionId;
+      if (message === 'balance_changed_during_reconcile') {
+        return this.reject(txId, 'insufficient_balance', validatedEnvelope);
       }
-      if (error.message === 'recipient_balance_cap_exceeded') {
-        return this.reject(envelopeInput?.transactionId || 'unknown', 'recipient_balance_cap_exceeded', envelopeInput);
+      if (message === 'recipient_balance_cap_exceeded') {
+        return this.reject(txId, 'recipient_balance_cap_exceeded', validatedEnvelope);
       }
-      this.logger.error(`Internal error reconciling envelope ${transactionId}:`, error);
+      this.logger.error(`Internal error reconciling envelope ${txId}:`, error);
       return {
-        transactionId,
+        transactionId: txId,
         status: 'rejected',
         reason: 'internal_error',
       };
     }
   }
 
-  private reject(transactionId: string, internalReason: string, envelope?: any): ReconcileResult {
+  private reject(
+    transactionId: string,
+    internalReason: string,
+    envelope?: TransactionEnvelope,
+  ): ReconcileResult {
     this.logger.warn({
       transactionId,
       senderUserId: envelope?.senderUserId,
@@ -260,5 +276,17 @@ export class ReconcileService {
       status: 'rejected',
       reason: internalReason,
     };
+  }
+
+  private extractTransactionId(input: unknown): string {
+    if (
+      typeof input === 'object' &&
+      input !== null &&
+      'transactionId' in input
+    ) {
+      const tx = (input as { transactionId: unknown }).transactionId;
+      if (typeof tx === 'string') return tx;
+    }
+    return 'unknown';
   }
 }
