@@ -19,57 +19,73 @@ Do not skip any of these. If skipped, you will make decisions inconsistent with 
 
 Snapshot of what exists vs what's planned. Update this section when major components are added, removed, or change status. When in doubt about whether something is "real," this section is the source of truth.
 
+
 ### Built and tested
+
+Backend feature-complete. Live at https://oneto-production.up.railway.app.
 
 - `/shared` package: Ed25519 signing/verification, deterministic canonicalization, TransactionEnvelope schema with red-team tests. 16 tests passing.
 - `/backend/src/common/phone.ts`: libphonenumber-js-based normalization for Nigerian mobile numbers. Used as the E.164 branded type (currently also repurposed for email OTP target keys until a rename).
 - `/backend/src/common/email.ts`: zod-based email normalization (lowercase + trim + format validation).
-- `/backend/src/auth/otp-store.service.ts`: in-memory OTP store with Argon2 hashing, burn-after-3-fails, TTL expiry, phone/email-keyed rate limiting, and periodic cleanup via setInterval lifecycle hook. 25 tests passing.
-- `/backend/src/auth/auth.service.ts`: email OTP flow (request + verify), user upsert on first successful verify, status gating for FROZEN and FLAGGED accounts, JWT issuance. 27 tests passing.
-- `/backend/src/topup/`: Korapay checkout initiation + webhook handler with HMAC-SHA256 verification, Serializable Prisma transactions, idempotent credit via unique constraint on PaymentTopup.reference. 15 tests passing.
-- `/backend/src/otp-channel/`: channel-agnostic OTP provider interface. Fake provider (console log, dev/test) and Resend provider (production, verified domain `getoneto.com`).
-- `/backend/src/app.module.ts`: global IP-keyed throttler (100 req/min default) as defense-in-depth layer above service-level target-keyed rate limiting.
-- Prisma schema: User, LedgerEntry, PaymentTopup models. Compound unique constraint `@@unique([transactionId, userId])` on LedgerEntry prevents double-spend at the database layer.
+- `/backend/src/common/user-throttler.guard.ts`: custom NestJS guard that keys rate limits by JWT subject (user-id) instead of IP, with IP fallback when no auth context. Used on financially-sensitive routes.
+- `/backend/src/auth/otp-store.service.ts`: in-memory OTP store with Argon2 hashing, burn-after-3-fails, TTL expiry, email-keyed rate limiting, periodic cleanup via setInterval lifecycle hook. 25 tests passing.
+- `/backend/src/auth/auth.service.ts`: email OTP flow (request + verify), user upsert on first successful verify, status gating for FROZEN and FLAGGED accounts, ADMIN role blocked from public OTP login (silent success to prevent enumeration), JWT issuance. 27+ tests passing.
+- `/backend/src/auth/merchant-auth.service.ts` + `/backend/src/auth/merchant-auth.controller.ts`: separate merchant signup flow with MerchantProfile (cashoutBankCode + cashoutBankName + account details), in-memory stash with TTL during OTP verification, role=MERCHANT and status=PENDING_VERIFICATION on activation. 12 tests passing.
+- `/backend/src/auth/keys.controller.ts`: public key registration with first-time bootstrap and signed rotation for replacement (Option A — strict replacement). 6 tests passing.
+- `/backend/src/topup/`: Korapay checkout initiation + webhook handler. Webhook handler now (a) verifies HMAC-SHA256 signature on raw payload, (b) validates payload against KorapayWebhookSchema (Zod) — rejects malformed, (c) inside Serializable transaction: debits u_operating + credits user (Ghost Money fix), enforces MAX_USER_BALANCE_KOBO regulatory cap (FAILED PaymentTopup recorded if exceeded), creates double-entry ledger rows. Idempotent via unique constraint on PaymentTopup.reference. Throws InternalServerErrorException on transaction failure to trigger Korapay retries (does not silently swallow). 23 tests passing.
+- `/backend/src/topup/korapay-webhook.schema.ts`: Zod schema validating Korapay webhook payload structure. Uses `unknown` at boundary, narrowed inside service.
+- `/backend/src/reconcile/`: reconcile endpoint with merchant role enforcement, public key registration with signed rotation, Serializable Prisma transactions, per-user sequence uniqueness via ProcessedSequence table, identity binding (envelope recipient must match authenticated user), recipient balance cap enforcement (rejected with internal reason `recipient_balance_cap_exceeded`, generic external `invalid_envelope`), generic external errors prevent oracle attacks, sanitized rejection logs (only transactionId + senderUserId + recipientUserId + reason + amountKobo, never signature/publicKey/sequenceNumber/balances). 28 tests passing.
+- `/backend/src/cashout/`: manual admin approval flow. `approveCashout` and balance reservation merged into single atomic Serializable transaction (status PENDING→PROCESSING + merchant balance decrement + u_operating credit + double-entry ledger entries all atomic). Conditional UPDATE prevents race condition between concurrent admins. Korapay Payout API call fired AFTER transaction commits. Compensating ledger entries on Korapay failure. transfer.success/failed webhook handling with event/status spoofing protection. 32 tests passing.
+- `/backend/src/me/`: GET /me profile endpoint, GET /me/ledger with cursor pagination (max 100/page, BigInt-as-string serialization). 11 tests passing.
+- `/backend/src/health/health.controller.ts`: GET /health returning {"status":"ok"} for uptime monitoring (UptimeRobot pings every 5 min).
+- `/backend/src/instrument.ts` + Sentry integration: production error capture via @sentry/nestjs SDK. Wraps all uncaught exceptions with stack traces and request context. Free tier sufficient for pilot.
+- `/backend/src/main.ts`: helmet middleware sets HTTP security headers (HSTS, nosniff, X-Frame-Options, CSP, etc.) before any route handler.
+- `/backend/src/app.module.ts`: global IP-keyed throttler (100 req/min default) as defense-in-depth layer above per-user limits on sensitive endpoints. Per-route throttle decorators: /reconcile (20/min/user), /cashout/request (5/min/user), /cashout/approve/:id (30/min/user). SentryGlobalFilter registered as APP_FILTER.
+- Prisma schema: User, LedgerEntry, PaymentTopup, ProcessedSequence, MerchantProfile, Cashout models. Compound unique constraint `@@unique([transactionId, userId])` on LedgerEntry prevents double-spend at the database layer.
 - Email infrastructure: `getoneto.com` domain verified with SPF + DKIM. Real emails delivering to CU inboxes instantly.
-- `/backend/src/reconcile/`: reconcile endpoint with merchant role enforcement, public key registration with signed rotation, Serializable transactions, per-user sequence uniqueness, identity binding, generic external errors. 22 tests passing.
-- `/backend/src/auth/merchant-auth.*`: separate merchant signup flow with MerchantProfile (cashoutBankCode, cashoutBankName, account details). 12 tests passing.
-- `/backend/src/cashout/`: manual admin approval flow, Korapay Payout API integration, balance reservation pattern with compensating ledger entries on Korapay failure, transfer.success/failed webhook handling. 23 tests passing.
-- `/backend/src/me/`: GET /me profile endpoint, GET /me/ledger with cursor pagination. 11 tests passing.
-- `/backend/src/auth/keys.controller.ts`: public key registration with first-time bootstrap and signed rotation for replacement. 6 tests passing.
-- Backend deployed: Railway, https://oneto-production.up.railway.app, Frankfurt region.
-- Database: Railway Postgres, Frankfurt region, single consolidated migration `0_init` from schema.prisma source of truth.
 
-Total: 150 backend tests + 16 shared tests = 166 tests passing.
+Total: 170 backend tests + 16 shared tests = 186 tests passing.
+
+Three independent security audit rounds completed. Seven audit fixes shipped:
+1. Ghost Money fix (top-up debits u_operating, restoring system invariant)
+2. Webhook 500 on transaction failure (no silent swallowing of errors)
+3. ADMIN role blocked from public OTP login
+4. Reconcile rejection logs sanitized (no signature/key/sequence leakage)
+5. Cashout race condition fixed (atomic conditional UPDATE)
+6. Cashout atomicity fix (status transition + balance reservation merged into single transaction)
+7. MAX_USER_BALANCE_KOBO regulatory cap enforced in topup and reconcile
+8. Per-user rate limiting on sensitive endpoints
+9. Zod validation replaces `any` types in webhook + reconcile + keys controller paths
+10. Helmet security headers middleware
 
 ### Stubbed (route exists, throws NotImplementedException)
 
 (none — backend feature-complete)
 
-### Not yet built
+### Stubbed
 
-- Mobile app (React Native / Expo) — keypair generation, QR scan, local SQLite ledger, offline-first UI
-- Admin dashboard (user management, cashout approvals, fraud review)
-- Monitoring (Sentry + UptimeRobot)
+(none — backend feature-complete)
 
 ### Not yet built
 
-- /reconcile implementation (envelope validation, serializable transactions, per-user sequence uniqueness, balance update, public key registration endpoint)
-- Mobile app (React Native / Expo) — keypair generation, QR scan, local SQLite ledger, offline-first UI
-- Merchant onboarding flow (business name, bank account, cashout)
-- Admin dashboard (user management, cashout approvals, fraud review)
-- Real database (Postgres) provisioned and connected — currently schema-only
-- Deployment (Railway/Render setup, CI/CD, monitoring)
+- Mobile app (React Native / Expo) — keypair generation, QR scan, local SQLite ledger, offline-first UI. Phase 2 in ROADMAP.
+- Admin dashboard (user management, cashout approvals queue, fraud review). Phase 3 in ROADMAP. Pilot can survive with API-only access plus Prisma Studio for emergencies.
+- Lost-key recovery flow (email-based confirmation with cooling-off period). Currently requires admin manual intervention to clear an old public key when a user reinstalls the app. Documented in POST_PILOT.md.
 
 ### Known limitations of current state
 
-- OTP store is in-memory. Crashes lose all active OTP records. Acceptable for single-instance pilot, not for production.
-- JWT secret lives in `backend/.env` as base64 string. No rotation strategy yet.
-- Clock skew tolerance in `/shared` is 300s — will be tightened to 120s during /reconcile session. Offline envelopes ship with 60s expiry.
-- Transaction ID is 64-bit truncated SHA-256. Safe for pilot scale; may extend to 128-bit for aesthetics.
+- OTP store is in-memory. Crashes lose all active OTP records. Acceptable for single-instance pilot. Documented as Redis migration item in POST_PILOT.md.
+- ThrottlerModule storage is in-memory. Single-instance pilot is fine; horizontal scaling requires Redis-backed throttler.
+- JWT secret lives in Railway env var. No rotation strategy yet (deferred — implement before scaling beyond pilot).
+- Clock skew tolerance in `/shared` is 120s. Offline envelopes ship with 60s expiry.
+- Transaction ID is 64-bit truncated SHA-256. Safe for pilot scale.
+- No automated lost-key recovery — currently a manual admin process. Described in POST_PILOT.md.
+- Reconcile flow is unidirectional (merchant submits). Phantom-sync for offline merchants (where we proactively push reconciled state to a merchant who can't reach the network) is post-pilot.
+- Daily invariant cron not yet running. Currently can be checked manually with: SUM all user balances + u_operating balance should equal 0.
 
 ### Deferred to post-pilot
 
-See `/POST_PILOT.md` at repo root for the full list. High-level categories: Redis-backed OTP and throttler storage, licensed NIN/BVN verification, PSSP/MMO license pursuit, professional penetration test, Google Workspace for team email, end-to-end integration tests with a real test database.
+See `/POST_PILOT.md` at repo root for the full list. High-level categories: Redis-backed OTP and throttler storage, licensed NIN/BVN verification, PSSP/MMO license pursuit, professional penetration test, Google Workspace for team email, end-to-end integration tests with a real test database, lost-key recovery flow, daily invariant cron, branded Email type rename, multi-device support.
 
 ### How to use this section
 
@@ -606,10 +622,16 @@ Creating a file without saving is a silent failure mode that costs hours to debu
 - `pnpm -r <command>` runs recursively across all workspaces
 
 ### 16.5 Lessons learned (living log)
+
 - Initial envelope tests: 16/16 passed (happy path + 13 red-team cases + canonicalization determinism)
 - Confirmed: Ed25519 signing/verification round-trips correctly with `@noble/ed25519` + the `sha512Sync` shim
 - Confirmed: canonicalization produces identical bytes regardless of object key order
+- Confirmed: Korapay signs JSON.stringify(data) server-side per their docs. Verifying against raw body would break legitimate webhooks. Defensive comment in korapay.service.ts.
+- Three security audits surfaced real bugs: Ghost Money invariant violation, cashout race condition, regulatory balance cap missing. All fixed pre-launch.
+- Architecture pattern: state transitions and balance changes must be in the SAME transaction. Fix #6 caught a stuck-cashout case where status moved to APPROVED but the server crashed before balance reservation could fire.
+- Architecture pattern: external API calls (Korapay) must NOT be inside Prisma transactions. Fire after the transaction commits.
+- Tests covered logic but not infrastructure (build pipeline, DI bootstrap, DB connection). Production deployments revealed gaps that tests didn't catch (NestJS DI for OtpStoreService missing @Optional, Prisma adapter version mismatch, PowerShell BOM corruption in migrations). Future: add a single e2e test that boots the actual NestJS app against a real test database.
 
-**Last updated:** 2026-04-28
+**Last updated:** 2026-05-01
 **Document owner:** Pelumi Adeluka
 **Review cadence:** every two weeks during pilot, monthly after.

@@ -4,33 +4,38 @@ Single-page view of what's left to ship a pilot-ready MVP for college week at Co
 
 Status legend: ⬜ not started, 🟡 in progress, 🟢 done, 🔵 blocked/waiting
 
-Last updated: 2026-04-28
+Last updated: 2026-05-01
 
 ---
 
 ## Current state snapshot
 
-Backend: 100% feature-complete. 150 tests passing across 10 spec files.
+Backend: feature-complete and production-ready. 170 backend + 16 shared = 186 tests passing.
 
-- Auth module (email OTP via Resend) — 27 tests
+- Auth (email OTP via Resend, ADMIN role blocked from public OTP) — 27+ tests
 - OTP store with rate limiting — 25 tests
 - Shared crypto (Ed25519, envelope schema, canonicalization) — 16 tests
-- Korapay top-up flow with HMAC webhook — 15 tests
-- Reconcile endpoint with merchant role enforcement, key rotation — 22 tests
+- Korapay top-up flow with HMAC webhook, Ghost Money fix, balance cap, Zod validation — 23 tests
+- Reconcile endpoint with merchant role enforcement, key rotation, sanitized logs, balance cap — 28 tests
 - Merchant onboarding with separate /auth/merchant endpoints — 12 tests
-- Merchant cashout flow with manual admin approval — 23 tests
+- Cashout flow with atomic state transition + balance reservation — 32 tests
 - Me + ledger endpoints with cursor pagination — 11 tests
 - Public key registration with signed rotation — 6 tests
 - Korapay service tests — 6 tests
-- Two security audit rounds completed; three real bugs fixed (race conditions, webhook spoofing, role enforcement).
 
-Database: Railway Postgres provisioned in Frankfurt, all 7 migrations consolidated into `0_init`, u_operating seeded.
+Three security audit rounds completed. Ten fixes shipped covering Ghost Money invariant, cashout race conditions and atomicity, regulatory balance cap, ADMIN OTP blocking, log sanitization, per-user rate limiting, Zod validation replacing `any` types, Helmet security headers.
+
+Database: Railway Postgres in us_west2, single consolidated migration `0_init`, u_operating seeded.
 
 Backend deployment: Live at https://oneto-production.up.railway.app. Pre-deploy migration step runs on every deploy.
 
-What remains: webhook URL update on Korapay, mobile app (Phase 2), admin minimum (Phase 3.2), monitoring (Phase 4.5), pre-launch ops (Phase 5).
+Monitoring: UptimeRobot pinging /health every 5 min with email alerts. Sentry capturing all uncaught exceptions with stack traces and request context.
 
-Overall pilot completion: ~60%.
+Security headers: Helmet enabled (HSTS, nosniff, X-Frame-Options, CSP, etc.).
+
+What remains: mobile app (Phase 2 — biggest piece), admin minimum (Phase 3.2 — cashout approval queue), pre-launch ops (Phase 5 — CAC, CU authorization, merchant recruitment).
+
+Overall pilot completion: ~65%.
 
 ---
 
@@ -166,7 +171,7 @@ Getting it running on the public internet.
 - Public URL for Korapay webhook
 - Healthcheck endpoint (`GET /health`)
 
-### 4.3 Webhook registration ⬜
+### 4.3 Webhook registration 🟢
 - Register deployed URL with Korapay dashboard
 - Register with Resend for delivery webhook
 - Test end-to-end payment flow with real money (sandbox mode initially)
@@ -177,11 +182,14 @@ Getting it running on the public internet.
 - Android APK or Internal Testing track
 - Update URL for existing users
 
-### 4.5 Monitoring ⬜
-- Sentry integration (backend + mobile)
-- UptimeRobot or Better Stack for healthcheck ping
-- Axiom or Logtail for structured log aggregation
-- Daily invariant check cron job
+
+### 4.5 Monitoring 🟢
+
+- UptimeRobot keyword monitor pinging https://oneto-production.up.railway.app/health every 5 min, alerts via email.
+- Sentry NestJS SDK integrated, capturing uncaught exceptions to https://sentry.io project oneto-backend.
+- Helmet middleware sets HSTS, nosniff, X-Frame-Options, CSP, Cross-Origin-* headers.
+
+Remaining: SMS alerts on UptimeRobot Pro (~$7/mo, defer until users start hitting the system), Sentry release tracking with source maps (defer to mobile app launch).
 
 **Phase 4 total effort: estimated 2-3 sessions (~6-10 hours)**
 
@@ -294,3 +302,12 @@ Major architectural or strategic decisions and when they were made. Add new rows
 | 2026-04-28 | Switched from Render to Railway for backend hosting | Render free tier requires payment-clear delays; Railway accepted Raenest card immediately |
 | 2026-04-28 | Switched from Neon to Railway Postgres | Neon serverless adapter (v5.19.1) has URL parsing bugs that broke production runtime; ISP blocks port 5432 forced workarounds that failed |
 | 2026-04-28 | Consolidated 7 migrations into single 0_init | Prior migrations had UTF-8 BOM corruption and partial-dash damage; regenerated cleanly from schema.prisma |
+
+| 2026-04-30 | Atomic cashout transaction (status + balance reservation merged) | Fixes stuck-APPROVED state if server crashes between separate transactions |
+| 2026-04-30 | MAX_USER_BALANCE_KOBO enforced in topup + reconcile | Closed-loop legal basis depends on small per-user balances; cap = ₦50,000 |
+| 2026-04-30 | Per-user rate limits on /reconcile, /cashout/request, /cashout/approve | Defense in depth above global IP-keyed throttler |
+| 2026-04-30 | Zod validation replaces `any` at all external HTTP boundaries | CLAUDE.md no-`any` rule; reduces attack surface from malformed payloads |
+| 2026-04-30 | Helmet middleware enabled with default config | Standard security headers; trivial to add, valuable when web admin dashboard exists |
+| 2026-04-30 | Sentry + UptimeRobot for monitoring | Free tiers cover pilot scale; observability is non-negotiable for fintech |
+| 2026-04-30 | ADMIN role silently blocked from public OTP login | Defense in depth; silent success prevents email enumeration of privileged accounts |
+| 2026-04-30 | Top-up returns 200 to Korapay on cap-exceeded with FAILED record | Korapay should not retry; admin manually refunds. Same pattern for u_operating-missing critical errors. |
