@@ -311,3 +311,4 @@ Major architectural or strategic decisions and when they were made. Add new rows
 | 2026-04-30 | Sentry + UptimeRobot for monitoring | Free tiers cover pilot scale; observability is non-negotiable for fintech |
 | 2026-04-30 | ADMIN role silently blocked from public OTP login | Defense in depth; silent success prevents email enumeration of privileged accounts |
 | 2026-04-30 | Top-up returns 200 to Korapay on cap-exceeded with FAILED record | Korapay should not retry; admin manually refunds. Same pattern for u_operating-missing critical errors. |
+| 2026-05-02 | JWT expiry extended from 15m to 30d for pilot | Better UX for offline-capable payment app; PIN added in Phase 2.2 is primary defense against device theft. Refresh token flow deferred to post-pilot. |
