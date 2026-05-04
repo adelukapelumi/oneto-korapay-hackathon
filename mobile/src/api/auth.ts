@@ -30,7 +30,7 @@ export type VerifyOtpResponse = z.infer<typeof VerifyOtpResponseSchema>;
 // Matches GET /me from backend/src/me/me.controller.ts.
 // verifiedBalanceKobo is serialized as a string because it's a BigInt on the
 // backend (kobo can exceed JS Number.MAX_SAFE_INTEGER).
-const UserRoleSchema = z.enum(["USER", "MERCHANT", "ADMIN"]);
+const UserRoleSchema = z.enum(["STUDENT", "MERCHANT", "ADMIN"]);
 const UserStatusSchema = z.enum([
   "ACTIVE",
   "PENDING_VERIFICATION",
