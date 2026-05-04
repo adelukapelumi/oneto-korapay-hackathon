@@ -28,7 +28,8 @@
     "node_modules",
     "dist",
     "jest.config.ts",
-    "prisma/seed.ts"
+    "prisma/seed.ts",
+    "scratch"
   ],
   "references": [
     {

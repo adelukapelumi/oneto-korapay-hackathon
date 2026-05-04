@@ -1,4 +1,5 @@
 packages:
-  - "shared"
-  - "backend"
-  - "mobile"
+  - 'shared'
+  - 'backend'
+  - 'mobile'
+nodeLinker: hoisted
