@@ -100,11 +100,11 @@ describe("AuthService", () => {
     it("generates a 6-digit OTP in range 100000-999999 inclusive", async () => {
       await authService.requestOtp("alice@stu.cu.edu.ng");
       expect(mockOtpStore.saveOtp).toHaveBeenCalledTimes(1);
-      
+
       const savedOtp = mockOtpStore.saveOtp.mock.calls[0][1];
       expect(typeof savedOtp).toBe("string");
       expect(savedOtp.length).toBe(6);
-      
+
       const numericOtp = parseInt(savedOtp, 10);
       expect(numericOtp).toBeGreaterThanOrEqual(100000);
       expect(numericOtp).toBeLessThanOrEqual(999999);
@@ -118,7 +118,7 @@ describe("AuthService", () => {
     it("calls otpProvider.sendOtp with the same email and the generated OTP", async () => {
       await authService.requestOtp("charlie@stu.cu.edu.ng");
       const savedOtp = mockOtpStore.saveOtp.mock.calls[0][1];
-      
+
       expect(mockOtpProvider.sendOtp).toHaveBeenCalledTimes(1);
       expect(mockOtpProvider.sendOtp).toHaveBeenCalledWith("charlie@stu.cu.edu.ng", savedOtp);
     });
@@ -148,7 +148,7 @@ describe("AuthService", () => {
       });
 
       await expect(authService.requestOtp("eve@stu.cu.edu.ng")).rejects.toThrow("Too many OTP requests. Please wait a moment.");
-      
+
       try {
         await authService.requestOtp("eve@stu.cu.edu.ng");
       } catch (err: any) {
@@ -163,8 +163,8 @@ describe("AuthService", () => {
 
       try {
         await authService.requestOtp("eve@stu.cu.edu.ng");
-      } catch {}
-      
+      } catch { }
+
       expect(mockOtpStore.saveOtp).not.toHaveBeenCalled();
     });
 
@@ -175,8 +175,8 @@ describe("AuthService", () => {
 
       try {
         await authService.requestOtp("eve@stu.cu.edu.ng");
-      } catch {}
-      
+      } catch { }
+
       expect(mockOtpProvider.sendOtp).not.toHaveBeenCalled();
     });
   });
@@ -200,7 +200,7 @@ describe("AuthService", () => {
       mockOtpStore.verifyOtp.mockResolvedValue(false);
       try {
         await authService.verifyOtp("alice@stu.cu.edu.ng", "123456");
-      } catch {}
+      } catch { }
       expect(mockPrisma.user.upsert).not.toHaveBeenCalled();
     });
 
@@ -208,7 +208,7 @@ describe("AuthService", () => {
       mockOtpStore.verifyOtp.mockResolvedValue(false);
       try {
         await authService.verifyOtp("alice@stu.cu.edu.ng", "123456");
-      } catch {}
+      } catch { }
       expect(mockJwt.generateToken).not.toHaveBeenCalled();
     });
   });
@@ -244,6 +244,7 @@ describe("AuthService", () => {
         sub: "u_123",
         email: "bob@stu.cu.edu.ng",
         role: "MERCHANT",
+        pubKeyRegistered: false,
       });
     });
 
@@ -300,12 +301,12 @@ describe("AuthService", () => {
 
     it("does NOT call jwtService.generateToken when account is FROZEN or FLAGGED", async () => {
       mockOtpStore.verifyOtp.mockResolvedValue(true);
-      
+
       mockPrisma.user.upsert.mockResolvedValueOnce(makeUser({ status: "FROZEN" }));
-      try { await authService.verifyOtp("frozen@stu.cu.edu.ng", "123456"); } catch {}
+      try { await authService.verifyOtp("frozen@stu.cu.edu.ng", "123456"); } catch { }
 
       mockPrisma.user.upsert.mockResolvedValueOnce(makeUser({ status: "FLAGGED" }));
-      try { await authService.verifyOtp("flagged@stu.cu.edu.ng", "123456"); } catch {}
+      try { await authService.verifyOtp("flagged@stu.cu.edu.ng", "123456"); } catch { }
 
       expect(mockJwt.generateToken).not.toHaveBeenCalled();
     });
@@ -353,7 +354,7 @@ describe("AuthService", () => {
 
       await expect(authService.verifyOtp("admin@getoneto.internal", "123456")).rejects.toThrow(UnauthorizedException);
       await expect(authService.verifyOtp("admin@getoneto.internal", "123456")).rejects.toThrow("Invalid or expired code");
-      
+
       expect(mockOtpStore.verifyOtp).not.toHaveBeenCalled();
     });
 

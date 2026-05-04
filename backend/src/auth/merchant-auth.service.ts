@@ -161,6 +161,7 @@ export class MerchantAuthService {
         sub: user.id,
         email: user.email,
         role: user.role,
+        pubKeyRegistered: user.publicKey !== null,
       });
 
       return { accessToken: token };

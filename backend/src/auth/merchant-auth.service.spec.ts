@@ -80,7 +80,7 @@ describe("MerchantAuthService", () => {
     it("3. requestMerchantOtp: stashes merchantData keyed by normalized email", async () => {
       const dataWithPhone = { ...validMerchantData, phone: "08012345678" };
       await service.requestMerchantOtp("test@example.com", dataWithPhone);
-      
+
       const stashed = (service as any).stash.get("test@example.com");
       expect(stashed).toBeDefined();
       expect(stashed.merchantData.phone).toBe("+2348012345678"); // Phone gets normalized
@@ -192,6 +192,7 @@ describe("MerchantAuthService", () => {
         sub: "u_1",
         email,
         role: "MERCHANT",
+        pubKeyRegistered: true,
       });
     });
 

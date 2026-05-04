@@ -63,7 +63,7 @@ export class AuthService {
       where: { email },
       select: { role: true },
     });
-    
+
     if (existingUser?.role === Role.ADMIN) {
       this.logger.warn("Auth: blocked OTP request for ADMIN role.");
       return;
@@ -121,7 +121,7 @@ export class AuthService {
       where: { email },
       select: { role: true },
     });
-    
+
     if (existingUser?.role === Role.ADMIN) {
       this.logger.warn("Auth: blocked OTP request for ADMIN role.");
       // Throw the generic error to avoid leaking the admin status.
@@ -158,6 +158,7 @@ export class AuthService {
       sub: user.id,
       email: user.email,
       role: user.role,
+      pubKeyRegistered: user.publicKey !== null,
     });
 
     return { accessToken };
