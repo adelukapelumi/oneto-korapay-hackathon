@@ -92,7 +92,7 @@ describe("fetchMe", () => {
     id: "u_1234567890abcdef",
     email: "user@example.com",
     phone: null,
-    role: "USER",
+    role: "STUDENT",
     status: "ACTIVE",
     verifiedBalanceKobo: "0",
     createdAt: "2026-05-01T00:00:00.000Z",
@@ -104,7 +104,7 @@ describe("fetchMe", () => {
     });
     const me = await fetchMe(client);
     expect(me.email).toBe("user@example.com");
-    expect(me.role).toBe("USER");
+    expect(me.role).toBe("STUDENT");
   });
 
   it("rejects unknown role values", async () => {

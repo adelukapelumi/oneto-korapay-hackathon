@@ -40,7 +40,7 @@ export function normalizePhone(input: string): E164 {
   }
 
   // Reject landlines and non-mobile lines for the pilot.
-  // SMS OTPs require mobile numbers.
+  // "The phone field is used only for merchant contact and optional 2FA; SMS is not the primary OTP channel
   if (parsed.getType() && parsed.getType() !== "MOBILE" && parsed.getType() !== "FIXED_LINE_OR_MOBILE") {
     throw new InvalidPhoneError(input);
   }

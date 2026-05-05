@@ -67,9 +67,9 @@ export default function SignInScreen(): React.ReactElement {
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
         <View style={styles.container}>
-          <Text style={styles.title}>oneto</Text>
+          <Text style={styles.title}>Welcome to oneto</Text>
           <Text style={styles.subtitle}>
-            Enter your email to receive a sign-in code.
+            Enter your email to get started.
           </Text>
 
           <Controller

@@ -1,18 +1,20 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
 import { MAX_USER_BALANCE_KOBO } from "@oneto/shared";
 import { useAuth } from "../../src/auth/auth-state";
 
-// Placeholder. 2.1's only requirement is "logged-in user lands somewhere
-// that proves auth worked." Real home screen lands in 2.2.
 export default function HomeScreen(): React.ReactElement {
-  const { user, signOut } = useAuth();
+  const { state, signOut } = useAuth();
+  const router = useRouter();
 
-  if (!user) {
-    // (app) layout's gate guarantees this is unreachable, but TypeScript
-    // doesn't know that. Render-time guard instead of non-null assertion.
+  if (state.status !== "authed") {
+    // The (app) layout's gate guarantees this is unreachable, but
+    // TypeScript can't know that. Render-time guard, no non-null assertion.
     return <View />;
   }
+  const user = state.user;
+  const jwtFresh = state.jwtFresh;
 
   // verifiedBalanceKobo is a string-encoded BigInt. Pilot balances are
   // capped at MAX_USER_BALANCE_KOBO (well under Number.MAX_SAFE_INTEGER),
@@ -24,14 +26,24 @@ export default function HomeScreen(): React.ReactElement {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.container}>
+        {!jwtFresh ? (
+          <View style={styles.staleBanner}>
+            <Text style={styles.staleBannerText}>
+              Sign in again to top up or see your latest balance.
+            </Text>
+          </View>
+        ) : null}
+
         <Text style={styles.greeting}>Hello,</Text>
-        <Text style={styles.email}>{user.email}</Text>
+        <Text style={styles.email}>{user.email || "—"}</Text>
 
         <View style={styles.balanceCard}>
           <Text style={styles.balanceLabel}>Balance</Text>
           <Text style={styles.balance}>₦{naira}</Text>
           <Text style={styles.balanceCap}>
-            You can top up up to ₦{capRemainingNaira} more
+            {jwtFresh
+              ? `You can top up up to ₦${capRemainingNaira} more`
+              : "Last known balance — sign in again to refresh."}
           </Text>
         </View>
 
@@ -43,6 +55,14 @@ export default function HomeScreen(): React.ReactElement {
           <Text style={styles.metaLabel}>Status</Text>
           <Text style={styles.metaValue}>{user.status}</Text>
         </View>
+
+        <Pressable
+          style={styles.secondary}
+          onPress={() => router.push("/(app)/change-pin")}
+          accessibilityRole="button"
+        >
+          <Text style={styles.secondaryText}>Change PIN</Text>
+        </Pressable>
 
         <Pressable
           style={styles.signOut}
@@ -61,6 +81,15 @@ export default function HomeScreen(): React.ReactElement {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#fff" },
   container: { flex: 1, padding: 24 },
+  staleBanner: {
+    backgroundColor: "#fff5e6",
+    borderColor: "#ffb84d",
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+  },
+  staleBannerText: { color: "#7a4d00", fontSize: 13 },
   greeting: { fontSize: 16, color: "#666", marginTop: 24 },
   email: { fontSize: 22, fontWeight: "600", marginBottom: 32 },
   balanceCard: {
@@ -81,6 +110,16 @@ const styles = StyleSheet.create({
   },
   metaLabel: { color: "#666", fontSize: 14 },
   metaValue: { color: "#000", fontSize: 14, fontWeight: "500" },
+  secondary: {
+    marginTop: 16,
+    height: 52,
+    borderWidth: 1,
+    borderColor: "#ccc",
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  secondaryText: { fontSize: 16, fontWeight: "500", color: "#000" },
   signOut: {
     marginTop: "auto",
     height: 52,

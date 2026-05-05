@@ -18,6 +18,8 @@ export default function RootLayout(): React.ReactElement {
           <Stack screenOptions={{ headerShown: false }}>
             <Stack.Screen name="index" />
             <Stack.Screen name="(auth)" />
+            <Stack.Screen name="(onboarding)" />
+            <Stack.Screen name="(locked)" />
             <Stack.Screen name="(app)" />
           </Stack>
         </AuthProvider>

@@ -2,10 +2,9 @@ import { Redirect, Stack } from "expo-router";
 import { ActivityIndicator, StyleSheet, View } from "react-native";
 import { useAuth } from "../../src/auth/auth-state";
 
-// Gate: if the user is past auth (onboarding/locked/authed), bounce
-// them away from the email/OTP screens. Renders nothing during loading
-// so we don't briefly mount sign-in for an authed user.
-export default function AuthLayout(): React.ReactElement {
+// Onboarding is reachable only when state is "onboarding" — the user
+// has just completed OTP but doesn't yet have a keypair on this device.
+export default function OnboardingLayout(): React.ReactElement {
   const { state } = useAuth();
 
   if (state.status === "loading") {
@@ -15,14 +14,14 @@ export default function AuthLayout(): React.ReactElement {
       </View>
     );
   }
+  if (state.status === "unauthed") {
+    return <Redirect href="/(auth)/sign-in" />;
+  }
   if (state.status === "authed") {
     return <Redirect href="/(app)/home" />;
   }
   if (state.status === "locked") {
     return <Redirect href="/(locked)/pin-entry" />;
-  }
-  if (state.status === "onboarding") {
-    return <Redirect href="/(onboarding)/welcome" />;
   }
   return <Stack screenOptions={{ headerShown: false }} />;
 }

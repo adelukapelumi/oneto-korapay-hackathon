@@ -1,20 +1,46 @@
 import { createContext, useContext } from "react";
 import type { Me } from "../api/auth";
 
-// Single source of truth for "is the user signed in." Provided at the root
-// layout. Components consume via useAuth().
+// AppState distinguishes the user's actual situation, not just "signed
+// in or not." A returning user with a stored keypair but no fresh JWT
+// is in "locked" — they can still use offline features after PIN entry,
+// they just can't refresh server state.
 //
-// We use Context (not zustand) here because the surface is tiny and React's
-// built-in primitives are enough. zustand was on the optional list for 2.1
-// and we don't need its features yet.
+//   loading      — bootstrapping (reading token + keypair from storage)
+//   unauthed     — no token, no keypair → email entry
+//   onboarding   — verified OTP, no keypair → PIN setup + key registration
+//   locked       — keypair exists, awaiting PIN entry
+//   authed       — unlocked. jwtFresh gates online actions
+//
+// jwtFresh is decided by isJwtExpired(token) and refreshed periodically
+// while authed. When false, online actions (top-up, /me refresh, key
+// rotation) must show "sign in to continue" instead of executing.
 
-export type AuthStatus = "loading" | "unauthed" | "authed";
+export type AppState =
+  | { readonly status: "loading" }
+  | { readonly status: "unauthed" }
+  | { readonly status: "onboarding"; readonly user: Me }
+  | { readonly status: "locked"; readonly user: Me; readonly hasJwt: boolean }
+  | { readonly status: "authed"; readonly user: Me; readonly jwtFresh: boolean };
 
 export interface AuthState {
-  readonly status: AuthStatus;
-  readonly user: Me | null;
+  readonly state: AppState;
+  /** Called after OTP verify succeeds. Persists the JWT and decides next route. */
   signIn: (token: string, user: Me) => Promise<void>;
+  /** Called after PIN setup + key registration completes during onboarding. */
+  completeOnboarding: (privateKey: Uint8Array, publicKey: string) => void;
+  /** Called after the user enters a correct PIN on the locked screen. */
+  unlock: (pin: string) => Promise<void>;
+  /** Called by the AppState background timer or a manual lock action. */
+  lock: () => void;
+  /** Sign out: drop token + lock keypair (keypair stays on disk). */
   signOut: () => Promise<void>;
+  /**
+   * Decrypted private key access for in-memory use only. Returns null when
+   * locked or onboarding incomplete. NEVER returned to React state — this
+   * accessor reads a useRef so the value never enters component snapshots.
+   */
+  getDecryptedPrivateKey: () => Uint8Array | null;
 }
 
 export const AuthContext = createContext<AuthState | null>(null);

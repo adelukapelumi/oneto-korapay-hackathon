@@ -1,76 +1,336 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AppState as RNAppState, type AppStateStatus } from "react-native";
 import { fetchMe, type Me } from "../api/auth";
 import { setUnauthorizedHandler } from "../api/client";
+import { NetworkError } from "../api/errors";
+import {
+  clearAttempts,
+  hasKeypair,
+  unlockKeypairWithPin,
+} from "../crypto/pin-derive";
 import { logger } from "../lib/logger";
 import { clearToken, getToken, setToken } from "./token-store";
-import { AuthContext, type AuthState, type AuthStatus } from "./auth-state";
+import { isJwtExpired } from "./jwt-decode";
+import { AuthContext, type AppState, type AuthState } from "./auth-state";
 
 interface ProviderProps {
   readonly children: React.ReactNode;
 }
 
+// 5 minutes in background → re-prompt for PIN on resume. Short enough to
+// be useful against an opportunistic phone-snatcher; long enough not to
+// punish a user who briefly checked another app.
+const BACKGROUND_LOCK_MS = 5 * 60 * 1000;
+
+// Re-check JWT freshness this often while authed. 60s is a sensible
+// balance: short enough that the UI surfaces the "sign in again" banner
+// without the user having to navigate, long enough not to thrash.
+const JWT_FRESHNESS_INTERVAL_MS = 60 * 1000;
+
 export function AuthProvider({ children }: ProviderProps): React.ReactElement {
-  const [status, setStatus] = useState<AuthStatus>("loading");
-  const [user, setUser] = useState<Me | null>(null);
+  const [state, setState] = useState<AppState>({ status: "loading" });
   const isMounted = useRef(true);
 
+  // Decrypted private key. Held in a ref (NOT React state) so it never
+  // enters component snapshots, devtools, or React's commit history.
+  // Cleared on lock() and signOut().
+  const decryptedPrivateKey = useRef<Uint8Array | null>(null);
+
+  // Background timestamp for the AppState lock timer. Set when we go to
+  // background, consulted on resume.
+  const backgroundedAtMs = useRef<number | null>(null);
+
+  const wipeInMemoryKey = useCallback(() => {
+    if (decryptedPrivateKey.current) {
+      // Best-effort zeroization. JS can't guarantee the GC won't have
+      // already kept a copy, but this at least clears the active reference.
+      decryptedPrivateKey.current.fill(0);
+      decryptedPrivateKey.current = null;
+    }
+  }, []);
+
   const signOut = useCallback(async () => {
+    wipeInMemoryKey();
     await clearToken();
     if (!isMounted.current) return;
-    setUser(null);
-    setStatus("unauthed");
+    setState({ status: "unauthed" });
+  }, [wipeInMemoryKey]);
+
+  const signIn = useCallback(
+    async (token: string, nextUser: Me) => {
+      await setToken(token);
+      if (!isMounted.current) return;
+      // Decide where this user goes next. The brief: after OTP verify,
+      // if no keypair on this device → onboarding; else → home (the
+      // user is already unlocked from the just-completed OTP flow).
+      const keypairPresent = await hasKeypair();
+      if (!isMounted.current) return;
+      if (!keypairPresent) {
+        setState({ status: "onboarding", user: nextUser });
+        return;
+      }
+      const fresh = !isJwtExpired(token);
+      setState({ status: "authed", user: nextUser, jwtFresh: fresh });
+    },
+    [],
+  );
+
+  const completeOnboarding = useCallback(
+    (privateKey: Uint8Array, _publicKey: string) => {
+      if (!isMounted.current) return;
+      setState((prev) => {
+        if (prev.status !== "onboarding") return prev;
+        decryptedPrivateKey.current = privateKey;
+        return { status: "authed", user: prev.user, jwtFresh: true };
+      });
+    },
+    [],
+  );
+
+  const unlock = useCallback(async (pin: string) => {
+    // unlockKeypairWithPin throws PinIncorrectError, PinLockedError, or
+    // a generic Error if no keypair is stored. Callers handle.
+    const { privateKey } = await unlockKeypairWithPin(pin);
+    await clearAttempts();
+    const token = await getToken();
+    if (!isMounted.current) {
+      privateKey.fill(0);
+      return;
+    }
+    decryptedPrivateKey.current = privateKey;
+    setState((prev) => {
+      if (prev.status === "locked") {
+        const fresh = token !== null && !isJwtExpired(token);
+        return { status: "authed", user: prev.user, jwtFresh: fresh };
+      }
+      return prev;
+    });
   }, []);
 
-  const signIn = useCallback(async (token: string, nextUser: Me) => {
-    await setToken(token);
+  const lock = useCallback(() => {
+    wipeInMemoryKey();
     if (!isMounted.current) return;
-    setUser(nextUser);
-    setStatus("authed");
-  }, []);
+    setState((prev) => {
+      if (prev.status === "authed") {
+        return {
+          status: "locked",
+          user: prev.user,
+          hasJwt: prev.jwtFresh,
+        };
+      }
+      return prev;
+    });
+  }, [wipeInMemoryKey]);
 
-  // Bootstrap: read any persisted token, validate it via GET /me. The 401
-  // interceptor clears the token automatically if it's stale, so we don't
-  // need to handle that case here — fetchMe will reject and we'll fall to
-  // unauthed below.
+  const getDecryptedPrivateKey = useCallback(
+    () => decryptedPrivateKey.current,
+    [],
+  );
+
+  // ----- Bootstrap -----
   useEffect(() => {
     isMounted.current = true;
 
     setUnauthorizedHandler(() => {
       if (!isMounted.current) return;
-      setUser(null);
-      setStatus("unauthed");
+      // 401 from any request: clear in-memory key. Don't drop the
+      // keypair on disk — the user just needs to sign back in.
+      wipeInMemoryKey();
+      void (async () => {
+        const keypairPresent = await hasKeypair();
+        if (!isMounted.current) return;
+        if (!keypairPresent) {
+          setState({ status: "unauthed" });
+        } else {
+          // We'd ideally keep the user record, but we no longer trust
+          // it; force a re-OTP. Show locked iff we have offline material.
+          setState({ status: "unauthed" });
+        }
+      })();
     });
 
     void (async () => {
       try {
-        const token = await getToken();
-        if (!token) {
+        const [keypairPresent, token] = await Promise.all([
+          hasKeypair(),
+          getToken(),
+        ]);
+
+        if (!keypairPresent && !token) {
           if (!isMounted.current) return;
-          setStatus("unauthed");
+          setState({ status: "unauthed" });
           return;
         }
-        const me = await fetchMe();
+
+        if (!keypairPresent && token) {
+          // Verified OTP, then app was killed before keypair setup.
+          // Re-fetch the user (best effort) so we can show onboarding.
+          let user: Me | null = null;
+          try {
+            user = await fetchMe();
+          } catch (err) {
+            // If offline at boot, we still proceed to onboarding —
+            // the user can complete PIN setup; key registration will
+            // retry until network is back.
+            if (!(err instanceof NetworkError)) {
+              logger.info("fetchMe during boot failed", err);
+            }
+          }
+          if (!isMounted.current) return;
+          if (user) {
+            setState({ status: "onboarding", user });
+          } else {
+            // No user object available. Drop the token; force re-OTP.
+            await clearToken();
+            if (!isMounted.current) return;
+            setState({ status: "unauthed" });
+          }
+          return;
+        }
+
+        if (keypairPresent && !token) {
+          // Returning user, no JWT. Locked state with hasJwt=false; the
+          // PIN entry screen unlocks the key for offline use, and the
+          // home screen will show "sign in again" for online actions.
+          // We don't have a Me object yet — leave it for after unlock,
+          // when fetchMe (or stored profile) provides it.
+          // Without a Me object the locked screen can still ask for PIN;
+          // we synthesize a minimal placeholder.
+          if (!isMounted.current) return;
+          setState({
+            status: "locked",
+            user: makePlaceholderMe(),
+            hasJwt: false,
+          });
+          return;
+        }
+
+        // keypairPresent && token: try to verify the token freshness
+        // and (best effort) refresh the user record. Network errors
+        // here must NOT bounce us to unauthed — that's the offline-boot
+        // bug fix from 2.1. Treat the token as fresh-enough for now;
+        // the freshness check on unlock will re-evaluate.
+        // Reachability: the three branches above all return, so we know
+        // `token` is non-null here. TS's CFA doesn't carry that across
+        // branches, so a runtime guard pacifies the compiler without
+        // adding any practical change.
+        if (token === null) return;
+        let user: Me = makePlaceholderMe();
+        try {
+          user = await fetchMe();
+        } catch (err) {
+          if (err instanceof NetworkError) {
+            logger.info(
+              "Offline at boot; treating stored token as valid for now",
+            );
+          } else {
+            // 401 → interceptor will clear the token; propagate to
+            // unauthed via the unauthorized handler. Other errors:
+            // fall through with placeholder user.
+            logger.info("fetchMe during boot failed (non-network)", err);
+          }
+        }
         if (!isMounted.current) return;
-        setUser(me);
-        setStatus("authed");
+        setState({
+          status: "locked",
+          user,
+          hasJwt: !isJwtExpired(token),
+        });
       } catch (err) {
-        logger.info("Auth bootstrap failed; treating as signed out", err);
+        // Unexpected boot error. Don't silently drop into unauthed
+        // unless we genuinely have nothing.
+        logger.warn("Auth bootstrap unexpected error", err);
         if (!isMounted.current) return;
-        setUser(null);
-        setStatus("unauthed");
+        setState({ status: "unauthed" });
       }
     })();
 
     return () => {
       isMounted.current = false;
       setUnauthorizedHandler(null);
+      wipeInMemoryKey();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ----- AppState background lock -----
+  useEffect(() => {
+    const sub = RNAppState.addEventListener(
+      "change",
+      (next: AppStateStatus) => {
+        if (next === "background" || next === "inactive") {
+          backgroundedAtMs.current = Date.now();
+          return;
+        }
+        if (next === "active") {
+          const since = backgroundedAtMs.current;
+          backgroundedAtMs.current = null;
+          if (since !== null && Date.now() - since > BACKGROUND_LOCK_MS) {
+            // Long enough away that we re-prompt for PIN.
+            lock();
+          }
+        }
+      },
+    );
+    return () => {
+      sub.remove();
+    };
+  }, [lock]);
+
+  // ----- Periodic JWT freshness re-check while authed -----
+  useEffect(() => {
+    if (state.status !== "authed") return;
+    const id = setInterval(() => {
+      void (async () => {
+        const token = await getToken();
+        if (!isMounted.current) return;
+        const fresh = token !== null && !isJwtExpired(token);
+        setState((prev) =>
+          prev.status === "authed" && prev.jwtFresh !== fresh
+            ? { ...prev, jwtFresh: fresh }
+            : prev,
+        );
+      })();
+    }, JWT_FRESHNESS_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [state.status]);
+
   const value = useMemo<AuthState>(
-    () => ({ status, user, signIn, signOut }),
-    [status, user, signIn, signOut],
+    () => ({
+      state,
+      signIn,
+      completeOnboarding,
+      unlock,
+      lock,
+      signOut,
+      getDecryptedPrivateKey,
+    }),
+    [
+      state,
+      signIn,
+      completeOnboarding,
+      unlock,
+      lock,
+      signOut,
+      getDecryptedPrivateKey,
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+// When the locked screen appears we may not yet have a fresh Me object
+// (offline boot). The PIN entry screen doesn't need user fields, but
+// the AuthState shape requires one. After successful unlock + a future
+// fetchMe call, real fields populate.
+function makePlaceholderMe(): Me {
+  return {
+    id: "u_0000000000000000",
+    email: "",
+    phone: null,
+    role: "STUDENT",
+    status: "ACTIVE",
+    verifiedBalanceKobo: "0",
+    createdAt: new Date(0).toISOString(),
+  };
 }
