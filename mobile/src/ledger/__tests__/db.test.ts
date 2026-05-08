@@ -83,6 +83,19 @@ function createMockDb() {
       return { changes: 1 };
     }
 
+    if (s.startsWith("UPDATE PENDING_TRANSACTIONS")) {
+      ensureTable("pending_transactions");
+      const rows = tables.get("pending_transactions")!;
+      const [newStatus, reconciledAt, transactionId] = params;
+      const row = rows.find((r) => r["id"] === transactionId);
+      if (row) {
+        row["status"] = newStatus as string;
+        row["reconciled_at"] = reconciledAt as string;
+        return { changes: 1 };
+      }
+      return { changes: 0 };
+    }
+
     return { changes: 0 };
   }
 
@@ -127,6 +140,21 @@ function createMockDb() {
   function getAllSync<T>(source: string, ...params: (string | number | null)[]): T[] {
     const s = source.trim().toUpperCase();
 
+    if (s.includes("WHERE STATUS = ? AND DIRECTION = ?")) {
+      ensureTable("pending_transactions");
+      const rows = tables.get("pending_transactions")!;
+      const status = params[0] as string;
+      const direction = params[1] as string;
+      const filtered = rows.filter((r) => r["status"] === status && r["direction"] === direction);
+      // Sort by created_at ASC
+      const sorted = [...filtered].sort((a, b) => {
+        const aDate = a["created_at"] as string;
+        const bDate = b["created_at"] as string;
+        return aDate.localeCompare(bDate);
+      });
+      return sorted as unknown as T[];
+    }
+
     if (s.includes("FROM PENDING_TRANSACTIONS")) {
       ensureTable("pending_transactions");
       const rows = tables.get("pending_transactions")!;
@@ -164,6 +192,8 @@ import {
   listPendingTransactions,
   getLocalState,
   setLocalState,
+  listPendingByStatus,
+  updateTransactionStatus,
 } from "../db";
 
 // ---- Helpers -------------------------------------------------------------
@@ -389,5 +419,70 @@ describe("getLocalState / setLocalState", () => {
     setLocalState("verified_balance_kobo", "100000");
     setLocalState("verified_balance_kobo", "200000");
     expect(getLocalState("verified_balance_kobo")).toBe("200000");
+  });
+});
+
+describe("listPendingByStatus", () => {
+  beforeEach(() => resetDb());
+
+  it("returns filtered transactions sorted ASC", () => {
+    insertPendingTransaction({
+      id: "tx_0000000000000001",
+      envelopeJson: makeEnvelopeJson(),
+      recipientId: "u_abcdef0123456789",
+      recipientLabel: undefined,
+      amountKobo: 10_000,
+      sequenceNumber: 1,
+      direction: "incoming",
+      createdAt: "2026-05-01T10:00:00.000Z",
+    });
+    insertPendingTransaction({
+      id: "tx_0000000000000002",
+      envelopeJson: makeEnvelopeJson(),
+      recipientId: "u_abcdef0123456789",
+      recipientLabel: undefined,
+      amountKobo: 20_000,
+      sequenceNumber: 2,
+      direction: "incoming",
+      createdAt: "2026-05-01T11:00:00.000Z",
+    });
+    insertPendingTransaction({
+      id: "tx_0000000000000003",
+      envelopeJson: makeEnvelopeJson(),
+      recipientId: "u_abcdef0123456789",
+      recipientLabel: undefined,
+      amountKobo: 20_000,
+      sequenceNumber: 3,
+      direction: "outgoing", // wrong direction
+      createdAt: "2026-05-01T12:00:00.000Z",
+    });
+
+    const result = listPendingByStatus("pending_reconciliation", "incoming");
+    expect(result).toHaveLength(2);
+    expect(result[0]!.id).toBe("tx_0000000000000001"); // oldest first
+    expect(result[1]!.id).toBe("tx_0000000000000002");
+  });
+});
+
+describe("updateTransactionStatus", () => {
+  beforeEach(() => resetDb());
+
+  it("updates status and reconciledAt", () => {
+    insertPendingTransaction({
+      id: "tx_0000000000000001",
+      envelopeJson: makeEnvelopeJson(),
+      recipientId: "u_abcdef0123456789",
+      recipientLabel: undefined,
+      amountKobo: 10_000,
+      sequenceNumber: 1,
+      direction: "incoming",
+      createdAt: "2026-05-01T10:00:00.000Z",
+    });
+
+    updateTransactionStatus("tx_0000000000000001", "reconciled");
+
+    const rows = mockDbInstance.tables.get("pending_transactions")!;
+    expect(rows[0]!["status"]).toBe("reconciled");
+    expect(rows[0]!["reconciled_at"]).not.toBeNull();
   });
 });

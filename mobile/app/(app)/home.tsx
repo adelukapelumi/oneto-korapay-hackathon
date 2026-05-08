@@ -1,8 +1,12 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import { useState, useCallback } from "react";
 import { MAX_USER_BALANCE_KOBO } from "@oneto/shared";
 import { useAuth } from "../../src/auth/auth-state";
+import { listPendingByStatus } from "../../src/ledger/db";
+import { syncPendingEnvelopes } from "../../src/api/reconcile";
+import { useFocusEffect } from "expo-router";
 
 export default function HomeScreen(): React.ReactElement {
   const { state, signOut } = useAuth();
@@ -15,6 +19,26 @@ export default function HomeScreen(): React.ReactElement {
   }
   const user = state.user;
   const jwtFresh = state.jwtFresh;
+
+  const [pendingCount, setPendingCount] = useState(0);
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (user.role === "MERCHANT") {
+        const pending = listPendingByStatus("pending_reconciliation", "incoming");
+        setPendingCount(pending.length);
+      }
+    }, [user.role])
+  );
+
+  const handleSync = async () => {
+    setIsSyncing(true);
+    await syncPendingEnvelopes();
+    const pending = listPendingByStatus("pending_reconciliation", "incoming");
+    setPendingCount(pending.length);
+    setIsSyncing(false);
+  };
 
   // verifiedBalanceKobo is a string-encoded BigInt. Pilot balances are
   // capped at MAX_USER_BALANCE_KOBO (well under Number.MAX_SAFE_INTEGER),
@@ -47,13 +71,39 @@ export default function HomeScreen(): React.ReactElement {
           </Text>
         </View>
 
-        <Pressable
-          style={styles.primaryButton}
-          onPress={() => router.push("/(app)/pay/scan")}
-          accessibilityRole="button"
-        >
-          <Text style={styles.primaryButtonText}>Pay Merchant</Text>
-        </Pressable>
+        {user.role === "STUDENT" ? (
+          <Pressable
+            style={styles.primaryButton}
+            onPress={() => router.push("/(app)/pay/scan")}
+            accessibilityRole="button"
+          >
+            <Text style={styles.primaryButtonText}>Pay Merchant</Text>
+          </Pressable>
+        ) : (
+          <View style={styles.merchantSection}>
+            <Pressable
+              style={styles.primaryButton}
+              onPress={() => router.push("/(app)/merchant/charge")}
+              accessibilityRole="button"
+            >
+              <Text style={styles.primaryButtonText}>Charge Customer</Text>
+            </Pressable>
+            
+            <View style={styles.syncCard}>
+              <View>
+                <Text style={styles.syncCardTitle}>Pending Syncs</Text>
+                <Text style={styles.syncCardCount}>{pendingCount} payments</Text>
+              </View>
+              <Pressable
+                style={[styles.syncButton, (isSyncing || pendingCount === 0 || !jwtFresh) && styles.syncButtonDisabled]}
+                onPress={handleSync}
+                disabled={isSyncing || pendingCount === 0 || !jwtFresh}
+              >
+                <Text style={styles.syncButtonText}>{isSyncing ? "Syncing..." : "Sync Now"}</Text>
+              </Pressable>
+            </View>
+          </View>
+        )}
 
         <View style={styles.metaRow}>
           <Text style={styles.metaLabel}>Role</Text>
@@ -147,4 +197,23 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   signOutText: { fontSize: 16, fontWeight: "600", color: "#000" },
+  merchantSection: { marginBottom: 24 },
+  syncCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#f5f5f5",
+    padding: 16,
+    borderRadius: 12,
+  },
+  syncCardTitle: { fontSize: 14, color: "#666" },
+  syncCardCount: { fontSize: 18, fontWeight: "600", color: "#000", marginTop: 4 },
+  syncButton: {
+    backgroundColor: "#000",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  syncButtonDisabled: { opacity: 0.5 },
+  syncButtonText: { color: "#fff", fontWeight: "500", fontSize: 14 },
 });

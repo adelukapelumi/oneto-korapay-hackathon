@@ -213,6 +213,67 @@ export function listPendingTransactions(
   }));
 }
 
+/**
+ * List pending transactions by status and direction.
+ */
+export function listPendingByStatus(
+  status: string,
+  direction: "incoming" | "outgoing",
+): PendingTransaction[] {
+  const rows = getDb().getAllSync<{
+    id: string;
+    envelope_json: string;
+    recipient_id: string;
+    recipient_label: string | null;
+    amount_kobo: number;
+    sequence_number: number;
+    direction: string;
+    status: string;
+    created_at: string;
+    reconciled_at: string | null;
+  }>(
+    `SELECT id, envelope_json, recipient_id, recipient_label,
+            amount_kobo, sequence_number, direction, status,
+            created_at, reconciled_at
+     FROM pending_transactions
+     WHERE status = ? AND direction = ?
+     ORDER BY created_at ASC`,
+    status,
+    direction,
+  );
+
+  return rows.map((r) => ({
+    id: r.id,
+    envelopeJson: r.envelope_json,
+    recipientId: r.recipient_id,
+    recipientLabel: r.recipient_label,
+    amountKobo: r.amount_kobo,
+    sequenceNumber: r.sequence_number,
+    direction: r.direction as "outgoing" | "incoming",
+    status: r.status as PendingTransaction["status"],
+    createdAt: r.created_at,
+    reconciledAt: r.reconciled_at,
+  }));
+}
+
+/**
+ * Update a transaction's status and set reconciled_at.
+ */
+export function updateTransactionStatus(
+  transactionId: string,
+  newStatus: "reconciled" | "rejected",
+): void {
+  const reconciledAt = new Date().toISOString();
+  getDb().runSync(
+    `UPDATE pending_transactions
+     SET status = ?, reconciled_at = ?
+     WHERE id = ?`,
+    newStatus,
+    reconciledAt,
+    transactionId,
+  );
+}
+
 // ----------------------------------------------------------------
 // Local key-value state
 // ----------------------------------------------------------------
