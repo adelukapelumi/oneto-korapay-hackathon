@@ -47,6 +47,14 @@ export default function HomeScreen(): React.ReactElement {
           </Text>
         </View>
 
+        <Pressable
+          style={styles.primaryButton}
+          onPress={() => router.push("/(app)/pay/scan")}
+          accessibilityRole="button"
+        >
+          <Text style={styles.primaryButtonText}>Pay Merchant</Text>
+        </Pressable>
+
         <View style={styles.metaRow}>
           <Text style={styles.metaLabel}>Role</Text>
           <Text style={styles.metaValue}>{user.role}</Text>
@@ -110,6 +118,15 @@ const styles = StyleSheet.create({
   },
   metaLabel: { color: "#666", fontSize: 14 },
   metaValue: { color: "#000", fontSize: 14, fontWeight: "500" },
+  primaryButton: {
+    marginBottom: 24,
+    height: 52,
+    backgroundColor: "#0066cc",
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  primaryButtonText: { fontSize: 16, fontWeight: "600", color: "#fff" },
   secondary: {
     marginTop: 16,
     height: 52,

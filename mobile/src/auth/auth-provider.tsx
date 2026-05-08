@@ -12,6 +12,7 @@ import { logger } from "../lib/logger";
 import { clearToken, getToken, setToken } from "./token-store";
 import { isJwtExpired } from "./jwt-decode";
 import { AuthContext, type AppState, type AuthState } from "./auth-state";
+import { initDb, setLocalState } from "../ledger/db";
 
 interface ProviderProps {
   readonly children: React.ReactNode;
@@ -59,6 +60,8 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
   const signIn = useCallback(
     async (token: string, nextUser: Me) => {
       await setToken(token);
+      setLocalState("verified_balance_kobo", nextUser.verifiedBalanceKobo);
+      setLocalState("last_sync_at", new Date().toISOString());
       if (!isMounted.current) return;
       // Decide where this user goes next. The brief: after OTP verify,
       // if no keypair on this device → onboarding; else → home (the
@@ -130,6 +133,7 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
   // ----- Bootstrap -----
   useEffect(() => {
     isMounted.current = true;
+    initDb();
 
     setUnauthorizedHandler(() => {
       if (!isMounted.current) return;
@@ -168,6 +172,8 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
           let user: Me | null = null;
           try {
             user = await fetchMe();
+            setLocalState("verified_balance_kobo", user.verifiedBalanceKobo);
+            setLocalState("last_sync_at", new Date().toISOString());
           } catch (err) {
             // If offline at boot, we still proceed to onboarding —
             // the user can complete PIN setup; key registration will
@@ -218,6 +224,8 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
         let user: Me = makePlaceholderMe();
         try {
           user = await fetchMe();
+          setLocalState("verified_balance_kobo", user.verifiedBalanceKobo);
+          setLocalState("last_sync_at", new Date().toISOString());
         } catch (err) {
           if (err instanceof NetworkError) {
             logger.info(
