@@ -99,6 +99,24 @@ export default function HomeScreen(): React.ReactElement {
             >
               <Text style={styles.primaryButtonText}>Charge Customer</Text>
             </Pressable>
+
+            <Pressable
+              style={[styles.primaryButton, !jwtFresh && styles.buttonDisabled]}
+              onPress={() => router.push("/(app)/merchant/cashout")}
+              accessibilityRole="button"
+              disabled={!jwtFresh}
+            >
+              <Text style={styles.primaryButtonText}>Request Cashout</Text>
+            </Pressable>
+
+            <Pressable
+              style={[styles.primaryButton, !jwtFresh && styles.buttonDisabled]}
+              onPress={() => router.push("/(app)/merchant/cashout-history")}
+              accessibilityRole="button"
+              disabled={!jwtFresh}
+            >
+              <Text style={styles.primaryButtonText}>Cashout History</Text>
+            </Pressable>
             
             <View style={styles.syncCard}>
               <View>
