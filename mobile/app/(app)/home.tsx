@@ -72,13 +72,24 @@ export default function HomeScreen(): React.ReactElement {
         </View>
 
         {user.role === "STUDENT" ? (
-          <Pressable
-            style={styles.primaryButton}
-            onPress={() => router.push("/(app)/pay/scan")}
-            accessibilityRole="button"
-          >
-            <Text style={styles.primaryButtonText}>Pay Merchant</Text>
-          </Pressable>
+          <View style={styles.studentSection}>
+            <Pressable
+              style={styles.primaryButton}
+              onPress={() => router.push("/(app)/pay/scan")}
+              accessibilityRole="button"
+            >
+              <Text style={styles.primaryButtonText}>Pay Merchant</Text>
+            </Pressable>
+            
+            <Pressable
+              style={[styles.primaryButton, !jwtFresh && styles.buttonDisabled]}
+              onPress={() => router.push("/(app)/topup/amount")}
+              accessibilityRole="button"
+              disabled={!jwtFresh}
+            >
+              <Text style={styles.primaryButtonText}>Top Up Balance</Text>
+            </Pressable>
+          </View>
         ) : (
           <View style={styles.merchantSection}>
             <Pressable
@@ -216,4 +227,6 @@ const styles = StyleSheet.create({
   },
   syncButtonDisabled: { opacity: 0.5 },
   syncButtonText: { color: "#fff", fontWeight: "500", fontSize: 14 },
+  studentSection: { marginBottom: 24 },
+  buttonDisabled: { opacity: 0.5 },
 });
