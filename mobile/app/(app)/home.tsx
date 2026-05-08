@@ -89,6 +89,14 @@ export default function HomeScreen(): React.ReactElement {
             >
               <Text style={styles.primaryButtonText}>Top Up Balance</Text>
             </Pressable>
+
+            <Pressable
+              style={styles.secondaryButton}
+              onPress={() => router.push("/(app)/history")}
+              accessibilityRole="button"
+            >
+              <Text style={styles.secondaryButtonText}>Transaction History</Text>
+            </Pressable>
           </View>
         ) : (
           <View style={styles.merchantSection}>
@@ -118,6 +126,14 @@ export default function HomeScreen(): React.ReactElement {
               <Text style={styles.primaryButtonText}>Cashout History</Text>
             </Pressable>
             
+            <Pressable
+              style={styles.secondaryButton}
+              onPress={() => router.push("/(app)/history")}
+              accessibilityRole="button"
+            >
+              <Text style={styles.secondaryButtonText}>Transaction History</Text>
+            </Pressable>
+
             <View style={styles.syncCard}>
               <View>
                 <Text style={styles.syncCardTitle}>Pending Syncs</Text>
@@ -206,6 +222,15 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   primaryButtonText: { fontSize: 16, fontWeight: "600", color: "#fff" },
+  secondaryButton: {
+    marginBottom: 24,
+    height: 52,
+    backgroundColor: "#e0e0e0",
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  secondaryButtonText: { fontSize: 16, fontWeight: "600", color: "#333" },
   secondary: {
     marginTop: 16,
     height: 52,
