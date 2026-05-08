@@ -31,3 +31,6 @@ mobile/android/.gradle/
 shared/dist/
 **/*.tsbuildinfo.claude/
 .claude/
+
+design-reference/
+design-reference-jsx/

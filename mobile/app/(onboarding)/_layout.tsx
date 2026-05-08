@@ -27,5 +27,5 @@ export default function OnboardingLayout(): React.ReactElement {
 }
 
 const styles = StyleSheet.create({
-  loading: { flex: 1, alignItems: "center", justifyContent: "center" },
+  loading: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#F7F5F0" },
 });

@@ -17,6 +17,16 @@ import { z } from "zod";
 import { requestOtp } from "../../src/api/auth";
 import { NetworkError } from "../../src/api/errors";
 import { logger } from "../../src/lib/logger";
+import {
+  colors,
+  fonts,
+  fontSizes,
+  pixelFontSizes,
+  spacing,
+  radii,
+  borders,
+  shadows,
+} from "../../src/theme/tokens";
 
 const SignInSchema = z.object({
   email: z
@@ -32,12 +42,16 @@ export default function SignInScreen(): React.ReactElement {
   const router = useRouter();
   const [networkError, setNetworkError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [focused, setFocused] = useState(false);
 
-  const { control, handleSubmit, formState } = useForm<SignInForm>({
+  const { control, handleSubmit, formState, watch } = useForm<SignInForm>({
     resolver: zodResolver(SignInSchema),
     defaultValues: { email: "" },
     mode: "onBlur",
   });
+
+  const emailValue = watch("email");
+  const isCU = emailValue.toLowerCase().endsWith("@stu.cu.edu.ng");
 
   const onSubmit = handleSubmit(async ({ email }) => {
     setNetworkError(null);
@@ -67,32 +81,58 @@ export default function SignInScreen(): React.ReactElement {
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
         <View style={styles.container}>
-          <Text style={styles.title}>Welcome to oneto</Text>
-          <Text style={styles.subtitle}>
-            Enter your email to get started.
+          {/* Step indicator */}
+          <Text style={styles.stepLabel}>STEP 1</Text>
+
+          {/* Heading */}
+          <Text style={styles.title}>
+            Get started{"\n"}with{" "}
+            <Text style={styles.titleAccent}>oneto</Text>
           </Text>
 
+          {/* Subtitle */}
+          <Text style={styles.subtitle}>
+            Enter your CU email to get started with offline payments.
+          </Text>
+
+          {/* Email input */}
           <Controller
             control={control}
             name="email"
             render={({ field, fieldState }) => (
               <View style={styles.field}>
-                <TextInput
+                <View
                   style={[
-                    styles.input,
-                    fieldState.error ? styles.inputError : null,
+                    styles.inputWrap,
+                    focused && styles.inputWrapFocused,
+                    fieldState.error && styles.inputWrapError,
                   ]}
-                  placeholder="you@example.com"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  autoComplete="email"
-                  keyboardType="email-address"
-                  textContentType="emailAddress"
-                  value={field.value}
-                  onChangeText={field.onChange}
-                  onBlur={field.onBlur}
-                  editable={!submitting}
-                />
+                >
+                  <Text style={styles.inputIcon}>✉️</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="you@stu.cu.edu.ng"
+                    placeholderTextColor={colors.dark.textMut}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    autoComplete="email"
+                    keyboardType="email-address"
+                    textContentType="emailAddress"
+                    value={field.value}
+                    onChangeText={field.onChange}
+                    onFocus={() => setFocused(true)}
+                    onBlur={() => {
+                      setFocused(false);
+                      field.onBlur();
+                    }}
+                    editable={!submitting}
+                  />
+                  {isCU && (
+                    <View style={styles.cuBadge}>
+                      <Text style={styles.cuBadgeText}>✓ CU</Text>
+                    </View>
+                  )}
+                </View>
                 {fieldState.error ? (
                   <Text style={styles.fieldError}>
                     {fieldState.error.message}
@@ -106,21 +146,31 @@ export default function SignInScreen(): React.ReactElement {
             <Text style={styles.networkError}>{networkError}</Text>
           ) : null}
 
+          {/* Spacer pushes button to bottom */}
+          <View style={styles.flex} />
+
+          {/* Continue button */}
           <Pressable
-            style={[
+            style={({ pressed }) => [
               styles.button,
               (submitting || !formState.isValid) && styles.buttonDisabled,
+              pressed && styles.buttonPressed,
             ]}
             onPress={onSubmit}
             disabled={submitting}
             accessibilityRole="button"
           >
             {submitting ? (
-              <ActivityIndicator color="#fff" />
+              <ActivityIndicator color={colors.primaryText} />
             ) : (
-              <Text style={styles.buttonText}>Send code</Text>
+              <Text style={styles.buttonText}>Continue</Text>
             )}
           </Pressable>
+
+          {/* Terms */}
+          <Text style={styles.terms}>
+            By continuing, you agree to our Terms of Service
+          </Text>
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -128,32 +178,116 @@ export default function SignInScreen(): React.ReactElement {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#fff" },
+  safe: { flex: 1, backgroundColor: colors.light.bg },
   flex: { flex: 1 },
-  container: { flex: 1, padding: 24, justifyContent: "center" },
-  title: { fontSize: 36, fontWeight: "700", marginBottom: 8 },
-  subtitle: { fontSize: 16, color: "#444", marginBottom: 32 },
-  field: { marginBottom: 16 },
-  input: {
-    height: 52,
-    borderWidth: 1,
-    borderColor: "#ccc",
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    fontSize: 16,
-    backgroundColor: "#fafafa",
+  container: {
+    flex: 1,
+    paddingHorizontal: spacing.screenHorizontal,
+    paddingTop: spacing["6xl"],
+    paddingBottom: spacing["2xl"],
   },
-  inputError: { borderColor: "#c00" },
-  fieldError: { color: "#c00", marginTop: 6, fontSize: 14 },
-  networkError: { color: "#c00", marginBottom: 12, fontSize: 14 },
+  stepLabel: {
+    fontFamily: fonts.pixel,
+    fontSize: pixelFontSizes.md,
+    color: colors.primary,
+    marginBottom: spacing.sm,
+  },
+  title: {
+    fontFamily: fonts.bold,
+    fontSize: fontSizes.h1,
+    color: colors.light.text,
+    lineHeight: 37,
+  },
+  titleAccent: {
+    color: colors.primary,
+  },
+  subtitle: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.bodyLg,
+    color: colors.light.textSec,
+    marginTop: spacing.md,
+    lineHeight: 22,
+  },
+  field: {
+    marginTop: spacing["4xl"],
+  },
+  inputWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: colors.light.inputBg,
+    borderWidth: borders.standard,
+    borderColor: colors.light.border,
+    borderRadius: radii.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.lg,
+  },
+  inputWrapFocused: {
+    borderColor: colors.primary,
+  },
+  inputWrapError: {
+    borderColor: colors.error,
+  },
+  inputIcon: {
+    fontSize: 18,
+  },
+  input: {
+    flex: 1,
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.input,
+    color: colors.light.text,
+    padding: 0,
+  },
+  cuBadge: {
+    backgroundColor: "rgba(32,230,152,0.13)",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: radii.sm,
+  },
+  cuBadgeText: {
+    fontFamily: fonts.bold,
+    fontSize: fontSizes.body,
+    color: colors.primary,
+  },
+  fieldError: {
+    fontFamily: fonts.regular,
+    color: colors.error,
+    marginTop: 6,
+    fontSize: fontSizes.caption,
+  },
+  networkError: {
+    fontFamily: fonts.regular,
+    color: colors.error,
+    marginTop: spacing.md,
+    fontSize: fontSizes.body,
+  },
   button: {
     height: 52,
-    backgroundColor: "#000",
-    borderRadius: 12,
+    backgroundColor: colors.primary,
+    borderRadius: radii.pill,
+    borderWidth: borders.standard,
+    borderColor: colors.light.border,
     alignItems: "center",
     justifyContent: "center",
-    marginTop: 8,
+    ...shadows.neu.light,
   },
-  buttonDisabled: { opacity: 0.5 },
-  buttonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  buttonDisabled: {
+    opacity: 0.5,
+  },
+  buttonPressed: {
+    transform: [{ translateX: 3 }, { translateY: 3 }],
+    shadowOffset: { width: 0, height: 0 },
+  },
+  buttonText: {
+    fontFamily: fonts.bold,
+    fontSize: fontSizes.button,
+    color: colors.primaryText,
+  },
+  terms: {
+    fontFamily: fonts.regular,
+    textAlign: "center",
+    color: colors.light.textMut,
+    fontSize: fontSizes.caption,
+    marginTop: spacing.lg,
+  },
 });

@@ -1,7 +1,6 @@
 import { useRef, useState } from "react";
 import {
-  KeyboardAvoidingView,
-  Platform,
+  Animated,
   Pressable,
   StyleSheet,
   Text,
@@ -10,11 +9,29 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import {
+  colors,
+  fonts,
+  fontSizes,
+  pixelFontSizes,
+  spacing,
+  radii,
+  borders,
+  shadows,
+  dimensions,
+} from "../../src/theme/tokens";
 
 const PIN_LENGTH = 6;
 const PIN_REGEX = /^\d{6}$/;
 
 type Step = "enter" | "confirm";
+
+const NUM_ROWS: (number | "del" | "")[][] = [
+  [1, 2, 3],
+  [4, 5, 6],
+  [7, 8, 9],
+  ["", 0, "del"],
+];
 
 export default function PinSetupScreen(): React.ReactElement {
   const router = useRouter();
@@ -23,6 +40,7 @@ export default function PinSetupScreen(): React.ReactElement {
   const [pin, setPin] = useState("");
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<TextInput>(null);
+  const shakeAnim = useRef(new Animated.Value(0)).current;
 
   const onChange = (raw: string): void => {
     const digits = raw.replace(/\D/g, "").slice(0, PIN_LENGTH);
@@ -44,6 +62,7 @@ export default function PinSetupScreen(): React.ReactElement {
     }
     // confirm step
     if (digits !== firstPin) {
+      triggerShake();
       setError("PINs don't match. Try again.");
       setFirstPin("");
       setPin("");
@@ -60,85 +79,259 @@ export default function PinSetupScreen(): React.ReactElement {
     });
   };
 
-  const heading =
-    step === "enter" ? "Choose a 6-digit PIN" : "Confirm your PIN";
-  const subheading =
-    step === "enter"
-      ? "You'll use this PIN to unlock the app."
-      : "Type the same PIN again.";
+  function triggerShake(): void {
+    Animated.sequence([
+      Animated.timing(shakeAnim, { toValue: -8, duration: 50, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: 8, duration: 50, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: -6, duration: 50, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: 6, duration: 50, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: 0, duration: 50, useNativeDriver: true }),
+    ]).start();
+  }
+
+  function onDigit(d: number): void {
+    if (pin.length >= PIN_LENGTH) return;
+    onChange(pin + String(d));
+  }
+
+  function onDelete(): void {
+    setPin((p) => p.slice(0, -1));
+    setError(null);
+  }
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-      >
-        <View style={styles.container}>
-          <Text style={styles.title}>{heading}</Text>
-          <Text style={styles.subtitle}>{subheading}</Text>
+      {/* Header with back button */}
+      <View style={styles.header}>
+        <Pressable
+          style={styles.backButton}
+          onPress={() => router.back()}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
+          <Text style={styles.backIcon}>←</Text>
+        </Pressable>
+      </View>
 
-          <TextInput
-            ref={inputRef}
-            style={[styles.input, error ? styles.inputError : null]}
-            value={pin}
-            onChangeText={onChange}
-            keyboardType="number-pad"
-            inputMode="numeric"
-            secureTextEntry
-            autoFocus
-            maxLength={PIN_LENGTH}
-            placeholder="••••••"
-            textContentType="oneTimeCode"
-          />
+      <View style={styles.container}>
+        {/* Step indicator */}
+        <Text style={styles.stepLabel}>
+          {step === "enter" ? "STEP 3" : "CONFIRM"}
+        </Text>
 
-          {error ? <Text style={styles.error}>{error}</Text> : null}
+        {/* Heading */}
+        <Text style={styles.title}>
+          {step === "enter" ? "Create your PIN" : "Enter PIN again"}
+        </Text>
 
-          <Pressable
-            style={[
-              styles.button,
-              pin.length !== PIN_LENGTH && styles.buttonDisabled,
-            ]}
-            onPress={() => onChange(pin)}
-            disabled={pin.length !== PIN_LENGTH}
-            accessibilityRole="button"
-          >
-            <Text style={styles.buttonText}>
-              {step === "enter" ? "Continue" : "Confirm"}
-            </Text>
-          </Pressable>
+        {/* Subtitle */}
+        <Text style={styles.subtitle}>
+          {step === "enter"
+            ? "This 6-digit PIN secures your payments"
+            : "Re-enter your 6-digit PIN to confirm"}
+        </Text>
+
+        {/* PIN dots */}
+        <Animated.View
+          style={[
+            styles.dotsRow,
+            { transform: [{ translateX: shakeAnim }] },
+          ]}
+        >
+          {Array.from({ length: PIN_LENGTH }).map((_, i) => (
+            <View
+              key={i}
+              style={[
+                styles.dot,
+                i < pin.length && styles.dotFilled,
+              ]}
+            />
+          ))}
+        </Animated.View>
+
+        {/* Error message */}
+        {error ? (
+          <Text style={styles.error}>{error}</Text>
+        ) : (
+          <View style={styles.errorSpacer} />
+        )}
+
+        {/* NumPad */}
+        <View style={styles.numPad}>
+          {NUM_ROWS.map((row, ri) => (
+            <View key={ri} style={styles.numRow}>
+              {row.map((key, ki) => {
+                if (key === "") {
+                  return <View key={ki} style={styles.numKeyEmpty} />;
+                }
+                return (
+                  <Pressable
+                    key={ki}
+                    style={({ pressed }) => [
+                      styles.numKey,
+                      pressed && styles.numKeyPressed,
+                    ]}
+                    onPress={() =>
+                      key === "del" ? onDelete() : onDigit(key as number)
+                    }
+                  >
+                    <Text style={styles.numKeyText}>
+                      {key === "del" ? "⌫" : key}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          ))}
         </View>
-      </KeyboardAvoidingView>
+
+        {/* Hint */}
+        <Text style={styles.hint}>
+          {step === "enter" ? "Don't share your PIN with anyone" : ""}
+        </Text>
+
+        {/* Hidden TextInput for OS autofill / accessibility */}
+        <TextInput
+          ref={inputRef}
+          style={styles.hiddenInput}
+          value={pin}
+          onChangeText={onChange}
+          keyboardType="number-pad"
+          inputMode="numeric"
+          secureTextEntry
+          maxLength={PIN_LENGTH}
+          textContentType="oneTimeCode"
+        />
+      </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#fff" },
-  flex: { flex: 1 },
-  container: { flex: 1, padding: 24, justifyContent: "center" },
-  title: { fontSize: 28, fontWeight: "700", marginBottom: 8 },
-  subtitle: { fontSize: 16, color: "#444", marginBottom: 32 },
-  input: {
-    height: 64,
-    borderWidth: 1,
-    borderColor: "#ccc",
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    fontSize: 28,
-    letterSpacing: 12,
-    textAlign: "center",
-    backgroundColor: "#fafafa",
+  safe: { flex: 1, backgroundColor: colors.light.bg },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    minHeight: dimensions.headerMinHeight,
   },
-  inputError: { borderColor: "#c00" },
-  error: { color: "#c00", marginTop: 12, fontSize: 14 },
-  button: {
-    height: 52,
-    backgroundColor: "#000",
-    borderRadius: 12,
+  backButton: {
+    width: dimensions.headerBackButton.size,
+    height: dimensions.headerBackButton.size,
+    borderRadius: radii.md,
+    borderWidth: borders.medium,
+    borderColor: colors.light.border,
+    backgroundColor: colors.light.card,
     alignItems: "center",
     justifyContent: "center",
-    marginTop: 24,
   },
-  buttonDisabled: { opacity: 0.5 },
-  buttonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  backIcon: {
+    fontSize: 18,
+    color: colors.light.text,
+  },
+  container: {
+    flex: 1,
+    paddingHorizontal: spacing.screenHorizontal,
+    paddingTop: spacing.xl,
+    alignItems: "center",
+  },
+  stepLabel: {
+    fontFamily: fonts.pixel,
+    fontSize: pixelFontSizes.md,
+    color: colors.primary,
+    marginBottom: spacing.sm,
+  },
+  title: {
+    fontFamily: fonts.bold,
+    fontSize: fontSizes.h2,
+    color: colors.light.text,
+  },
+  subtitle: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.body,
+    color: colors.light.textSec,
+    marginTop: spacing.sm,
+  },
+  dotsRow: {
+    flexDirection: "row",
+    gap: dimensions.pinDot.gap,
+    justifyContent: "center",
+    marginTop: spacing["5xl"],
+  },
+  dot: {
+    width: dimensions.pinDot.size,
+    height: dimensions.pinDot.size,
+    borderRadius: dimensions.pinDot.size / 2,
+    borderWidth: borders.standard,
+    borderColor: colors.light.border,
+    backgroundColor: "transparent",
+  },
+  dotFilled: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+    transform: [{ scale: 1.15 }],
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.5,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  error: {
+    fontFamily: fonts.regular,
+    color: colors.error,
+    fontSize: fontSizes.caption,
+    fontWeight: "600",
+    marginTop: spacing.md,
+    height: 32,
+  },
+  errorSpacer: {
+    height: 32,
+    marginTop: spacing.md,
+  },
+  numPad: {
+    marginTop: spacing.lg,
+    gap: dimensions.numPadGap.row,
+    alignItems: "center",
+  },
+  numRow: {
+    flexDirection: "row",
+    gap: dimensions.numPadGap.col,
+  },
+  numKey: {
+    width: dimensions.numPadKey.size,
+    height: dimensions.numPadKey.size,
+    borderRadius: dimensions.numPadKey.size / 2,
+    borderWidth: borders.medium,
+    borderColor: colors.light.border,
+    backgroundColor: colors.light.keyBg,
+    alignItems: "center",
+    justifyContent: "center",
+    ...shadows.neu.light,
+  },
+  numKeyPressed: {
+    transform: [{ scale: 0.9 }],
+  },
+  numKeyEmpty: {
+    width: dimensions.numPadKey.size,
+    height: dimensions.numPadKey.size,
+  },
+  numKeyText: {
+    fontFamily: fonts.semibold,
+    fontSize: fontSizes.numPad,
+    color: colors.light.text,
+  },
+  hint: {
+    fontFamily: fonts.regular,
+    color: colors.light.textMut,
+    fontSize: fontSizes.sm,
+    marginTop: spacing["2xl"],
+    textAlign: "center",
+  },
+  hiddenInput: {
+    position: "absolute",
+    opacity: 0,
+    height: 1,
+    width: 1,
+  },
 });
