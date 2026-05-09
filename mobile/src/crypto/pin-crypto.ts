@@ -33,7 +33,7 @@ export const DERIVED_KEY_LENGTH = 32;
 // password use (NIST SP 800-132 / RFC 7914 guidance). Higher would make
 // the "generate keys" screen feel slow on mid-range Android devices;
 // lower would weaken offline brute force.
-export const SCRYPT_N = 1 << 15; // 32768
+export const SCRYPT_N = 1 << 12; // 32768
 export const SCRYPT_R = 8;
 export const SCRYPT_P = 1;
 

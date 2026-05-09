@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Animated,
   Pressable,
@@ -19,7 +19,9 @@ import {
   borders,
   shadows,
   dimensions,
-} from "../../src/theme/tokens";
+} from "@/theme/tokens";
+
+import { BackButton } from "../../components/BackButton";
 
 const PIN_LENGTH = 6;
 const PIN_REGEX = /^\d{6}$/;
@@ -42,26 +44,25 @@ export default function PinSetupScreen(): React.ReactElement {
   const inputRef = useRef<TextInput>(null);
   const shakeAnim = useRef(new Animated.Value(0)).current;
 
-  const onChange = (raw: string): void => {
-    const digits = raw.replace(/\D/g, "").slice(0, PIN_LENGTH);
-    setPin(digits);
-    setError(null);
-    if (digits.length !== PIN_LENGTH) return;
+  // Runs whenever `pin` changes. This is the single place that decides
+  // what to do when a full PIN has been entered, whether the digit came
+  // from the numpad (onDigit) or the hidden TextInput (onChange).
+  // Keeping logic here avoids the double-fire bug where onDigit → setPin
+  // caused the TextInput's onChangeText to re-run onChange with the same
+  // complete PIN, triggering router.replace twice.
+  useEffect(() => {
+    if (pin.length !== PIN_LENGTH) return;
+
     if (step === "enter") {
-      if (!PIN_REGEX.test(digits)) {
-        setError("Use 6 digits.");
-        setPin("");
-        return;
-      }
-      setFirstPin(digits);
+      setFirstPin(pin);
       setPin("");
       setStep("confirm");
-      // Re-focus so the user can keep typing without tapping.
       setTimeout(() => inputRef.current?.focus(), 0);
       return;
     }
+
     // confirm step
-    if (digits !== firstPin) {
+    if (pin !== firstPin) {
       triggerShake();
       setError("PINs don't match. Try again.");
       setFirstPin("");
@@ -70,13 +71,20 @@ export default function PinSetupScreen(): React.ReactElement {
       setTimeout(() => inputRef.current?.focus(), 0);
       return;
     }
-    // Both match. Hand off to the generating-keys screen, passing the
-    // confirmed PIN as a route param. Generating-keys does the actual
-    // keypair generation + secure-store write + key registration.
+
+    // Both steps passed — navigate once, cleanly.
     router.replace({
       pathname: "/(onboarding)/generating-keys",
-      params: { pin: digits },
+      params: { pin },
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pin]);
+
+  // AFTER — onChange is now only responsible for sanitising raw TextInput input
+  const onChange = (raw: string): void => {
+    const digits = raw.replace(/\D/g, "").slice(0, PIN_LENGTH);
+    setPin(digits);
+    setError(null);
   };
 
   function triggerShake(): void {
@@ -91,7 +99,8 @@ export default function PinSetupScreen(): React.ReactElement {
 
   function onDigit(d: number): void {
     if (pin.length >= PIN_LENGTH) return;
-    onChange(pin + String(d));
+    setPin((p) => p + String(d));
+    setError(null);
   }
 
   function onDelete(): void {
@@ -103,14 +112,7 @@ export default function PinSetupScreen(): React.ReactElement {
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
       {/* Header with back button */}
       <View style={styles.header}>
-        <Pressable
-          style={styles.backButton}
-          onPress={() => router.back()}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-        >
-          <Text style={styles.backIcon}>←</Text>
-        </Pressable>
+        <BackButton />
       </View>
 
       <View style={styles.container}>
@@ -201,6 +203,7 @@ export default function PinSetupScreen(): React.ReactElement {
           secureTextEntry
           maxLength={PIN_LENGTH}
           textContentType="oneTimeCode"
+          showSoftInputOnFocus={false}
         />
       </View>
     </SafeAreaView>

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -44,6 +44,10 @@ export default function SignInScreen(): React.ReactElement {
   const [submitting, setSubmitting] = useState(false);
   const [focused, setFocused] = useState(false);
 
+  // Ref so the Pressable wrapper can programmatically focus the input
+  // when the user taps anywhere in the input box, not just the text field itself.
+  const emailInputRef = useRef<TextInput>(null);
+
   const { control, handleSubmit, formState, watch } = useForm<SignInForm>({
     resolver: zodResolver(SignInSchema),
     defaultValues: { email: "" },
@@ -64,10 +68,6 @@ export default function SignInScreen(): React.ReactElement {
         setSubmitting(false);
         return;
       }
-      // Server-side rejections (rate limit, malformed email post-validation)
-      // are intentionally silent — matches the backend's anti-enumeration
-      // posture. We still navigate to /verify so attackers can't tell whether
-      // an email is registered.
       logger.info("requestOtp non-network error; navigating to verify anyway");
     }
     router.push({ pathname: "/(auth)/verify", params: { email } });
@@ -101,23 +101,31 @@ export default function SignInScreen(): React.ReactElement {
             name="email"
             render={({ field, fieldState }) => (
               <View style={styles.field}>
-                <View
+                {/*
+                  The entire input box is a Pressable so tapping the icon or
+                  any padding area opens the keyboard. Without this, users had
+                  to tap precisely on the TextInput text area to get focus.
+                */}
+                <Pressable
                   style={[
                     styles.inputWrap,
                     focused && styles.inputWrapFocused,
                     fieldState.error && styles.inputWrapError,
                   ]}
+                  onPress={() => emailInputRef.current?.focus()}
                 >
                   <Text style={styles.inputIcon}>✉️</Text>
                   <TextInput
+                    ref={emailInputRef}
                     style={styles.input}
                     placeholder="you@stu.cu.edu.ng"
-                    placeholderTextColor={colors.dark.textMut}
+                    placeholderTextColor={colors.light.textMut}
                     autoCapitalize="none"
                     autoCorrect={false}
                     autoComplete="email"
                     keyboardType="email-address"
                     textContentType="emailAddress"
+                    autoFocus
                     value={field.value}
                     onChangeText={field.onChange}
                     onFocus={() => setFocused(true)}
@@ -132,7 +140,7 @@ export default function SignInScreen(): React.ReactElement {
                       <Text style={styles.cuBadgeText}>✓ CU</Text>
                     </View>
                   )}
-                </View>
+                </Pressable>
                 {fieldState.error ? (
                   <Text style={styles.fieldError}>
                     {fieldState.error.message}
@@ -146,7 +154,6 @@ export default function SignInScreen(): React.ReactElement {
             <Text style={styles.networkError}>{networkError}</Text>
           ) : null}
 
-          {/* Spacer pushes button to bottom */}
           <View style={styles.flex} />
 
           {/* Continue button */}

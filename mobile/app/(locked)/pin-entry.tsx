@@ -19,14 +19,15 @@ import {
 import { describeAttemptState, formatMmSs } from "../../src/lib/pin-attempts";
 import { useAuth } from "../../src/auth/auth-state";
 import { logger } from "../../src/lib/logger";
+import { useThemeMode } from "../../src/theme/theme-provider";
 import {
+  getTheme,
   colors,
   fonts,
   fontSizes,
   spacing,
   radii,
   borders,
-  shadows,
   dimensions,
 } from "../../src/theme/tokens";
 
@@ -41,6 +42,9 @@ const NUM_ROWS: (number | "del" | "")[][] = [
 
 export default function PinEntryScreen(): React.ReactElement {
   const { unlock, signOut } = useAuth();
+  const { mode } = useThemeMode();
+  const t = getTheme(mode); // reactive theme object — updates when user toggles
+
   const [pin, setPin] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -58,9 +62,7 @@ export default function PinEntryScreen(): React.ReactElement {
       setLockSecondsRemaining(display.lockSecondsRemaining);
     };
     void refresh();
-    const id = setInterval(() => {
-      void refresh();
-    }, 1000);
+    const id = setInterval(() => void refresh(), 1000);
     return () => {
       cancelled = true;
       clearInterval(id);
@@ -142,11 +144,14 @@ export default function PinEntryScreen(): React.ReactElement {
   const isLocked = lockSecondsRemaining > 0;
 
   return (
-    <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
+    <SafeAreaView
+      style={[styles.safe, { backgroundColor: t.bg }]}
+      edges={["top", "bottom"]}
+    >
       <View style={styles.container}>
-        {/* Logo / Brand */}
+        {/* Brand */}
         <View style={styles.brandSection}>
-          <Text style={styles.logoText}>oneto</Text>
+          <Text style={[styles.logoText, { color: t.text }]}>oneto</Text>
           <View style={styles.pixelDots}>
             {[0, 1, 2, 3, 4].map((i) => (
               <View
@@ -160,31 +165,33 @@ export default function PinEntryScreen(): React.ReactElement {
           </View>
         </View>
 
-        {/* Welcome Text */}
+        {/* Welcome */}
         <View style={styles.welcomeSection}>
-          <Text style={styles.welcomeTitle}>Welcome back</Text>
-          <Text style={styles.welcomeSubtitle}>Enter your PIN to continue</Text>
+          <Text style={[styles.welcomeTitle, { color: t.text }]}>
+            Welcome back
+          </Text>
+          <Text style={[styles.welcomeSubtitle, { color: t.textSec }]}>
+            Enter your PIN to continue
+          </Text>
         </View>
 
-        {/* PIN Dots */}
+        {/* PIN dots */}
         <Animated.View
-          style={[
-            styles.dotsRow,
-            { transform: [{ translateX: shakeAnim }] },
-          ]}
+          style={[styles.dotsRow, { transform: [{ translateX: shakeAnim }] }]}
         >
           {Array.from({ length: PIN_LENGTH }).map((_, i) => (
             <View
               key={i}
               style={[
                 styles.dot,
+                { borderColor: t.border },
                 i < pin.length && styles.dotFilled,
               ]}
             />
           ))}
         </Animated.View>
 
-        {/* Error / Lock Message */}
+        {/* Error / lock message */}
         {message ? (
           <View style={styles.messageContainer}>
             <Text style={styles.messageText}>{message}</Text>
@@ -193,15 +200,17 @@ export default function PinEntryScreen(): React.ReactElement {
           <View style={styles.messageSpacer} />
         )}
 
-        {/* Loading indicator when submitting */}
+        {/* Submitting */}
         {submitting && (
           <View style={styles.loadingOverlay}>
             <ActivityIndicator size="large" color={colors.primary} />
-            <Text style={styles.loadingText}>Unlocking...</Text>
+            <Text style={[styles.loadingText, { color: t.textSec }]}>
+              Unlocking...
+            </Text>
           </View>
         )}
 
-        {/* NumPad */}
+        {/* Numpad */}
         {!submitting && (
           <View style={styles.numPad}>
             {NUM_ROWS.map((row, ri) => (
@@ -216,6 +225,10 @@ export default function PinEntryScreen(): React.ReactElement {
                       key={ki}
                       style={({ pressed }) => [
                         styles.numKey,
+                        {
+                          borderColor: t.border,
+                          backgroundColor: t.keyBg,
+                        },
                         pressed && !disabled && styles.numKeyPressed,
                         disabled && styles.numKeyDisabled,
                       ]}
@@ -224,7 +237,13 @@ export default function PinEntryScreen(): React.ReactElement {
                       }
                       disabled={disabled}
                     >
-                      <Text style={[styles.numKeyText, disabled && styles.numKeyTextDisabled]}>
+                      <Text
+                        style={[
+                          styles.numKeyText,
+                          { color: t.text },
+                          disabled && { color: t.textMut },
+                        ]}
+                      >
                         {key === "del" ? "⌫" : key}
                       </Text>
                     </Pressable>
@@ -235,18 +254,20 @@ export default function PinEntryScreen(): React.ReactElement {
           </View>
         )}
 
-        {/* Sign out link */}
+        {/* Footer */}
         <View style={styles.footer}>
           <Pressable
             onPress={() => void signOut()}
             accessibilityRole="button"
             style={styles.signOutButton}
           >
-            <Text style={styles.signOutText}>Sign in with a different account</Text>
+            <Text style={styles.signOutText}>
+              Sign in with a different account
+            </Text>
           </Pressable>
         </View>
 
-        {/* Hidden TextInput for accessibility / autofill */}
+        {/* Hidden input */}
         <TextInput
           ref={inputRef}
           style={styles.hiddenInput}
@@ -257,62 +278,36 @@ export default function PinEntryScreen(): React.ReactElement {
           secureTextEntry
           maxLength={PIN_LENGTH}
           textContentType="oneTimeCode"
+          showSoftInputOnFocus={false}
         />
       </View>
     </SafeAreaView>
   );
 }
 
+// Only static values live in StyleSheet. Theme-dependent colors are applied
+// inline above so they react to mode changes without a full remount.
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: colors.dark.bg,
-  },
+  safe: { flex: 1 },
   container: {
     flex: 1,
     paddingHorizontal: spacing.screenHorizontal,
     alignItems: "center",
   },
 
-  // Brand Section
-  brandSection: {
-    alignItems: "center",
-    marginTop: spacing["4xl"],
-  },
-  logoText: {
-    fontFamily: fonts.bold,
-    fontSize: 42,
-    color: colors.dark.text,
-    letterSpacing: -1,
-  },
-  pixelDots: {
-    flexDirection: "row",
-    gap: 4,
-    marginTop: spacing.sm,
-  },
-  pixelDot: {
-    width: 6,
-    height: 6,
-  },
+  brandSection: { alignItems: "center", marginTop: spacing["4xl"] },
+  logoText: { fontFamily: fonts.bold, fontSize: 42, letterSpacing: -1 },
+  pixelDots: { flexDirection: "row", gap: 4, marginTop: spacing.sm },
+  pixelDot: { width: 6, height: 6 },
 
-  // Welcome Section
-  welcomeSection: {
-    alignItems: "center",
-    marginTop: spacing["5xl"],
-  },
-  welcomeTitle: {
-    fontFamily: fonts.bold,
-    fontSize: fontSizes.h1,
-    color: colors.dark.text,
-  },
+  welcomeSection: { alignItems: "center", marginTop: spacing["5xl"] },
+  welcomeTitle: { fontFamily: fonts.bold, fontSize: fontSizes.h1 },
   welcomeSubtitle: {
     fontFamily: fonts.regular,
     fontSize: fontSizes.body,
-    color: colors.dark.textSec,
     marginTop: spacing.sm,
   },
 
-  // PIN Dots
   dotsRow: {
     flexDirection: "row",
     gap: dimensions.pinDot.gap,
@@ -324,7 +319,6 @@ const styles = StyleSheet.create({
     height: dimensions.pinDot.size,
     borderRadius: dimensions.pinDot.size / 2,
     borderWidth: borders.standard,
-    borderColor: colors.dark.border,
     backgroundColor: "transparent",
   },
   dotFilled: {
@@ -338,7 +332,6 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
 
-  // Message
   messageContainer: {
     marginTop: spacing.lg,
     paddingHorizontal: spacing.lg,
@@ -354,73 +347,43 @@ const styles = StyleSheet.create({
     color: colors.error,
     textAlign: "center",
   },
-  messageSpacer: {
-    height: 48,
-    marginTop: spacing.lg,
-  },
+  messageSpacer: { height: 48, marginTop: spacing.lg },
 
-  // Loading
   loadingOverlay: {
     alignItems: "center",
     marginTop: spacing["3xl"],
     gap: spacing.md,
   },
-  loadingText: {
-    fontFamily: fonts.medium,
-    fontSize: fontSizes.body,
-    color: colors.dark.textSec,
-  },
+  loadingText: { fontFamily: fonts.medium, fontSize: fontSizes.body },
 
-  // NumPad
   numPad: {
     marginTop: spacing.xl,
     gap: dimensions.numPadGap.row,
     alignItems: "center",
   },
-  numRow: {
-    flexDirection: "row",
-    gap: dimensions.numPadGap.col,
-  },
+  numRow: { flexDirection: "row", gap: dimensions.numPadGap.col },
   numKey: {
     width: dimensions.numPadKey.size,
     height: dimensions.numPadKey.size,
     borderRadius: dimensions.numPadKey.size / 2,
     borderWidth: borders.medium,
-    borderColor: colors.dark.border,
-    backgroundColor: colors.dark.keyBg,
     alignItems: "center",
     justifyContent: "center",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
+    shadowOpacity: 0.15,
     shadowRadius: 4,
     elevation: 3,
   },
-  numKeyPressed: {
-    transform: [{ scale: 0.9 }],
-    backgroundColor: colors.dark.cardAlt,
-  },
-  numKeyDisabled: {
-    opacity: 0.4,
-  },
+  numKeyPressed: { transform: [{ scale: 0.9 }] },
+  numKeyDisabled: { opacity: 0.4 },
   numKeyEmpty: {
     width: dimensions.numPadKey.size,
     height: dimensions.numPadKey.size,
   },
-  numKeyText: {
-    fontFamily: fonts.semibold,
-    fontSize: fontSizes.numPad,
-    color: colors.dark.text,
-  },
-  numKeyTextDisabled: {
-    color: colors.dark.textMut,
-  },
+  numKeyText: { fontFamily: fonts.semibold, fontSize: fontSizes.numPad },
 
-  // Footer
-  footer: {
-    marginTop: "auto",
-    paddingBottom: spacing["2xl"],
-  },
+  footer: { marginTop: "auto", paddingBottom: spacing["2xl"] },
   signOutButton: {
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.lg,
@@ -431,11 +394,5 @@ const styles = StyleSheet.create({
     color: colors.primary,
   },
 
-  // Hidden input
-  hiddenInput: {
-    position: "absolute",
-    opacity: 0,
-    height: 1,
-    width: 1,
-  },
+  hiddenInput: { position: "absolute", opacity: 0, height: 1, width: 1 },
 });

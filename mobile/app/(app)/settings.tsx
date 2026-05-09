@@ -2,6 +2,8 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { useAuth } from "../../src/auth/auth-state";
+import { useThemeMode } from "../../src/theme/theme-provider";
+import { BackButton } from "../../components/BackButton";
 import {
   colors,
   fonts,
@@ -37,7 +39,9 @@ function SettingsRow({
     >
       <Text style={styles.settingsRowLabel}>{label}</Text>
       <View style={styles.settingsRowRight}>
-        {value && <Text style={styles.settingsRowValue}>{value}</Text>}
+        {value !== undefined && (
+          <Text style={styles.settingsRowValue}>{value}</Text>
+        )}
         {showArrow && <Text style={styles.settingsRowArrow}>→</Text>}
       </View>
     </Pressable>
@@ -47,6 +51,7 @@ function SettingsRow({
 export default function SettingsScreen(): React.ReactElement {
   const router = useRouter();
   const { state, signOut } = useAuth();
+  const { mode, toggleTheme } = useThemeMode();
 
   if (state.status !== "authed") {
     return <View />;
@@ -62,14 +67,7 @@ export default function SettingsScreen(): React.ReactElement {
     <SafeAreaView style={styles.safe} edges={["top"]}>
       {/* Header */}
       <View style={styles.header}>
-        <Pressable
-          style={styles.backButton}
-          onPress={() => router.back()}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-        >
-          <Text style={styles.backIcon}>←</Text>
-        </Pressable>
+        <BackButton />
         <Text style={styles.headerTitle}>Settings</Text>
         <View style={styles.headerSpacer} />
       </View>
@@ -86,7 +84,12 @@ export default function SettingsScreen(): React.ReactElement {
           </View>
           <Text style={styles.profileName}>{displayName}</Text>
           <View style={[styles.roleBadge, !isStudent && styles.merchantBadge]}>
-            <Text style={[styles.roleBadgeText, !isStudent && styles.merchantBadgeText]}>
+            <Text
+              style={[
+                styles.roleBadgeText,
+                !isStudent && styles.merchantBadgeText,
+              ]}
+            >
               {user.role}
             </Text>
           </View>
@@ -100,7 +103,18 @@ export default function SettingsScreen(): React.ReactElement {
             showArrow
             onPress={() => router.push("/(app)/change-pin")}
           />
-          <SettingsRow label="Account Status" value={statusDisplay} isLast />
+          {/* Theme toggle — pressing cycles between Light and Dark.
+              The preference is persisted across app restarts via SecureStore. */}
+          <SettingsRow
+            label="Appearance"
+            value={mode === "light" ? "☀️  Light" : "🌙  Dark"}
+            onPress={toggleTheme}
+          />
+          <SettingsRow
+            label="Account Status"
+            value={statusDisplay}
+            isLast
+          />
         </View>
 
         {/* Account Info Card */}
@@ -115,7 +129,7 @@ export default function SettingsScreen(): React.ReactElement {
           </View>
         </View>
 
-        {/* Sign Out Button */}
+        {/* Sign Out */}
         <Pressable
           style={({ pressed }) => [
             styles.signOutButton,
@@ -137,12 +151,8 @@ export default function SettingsScreen(): React.ReactElement {
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: colors.light.bg,
-  },
+  safe: { flex: 1, backgroundColor: colors.light.bg },
 
-  // Header
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -151,44 +161,21 @@ const styles = StyleSheet.create({
     minHeight: dimensions.headerMinHeight,
     gap: spacing.md,
   },
-  backButton: {
-    width: dimensions.headerBackButton.size,
-    height: dimensions.headerBackButton.size,
-    borderRadius: radii.md,
-    borderWidth: borders.medium,
-    borderColor: colors.light.border,
-    backgroundColor: colors.light.card,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  backIcon: {
-    fontSize: 18,
-    color: colors.light.text,
-  },
   headerTitle: {
     flex: 1,
     fontFamily: fonts.bold,
     fontSize: fontSizes.headerTitle,
     color: colors.light.text,
   },
-  headerSpacer: {
-    width: dimensions.headerBackButton.size,
-  },
+  headerSpacer: { width: dimensions.headerBackButton.size },
 
-  // Scroll
-  scroll: {
-    flex: 1,
-  },
+  scroll: { flex: 1 },
   scrollContent: {
     paddingHorizontal: spacing.screenHorizontal,
     paddingBottom: spacing["3xl"],
   },
 
-  // Profile Section
-  profileSection: {
-    alignItems: "center",
-    paddingVertical: spacing.xl,
-  },
+  profileSection: { alignItems: "center", paddingVertical: spacing.xl },
   avatar: {
     width: dimensions.settingsAvatar.size,
     height: dimensions.settingsAvatar.size,
@@ -199,9 +186,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  avatarText: {
-    fontSize: 28,
-  },
+  avatarText: { fontSize: 28 },
   profileName: {
     fontFamily: fonts.bold,
     fontSize: fontSizes.cardTitle,
@@ -226,11 +211,8 @@ const styles = StyleSheet.create({
     fontSize: pixelFontSizes.sm,
     color: colors.primary,
   },
-  merchantBadgeText: {
-    color: colors.secondary,
-  },
+  merchantBadgeText: { color: colors.secondary },
 
-  // Settings Card
   settingsCard: {
     backgroundColor: colors.light.card,
     borderWidth: borders.standard,
@@ -270,7 +252,6 @@ const styles = StyleSheet.create({
     color: colors.light.textMut,
   },
 
-  // Info Card
   infoCard: {
     marginTop: spacing.lg,
     backgroundColor: colors.light.cardAlt,
@@ -293,7 +274,6 @@ const styles = StyleSheet.create({
     color: colors.light.textSec,
   },
 
-  // Sign Out Button
   signOutButton: {
     marginTop: spacing["2xl"],
     height: 52,
@@ -315,7 +295,6 @@ const styles = StyleSheet.create({
     color: "#fff",
   },
 
-  // Version
   versionSection: {
     alignItems: "center",
     marginTop: spacing["2xl"],

@@ -94,6 +94,8 @@ export default function GeneratingKeysScreen(): React.ReactElement {
         // 1. Generate keypair (Ed25519 from @oneto/shared — never roll our own)
         setPhase({ kind: "working", message: STEP_MESSAGES[0] });
         setProgressStep(0);
+        // Yield to the event loop so the loading UI renders before scrypt starts.
+        await new Promise<void>((resolve) => setTimeout(resolve, 80));
         const { privateKey, publicKey, publicKeyString } = generateKeypair();
 
         // 2. Encrypt with PIN-derived key and persist in secure-store
@@ -140,7 +142,7 @@ export default function GeneratingKeysScreen(): React.ReactElement {
 
   if (phase.kind === "rotation_required") {
     return (
-      <SafeAreaView style={styles.safe}>
+      <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
         <View style={styles.container}>
           <Text style={styles.title}>We need to verify it's you</Text>
           <Text style={styles.body}>
@@ -159,7 +161,7 @@ export default function GeneratingKeysScreen(): React.ReactElement {
 
   if (phase.kind === "error") {
     return (
-      <SafeAreaView style={styles.safe}>
+      <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
         <View style={styles.container}>
           <Text style={styles.title}>Setup failed</Text>
           <Text style={styles.body}>{phase.message}</Text>
@@ -182,7 +184,7 @@ export default function GeneratingKeysScreen(): React.ReactElement {
   }
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
       <View style={styles.container}>
         {/* Pulsing glow */}
         <Animated.View

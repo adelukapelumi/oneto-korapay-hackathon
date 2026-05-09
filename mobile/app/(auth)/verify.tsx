@@ -17,6 +17,7 @@ import { NetworkError, UnauthorizedError } from "../../src/api/errors";
 import { useAuth } from "../../src/auth/auth-state";
 import { setToken } from "../../src/auth/token-store";
 import { logger } from "../../src/lib/logger";
+import { BackButton } from "../../components/BackButton";
 import {
   colors,
   fonts,
@@ -42,19 +43,19 @@ export default function VerifyScreen(): React.ReactElement {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resendCooldown, setResendCooldown] = useState(RESEND_COOLDOWN_SECONDS);
+  const [verified, setVerified] = useState(false);
+
   const inputRef = useRef<TextInput>(null);
   const shakeAnim = useRef(new Animated.Value(0)).current;
+  const verifiedScale = useRef(new Animated.Value(0)).current;
 
-  // Tick the cooldown down each second. Initial cooldown matches the
-  // implicit "we just sent a code" state from the previous screen.
   useEffect(() => {
     if (resendCooldown <= 0) return;
     const id = setTimeout(() => setResendCooldown((s) => s - 1), 1000);
     return () => clearTimeout(id);
   }, [resendCooldown]);
 
-  // Auto-submit when the user types the 6th digit. The button stays for
-  // accessibility users on screen readers.
+  // Auto-submit when the user types the 6th digit.
   useEffect(() => {
     if (code.length === 6 && !submitting) {
       void submit(code);
@@ -81,11 +82,19 @@ export default function VerifyScreen(): React.ReactElement {
     setError(null);
     try {
       const { accessToken } = await verifyOtp(email, value);
-      // Persist the token first so the request interceptor can attach it to
-      // the immediate /me call below. signIn() persists again (idempotent)
-      // and updates auth state — the (auth) layout then redirects to /home.
       await setToken(accessToken);
       const me = await fetchMe();
+
+      // Show verified state briefly before transitioning.
+      setVerified(true);
+      Animated.spring(verifiedScale, {
+        toValue: 1,
+        useNativeDriver: true,
+        tension: 120,
+        friction: 8,
+      }).start();
+      await new Promise<void>((resolve) => setTimeout(resolve, 1300));
+
       await signIn(accessToken, me);
     } catch (err) {
       if (err instanceof NetworkError) {
@@ -97,7 +106,8 @@ export default function VerifyScreen(): React.ReactElement {
       }
       triggerShake();
       setCode("");
-      inputRef.current?.focus();
+      // Delay the focus call so Android processes the state update first.
+      setTimeout(() => inputRef.current?.focus(), 100);
     } finally {
       setSubmitting(false);
     }
@@ -116,6 +126,8 @@ export default function VerifyScreen(): React.ReactElement {
       }
       logger.info("Resend non-network error; staying silent");
     }
+    // Re-focus the input after resend so keyboard stays up.
+    setTimeout(() => inputRef.current?.focus(), 100);
   }
 
   return (
@@ -124,82 +136,96 @@ export default function VerifyScreen(): React.ReactElement {
         style={styles.flex}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
-        {/* Header with back button */}
+        {/* Header */}
         <View style={styles.header}>
-          <Pressable
-            style={styles.backButton}
-            onPress={() => router.back()}
-            accessibilityRole="button"
-            accessibilityLabel="Go back"
-          >
-            <Text style={styles.backIcon}>←</Text>
-          </Pressable>
+          <BackButton />
         </View>
 
         <View style={styles.container}>
-          {/* Step indicator */}
           <Text style={styles.stepLabel}>STEP 2</Text>
-
-          {/* Heading */}
           <Text style={styles.title}>Verify your email</Text>
-
-          {/* Subtitle */}
           <Text style={styles.subtitle}>We sent a 6-digit code to</Text>
           <Text style={styles.emailText}>{email}</Text>
 
-          {/* OTP cells display */}
+          {/* OTP area */}
           <Animated.View
             style={[
               styles.otpContainer,
               { transform: [{ translateX: shakeAnim }] },
             ]}
           >
-            {submitting ? (
+            {verified ? (
+              <Animated.View
+                style={[
+                  styles.verifiedWrap,
+                  {
+                    transform: [{ scale: verifiedScale }],
+                    opacity: verifiedScale,
+                  },
+                ]}
+              >
+                <View style={styles.verifiedCircle}>
+                  <Text style={styles.verifiedTick}>✓</Text>
+                </View>
+                <Text style={styles.verifiedLabel}>VERIFIED</Text>
+              </Animated.View>
+            ) : submitting ? (
               <View style={styles.spinnerWrap}>
                 <ActivityIndicator size="large" color={colors.primary} />
               </View>
             ) : (
-              <Pressable
-                style={styles.otpCells}
-                onPress={() => inputRef.current?.focus()}
-              >
-                {Array.from({ length: CODE_LENGTH }).map((_, i) => (
-                  <View
-                    key={i}
-                    style={[
-                      styles.otpCell,
-                      code[i] ? styles.otpCellFilled : null,
-                    ]}
-                  >
-                    <Text style={styles.otpDigit}>{code[i] || ""}</Text>
-                  </View>
-                ))}
-              </Pressable>
-            )}
+              <View style={styles.otpArea}>
+                {/* Visual OTP cells — pointerEvents="none" so taps
+                    pass through to the TextInput behind them */}
+                <View style={styles.otpCells} pointerEvents="none">
+                  {Array.from({ length: CODE_LENGTH }).map((_, i) => (
+                    <View
+                      key={i}
+                      style={[
+                        styles.otpCell,
+                        code[i] ? styles.otpCellFilled : null,
+                      ]}
+                    >
+                      <Text style={styles.otpDigit}>{code[i] || ""}</Text>
+                    </View>
+                  ))}
+                </View>
 
-            {/* Hidden input that captures keyboard */}
-            <TextInput
-              ref={inputRef}
-              style={styles.hiddenInput}
-              value={code}
-              onChangeText={(t) => setCode(t.replace(/\D/g, "").slice(0, 6))}
-              keyboardType="number-pad"
-              inputMode="numeric"
-              autoFocus
-              maxLength={6}
-              editable={!submitting}
-              textContentType="oneTimeCode"
-              caretHidden
-            />
+                {/*
+                  Full-size invisible TextInput overlaid on the OTP cells.
+                  This is the key fix: the old TextInput was 1×1 px which
+                  Android refused to focus after the initial mount. By making
+                  it cover the entire OTP area, tapping anywhere in the cell
+                  row opens the keyboard reliably.
+                */}
+                <TextInput
+                  ref={inputRef}
+                  style={styles.inputOverlay}
+                  value={code}
+                  onChangeText={(t) =>
+                    setCode(t.replace(/\D/g, "").slice(0, CODE_LENGTH))
+                  }
+                  keyboardType="number-pad"
+                  inputMode="numeric"
+                  autoFocus
+                  maxLength={CODE_LENGTH}
+                  editable={!submitting}
+                  textContentType="oneTimeCode"
+                  caretHidden
+                />
+              </View>
+            )}
           </Animated.View>
 
           {/* Resend / timer */}
-          {!submitting && (
+          {!submitting && !verified && (
             <View style={styles.resendWrap}>
               {resendCooldown > 0 ? (
                 <Text style={styles.resendTimer}>
                   Resend code in{" "}
-                  <Text style={styles.resendTimerAccent}>{resendCooldown}s</Text>
+                  <Text style={styles.resendTimerAccent}>
+                    {resendCooldown}s
+                  </Text>
                 </Text>
               ) : (
                 <Pressable onPress={onResend} accessibilityRole="button">
@@ -228,20 +254,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.md,
     minHeight: dimensions.headerMinHeight,
-  },
-  backButton: {
-    width: dimensions.headerBackButton.size,
-    height: dimensions.headerBackButton.size,
-    borderRadius: radii.md,
-    borderWidth: borders.medium,
-    borderColor: colors.light.border,
-    backgroundColor: colors.light.card,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  backIcon: {
-    fontSize: 18,
-    color: colors.light.text,
   },
   container: {
     flex: 1,
@@ -276,6 +288,12 @@ const styles = StyleSheet.create({
     marginTop: spacing["4xl"],
     alignItems: "center",
   },
+
+  // The otpArea wraps both the visual cells and the invisible TextInput.
+  // Its height is defined by the OTP cells; the TextInput fills it absolutely.
+  otpArea: {
+    alignSelf: "center",
+  },
   otpCells: {
     flexDirection: "row",
     gap: 10,
@@ -299,12 +317,20 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.otpInput,
     color: colors.light.text,
   },
-  hiddenInput: {
+
+  // Invisible TextInput that covers the OTP cell row.
+  // opacity 0.01 (not 0) because Android skips focus at exactly 0.
+  inputOverlay: {
     position: "absolute",
-    opacity: 0,
-    height: 1,
-    width: 1,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    opacity: 0.01,
+    color: "transparent",
+    fontSize: 22,
   },
+
   spinnerWrap: {
     paddingVertical: spacing.xl,
   },
@@ -334,5 +360,36 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.caption,
     marginTop: spacing.md,
     fontWeight: "600",
+  },
+
+  // Verified state
+  verifiedWrap: {
+    alignItems: "center",
+    paddingVertical: spacing.xl,
+  },
+  verifiedCircle: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: colors.primary,
+    borderWidth: borders.medium,
+    borderColor: colors.primaryText,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: spacing.lg,
+    ...shadows.neu.light,
+  },
+  verifiedTick: {
+    fontSize: 32,
+    color: colors.primaryText,
+    includeFontPadding: false,
+    lineHeight: 32,
+    textAlign: "center",
+  },
+  verifiedLabel: {
+    fontFamily: fonts.pixel,
+    fontSize: pixelFontSizes.md,
+    color: colors.primary,
+    letterSpacing: 2,
   },
 });

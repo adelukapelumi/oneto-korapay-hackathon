@@ -15,6 +15,7 @@ import { PressStart2P_400Regular } from "@expo-google-fonts/press-start-2p";
 import { AuthProvider } from "../src/auth/auth-provider";
 import { createQueryClient } from "../src/lib/query-client";
 import { colors } from "../src/theme/tokens";
+import { ThemeProvider } from "../src/theme/theme-provider";
 
 export default function RootLayout(): React.ReactElement {
   // useState ensures the QueryClient is created once per mount, not per render.
@@ -38,18 +39,20 @@ export default function RootLayout(): React.ReactElement {
 
   return (
     <SafeAreaProvider>
-      <QueryClientProvider client={queryClient}>
-        <AuthProvider>
-          <StatusBar style="dark" />
-          <Stack screenOptions={{ headerShown: false }}>
-            <Stack.Screen name="index" />
-            <Stack.Screen name="(auth)" />
-            <Stack.Screen name="(onboarding)" />
-            <Stack.Screen name="(locked)" />
-            <Stack.Screen name="(app)" />
-          </Stack>
-        </AuthProvider>
-      </QueryClientProvider>
+      <ThemeProvider>
+        <QueryClientProvider client={queryClient}>
+          <AuthProvider>
+            <StatusBar style="dark" />
+            <Stack screenOptions={{ headerShown: false }}>
+              <Stack.Screen name="index" />
+              <Stack.Screen name="(auth)" />
+              <Stack.Screen name="(onboarding)" />
+              <Stack.Screen name="(locked)" />
+              <Stack.Screen name="(app)" />
+            </Stack>
+          </AuthProvider>
+        </QueryClientProvider>
+      </ThemeProvider>
     </SafeAreaProvider>
   );
 }
