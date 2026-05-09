@@ -13,7 +13,7 @@ export class TopupService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly korapayService: KorapayService,
-  ) {}
+  ) { }
 
   async initiate(userId: string, amountKobo: number): Promise<{ reference: string, paymentUrl: string }> {
     if (amountKobo < 10000 || amountKobo > 100000000) {
@@ -29,6 +29,19 @@ export class TopupService {
     }
 
     const reference = 'top_' + crypto.randomBytes(12).toString('hex');
+
+
+    // Store reference→userId mapping so the webhook can identify the user
+    // even when Korapay's payload omits the customer email (sandbox behavior).
+    await this.prisma.paymentTopup.create({
+      data: {
+        reference,
+        userId,
+        amountKobo: BigInt(amountKobo),
+        status: 'PENDING',
+        korapayResponse: {} as Prisma.InputJsonValue,
+      },
+    });
 
     const result = await this.korapayService.initiateCheckout({
       amountKobo,
@@ -81,16 +94,34 @@ export class TopupService {
 
     const amountKobo = Math.round(Number(amountNgn || 0) * 100);
 
-    const user = customerEmail ? await this.prisma.user.findUnique({
-      where: { email: customerEmail },
-    }) : null;
+    // Primary: look up user via the PENDING PaymentTopup created during initiation.
+    // Fallback: customer email from webhook payload (may be missing in sandbox).
+    const pendingTopup = await this.prisma.paymentTopup.findUnique({
+      where: { reference },
+      select: { userId: true, status: true },
+    });
+    if (pendingTopup && pendingTopup.status !== 'PENDING') {
+      this.logger.log(`Idempotent webhook: reference ${reference} already ${pendingTopup.status}`);
+      return { success: true };
+    }
+    const resolvedUserId = pendingTopup?.userId ?? null;
+    const user = resolvedUserId
+      ? await this.prisma.user.findUnique({ where: { id: resolvedUserId } })
+      : customerEmail
+        ? await this.prisma.user.findUnique({ where: { email: customerEmail } })
+        : null;
 
     if (event === 'charge.failed') {
       try {
-        await this.prisma.paymentTopup.create({
-          data: {
+        await this.prisma.paymentTopup.upsert({
+          where: { reference },
+          update: {
+            status: 'FAILED',
+            korapayResponse: validated as unknown as Prisma.InputJsonValue,
+          },
+          create: {
             reference,
-            userId: user?.id || 'UNKNOWN',
+            userId: resolvedUserId || user?.id || 'UNKNOWN',
             amountKobo: BigInt(amountKobo),
             status: 'FAILED',
             korapayResponse: validated as unknown as Prisma.InputJsonValue,
@@ -105,11 +136,6 @@ export class TopupService {
       return { success: true };
     }
 
-    // Handle charge.success
-    if (!customerEmail) {
-      this.logger.warn('Webhook payload missing customer email for successful charge');
-      return { success: true };
-    }
 
     if (!user) {
       this.logger.warn(`Webhook received for unknown user email: ${customerEmail}`);
@@ -119,8 +145,13 @@ export class TopupService {
     try {
       await this.prisma.$transaction(
         async (tx) => {
-          await tx.paymentTopup.create({
-            data: {
+          await tx.paymentTopup.upsert({
+            where: { reference },
+            update: {
+              status: 'SUCCESS',
+              korapayResponse: validated as unknown as Prisma.InputJsonValue,
+            },
+            create: {
               reference,
               userId: user.id,
               amountKobo: BigInt(amountKobo),
