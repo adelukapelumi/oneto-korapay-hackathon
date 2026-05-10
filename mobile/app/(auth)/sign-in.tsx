@@ -17,7 +17,9 @@ import { z } from "zod";
 import { requestOtp } from "../../src/api/auth";
 import { NetworkError } from "../../src/api/errors";
 import { logger } from "../../src/lib/logger";
+import { useThemeMode } from "../../src/theme/theme-provider";
 import {
+  getTheme,
   colors,
   fonts,
   fontSizes,
@@ -25,7 +27,6 @@ import {
   spacing,
   radii,
   borders,
-  shadows,
 } from "../../src/theme/tokens";
 
 const SignInSchema = z.object({
@@ -40,6 +41,8 @@ type SignInForm = z.infer<typeof SignInSchema>;
 
 export default function SignInScreen(): React.ReactElement {
   const router = useRouter();
+  const { mode } = useThemeMode();
+  const t = getTheme(mode);
   const [networkError, setNetworkError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [focused, setFocused] = useState(false);
@@ -75,7 +78,7 @@ export default function SignInScreen(): React.ReactElement {
   });
 
   return (
-    <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top", "bottom"]}>
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -85,13 +88,13 @@ export default function SignInScreen(): React.ReactElement {
           <Text style={styles.stepLabel}>STEP 1</Text>
 
           {/* Heading */}
-          <Text style={styles.title}>
+          <Text style={[styles.title, { color: t.text }]}>
             Get started{"\n"}with{" "}
             <Text style={styles.titleAccent}>oneto</Text>
           </Text>
 
           {/* Subtitle */}
-          <Text style={styles.subtitle}>
+          <Text style={[styles.subtitle, { color: t.textSec }]}>
             Enter your CU email to get started with offline payments.
           </Text>
 
@@ -101,14 +104,10 @@ export default function SignInScreen(): React.ReactElement {
             name="email"
             render={({ field, fieldState }) => (
               <View style={styles.field}>
-                {/*
-                  The entire input box is a Pressable so tapping the icon or
-                  any padding area opens the keyboard. Without this, users had
-                  to tap precisely on the TextInput text area to get focus.
-                */}
                 <Pressable
                   style={[
                     styles.inputWrap,
+                    { backgroundColor: t.inputBg, borderColor: t.border },
                     focused && styles.inputWrapFocused,
                     fieldState.error && styles.inputWrapError,
                   ]}
@@ -117,9 +116,9 @@ export default function SignInScreen(): React.ReactElement {
                   <Text style={styles.inputIcon}>✉️</Text>
                   <TextInput
                     ref={emailInputRef}
-                    style={styles.input}
+                    style={[styles.input, { color: t.text }]}
                     placeholder="you@stu.cu.edu.ng"
-                    placeholderTextColor={colors.light.textMut}
+                    placeholderTextColor={t.textMut}
                     autoCapitalize="none"
                     autoCorrect={false}
                     autoComplete="email"
@@ -160,6 +159,8 @@ export default function SignInScreen(): React.ReactElement {
           <Pressable
             style={({ pressed }) => [
               styles.button,
+              { borderColor: t.border },
+              t.shadow,
               (submitting || !formState.isValid) && styles.buttonDisabled,
               pressed && styles.buttonPressed,
             ]}
@@ -175,7 +176,7 @@ export default function SignInScreen(): React.ReactElement {
           </Pressable>
 
           {/* Terms */}
-          <Text style={styles.terms}>
+          <Text style={[styles.terms, { color: t.textMut }]}>
             By continuing, you agree to our Terms of Service
           </Text>
         </View>
@@ -185,7 +186,7 @@ export default function SignInScreen(): React.ReactElement {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.light.bg },
+  safe: { flex: 1 },
   flex: { flex: 1 },
   container: {
     flex: 1,
@@ -202,7 +203,6 @@ const styles = StyleSheet.create({
   title: {
     fontFamily: fonts.bold,
     fontSize: fontSizes.h1,
-    color: colors.light.text,
     lineHeight: 37,
   },
   titleAccent: {
@@ -211,7 +211,6 @@ const styles = StyleSheet.create({
   subtitle: {
     fontFamily: fonts.regular,
     fontSize: fontSizes.bodyLg,
-    color: colors.light.textSec,
     marginTop: spacing.md,
     lineHeight: 22,
   },
@@ -222,9 +221,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    backgroundColor: colors.light.inputBg,
     borderWidth: borders.standard,
-    borderColor: colors.light.border,
     borderRadius: radii.md,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.lg,
@@ -242,7 +239,6 @@ const styles = StyleSheet.create({
     flex: 1,
     fontFamily: fonts.regular,
     fontSize: fontSizes.input,
-    color: colors.light.text,
     padding: 0,
   },
   cuBadge: {
@@ -273,10 +269,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
     borderRadius: radii.pill,
     borderWidth: borders.standard,
-    borderColor: colors.light.border,
     alignItems: "center",
     justifyContent: "center",
-    ...shadows.neu.light,
   },
   buttonDisabled: {
     opacity: 0.5,
@@ -293,7 +287,6 @@ const styles = StyleSheet.create({
   terms: {
     fontFamily: fonts.regular,
     textAlign: "center",
-    color: colors.light.textMut,
     fontSize: fontSizes.caption,
     marginTop: spacing.lg,
   },

@@ -13,6 +13,7 @@ export default function TopupLayout() {
         name="checkout"
         options={{
           presentation: "modal",
+          headerShown: false,
         }}
       />
     </Stack>

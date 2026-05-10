@@ -18,7 +18,6 @@ import { colors } from "../src/theme/tokens";
 import { ThemeProvider } from "../src/theme/theme-provider";
 
 export default function RootLayout(): React.ReactElement {
-  // useState ensures the QueryClient is created once per mount, not per render.
   const [queryClient] = useState(() => createQueryClient());
 
   const [fontsLoaded] = useFonts({

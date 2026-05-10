@@ -18,7 +18,9 @@ import { useAuth } from "../../src/auth/auth-state";
 import { setToken } from "../../src/auth/token-store";
 import { logger } from "../../src/lib/logger";
 import { BackButton } from "../../components/BackButton";
+import { useThemeMode } from "../../src/theme/theme-provider";
 import {
+  getTheme,
   colors,
   fonts,
   fontSizes,
@@ -26,7 +28,6 @@ import {
   spacing,
   radii,
   borders,
-  shadows,
   dimensions,
 } from "../../src/theme/tokens";
 
@@ -35,6 +36,8 @@ const CODE_LENGTH = 6;
 
 export default function VerifyScreen(): React.ReactElement {
   const router = useRouter();
+  const { mode } = useThemeMode();
+  const t = getTheme(mode);
   const params = useLocalSearchParams<{ email?: string }>();
   const email = typeof params.email === "string" ? params.email : "";
   const { signIn } = useAuth();
@@ -131,7 +134,7 @@ export default function VerifyScreen(): React.ReactElement {
   }
 
   return (
-    <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top", "bottom"]}>
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -143,9 +146,9 @@ export default function VerifyScreen(): React.ReactElement {
 
         <View style={styles.container}>
           <Text style={styles.stepLabel}>STEP 2</Text>
-          <Text style={styles.title}>Verify your email</Text>
-          <Text style={styles.subtitle}>We sent a 6-digit code to</Text>
-          <Text style={styles.emailText}>{email}</Text>
+          <Text style={[styles.title, { color: t.text }]}>Verify your email</Text>
+          <Text style={[styles.subtitle, { color: t.textSec }]}>We sent a 6-digit code to</Text>
+          <Text style={[styles.emailText, { color: t.text }]}>{email}</Text>
 
           {/* OTP area */}
           <Animated.View
@@ -164,7 +167,7 @@ export default function VerifyScreen(): React.ReactElement {
                   },
                 ]}
               >
-                <View style={styles.verifiedCircle}>
+                <View style={[styles.verifiedCircle, t.shadow]}>
                   <Text style={styles.verifiedTick}>✓</Text>
                 </View>
                 <Text style={styles.verifiedLabel}>VERIFIED</Text>
@@ -175,35 +178,27 @@ export default function VerifyScreen(): React.ReactElement {
               </View>
             ) : (
               <View style={styles.otpArea}>
-                {/* Visual OTP cells — pointerEvents="none" so taps
-                    pass through to the TextInput behind them */}
                 <View style={styles.otpCells} pointerEvents="none">
                   {Array.from({ length: CODE_LENGTH }).map((_, i) => (
                     <View
                       key={i}
                       style={[
                         styles.otpCell,
+                        { borderColor: t.border, backgroundColor: t.inputBg },
                         code[i] ? styles.otpCellFilled : null,
                       ]}
                     >
-                      <Text style={styles.otpDigit}>{code[i] || ""}</Text>
+                      <Text style={[styles.otpDigit, { color: t.text }]}>{code[i] || ""}</Text>
                     </View>
                   ))}
                 </View>
 
-                {/*
-                  Full-size invisible TextInput overlaid on the OTP cells.
-                  This is the key fix: the old TextInput was 1×1 px which
-                  Android refused to focus after the initial mount. By making
-                  it cover the entire OTP area, tapping anywhere in the cell
-                  row opens the keyboard reliably.
-                */}
                 <TextInput
                   ref={inputRef}
                   style={styles.inputOverlay}
                   value={code}
-                  onChangeText={(t) =>
-                    setCode(t.replace(/\D/g, "").slice(0, CODE_LENGTH))
+                  onChangeText={(txt) =>
+                    setCode(txt.replace(/\D/g, "").slice(0, CODE_LENGTH))
                   }
                   keyboardType="number-pad"
                   inputMode="numeric"
@@ -221,7 +216,7 @@ export default function VerifyScreen(): React.ReactElement {
           {!submitting && !verified && (
             <View style={styles.resendWrap}>
               {resendCooldown > 0 ? (
-                <Text style={styles.resendTimer}>
+                <Text style={[styles.resendTimer, { color: t.textMut }]}>
                   Resend code in{" "}
                   <Text style={styles.resendTimerAccent}>
                     {resendCooldown}s
@@ -246,7 +241,7 @@ export default function VerifyScreen(): React.ReactElement {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.light.bg },
+  safe: { flex: 1 },
   flex: { flex: 1 },
   header: {
     flexDirection: "row",
@@ -269,28 +264,22 @@ const styles = StyleSheet.create({
   title: {
     fontFamily: fonts.bold,
     fontSize: fontSizes.h2Lg,
-    color: colors.light.text,
   },
   subtitle: {
     fontFamily: fonts.regular,
     fontSize: fontSizes.body,
-    color: colors.light.textSec,
     marginTop: spacing.md,
     lineHeight: 21,
   },
   emailText: {
     fontFamily: fonts.bold,
     fontSize: fontSizes.bodyLg,
-    color: colors.light.text,
     marginTop: spacing.xs,
   },
   otpContainer: {
     marginTop: spacing["4xl"],
     alignItems: "center",
   },
-
-  // The otpArea wraps both the visual cells and the invisible TextInput.
-  // Its height is defined by the OTP cells; the TextInput fills it absolutely.
   otpArea: {
     alignSelf: "center",
   },
@@ -303,9 +292,7 @@ const styles = StyleSheet.create({
     width: dimensions.otpCell.width,
     height: dimensions.otpCell.height,
     borderWidth: borders.standard,
-    borderColor: colors.light.border,
     borderRadius: radii.md,
-    backgroundColor: colors.light.inputBg,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -315,22 +302,20 @@ const styles = StyleSheet.create({
   otpDigit: {
     fontFamily: fonts.bold,
     fontSize: fontSizes.otpInput,
-    color: colors.light.text,
   },
-
-  // Invisible TextInput that covers the OTP cell row.
-  // opacity 0.01 (not 0) because Android skips focus at exactly 0.
   inputOverlay: {
     position: "absolute",
     top: 0,
     left: 0,
     right: 0,
     bottom: 0,
-    opacity: 0.01,
-    color: "transparent",
+    backgroundColor: "transparent",
     fontSize: 22,
+    ...Platform.select({
+      android: { opacity: 0.01 },
+      ios: { color: "transparent" },
+    }),
   },
-
   spinnerWrap: {
     paddingVertical: spacing.xl,
   },
@@ -341,7 +326,6 @@ const styles = StyleSheet.create({
   resendTimer: {
     fontFamily: fonts.regular,
     fontSize: fontSizes.caption,
-    color: colors.light.textMut,
   },
   resendTimerAccent: {
     color: colors.primary,
@@ -361,8 +345,6 @@ const styles = StyleSheet.create({
     marginTop: spacing.md,
     fontWeight: "600",
   },
-
-  // Verified state
   verifiedWrap: {
     alignItems: "center",
     paddingVertical: spacing.xl,
@@ -377,7 +359,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     marginBottom: spacing.lg,
-    ...shadows.neu.light,
   },
   verifiedTick: {
     fontSize: 32,

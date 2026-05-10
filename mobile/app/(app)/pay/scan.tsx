@@ -11,8 +11,11 @@ import {
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { useRouter, useFocusEffect } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { BackButton } from "../../../components/BackButton";
 import { PaymentRequestSchema } from "@oneto/shared";
+import { useThemeMode } from "../../../src/theme/theme-provider";
 import {
+  getTheme,
   colors,
   fonts,
   fontSizes,
@@ -56,6 +59,8 @@ function ScanCorner({
 export default function ScanScreen(): React.ReactElement {
   const [permission, requestPermission] = useCameraPermissions();
   const router = useRouter();
+  const { mode } = useThemeMode();
+  const t = getTheme(mode);
   const scanned = useRef(false);
   const [showSuccess, setShowSuccess] = useState(false);
 
@@ -127,14 +132,7 @@ export default function ScanScreen(): React.ReactElement {
       <SafeAreaView style={styles.safe} edges={["top"]}>
         {/* Header */}
         <View style={styles.header}>
-          <Pressable
-            style={styles.backButton}
-            onPress={() => router.back()}
-            accessibilityRole="button"
-            accessibilityLabel="Go back"
-          >
-            <Text style={styles.backIcon}>←</Text>
-          </Pressable>
+          <BackButton />
           <View style={styles.headerSpacer} />
           <Text style={styles.headerLabel}>QR Scanner</Text>
         </View>
@@ -301,20 +299,6 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     minHeight: dimensions.headerMinHeight,
     gap: spacing.md,
-  },
-  backButton: {
-    width: dimensions.headerBackButton.size,
-    height: dimensions.headerBackButton.size,
-    borderRadius: radii.md,
-    borderWidth: borders.medium,
-    borderColor: colors.dark.border,
-    backgroundColor: colors.dark.card,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  backIcon: {
-    fontSize: 18,
-    color: colors.dark.text,
   },
   headerSpacer: {
     flex: 1,

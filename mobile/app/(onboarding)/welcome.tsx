@@ -2,7 +2,9 @@ import { useEffect, useRef } from "react";
 import { Animated, Easing, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import { useThemeMode } from "../../src/theme/theme-provider";
 import {
+  getTheme,
   colors,
   fonts,
   fontSizes,
@@ -10,7 +12,6 @@ import {
   spacing,
   radii,
   borders,
-  shadows,
 } from "../../src/theme/tokens";
 
 const STEPS = [
@@ -36,11 +37,13 @@ function StepCard({
   title,
   desc,
   index,
+  theme,
 }: {
   icon: string;
   title: string;
   desc: string;
   index: number;
+  theme: ReturnType<typeof getTheme>;
 }): React.ReactElement {
   const translateY = useRef(new Animated.Value(30)).current;
   const opacity = useRef(new Animated.Value(0)).current;
@@ -78,18 +81,20 @@ function StepCard({
     <Animated.View
       style={[
         styles.card,
+        { backgroundColor: theme.card, borderColor: theme.border },
+        theme.shadow,
         { opacity, transform: [{ translateY }, { scale }] },
       ]}
     >
-      <View style={styles.cardIcon}>
+      <View style={[styles.cardIcon, { borderColor: theme.border, backgroundColor: theme.cardAlt }]}>
         <Text style={styles.cardIconText}>{icon}</Text>
       </View>
       <View style={styles.cardBody}>
         <View style={styles.cardTitleRow}>
-          <Text style={styles.cardStep}>{index + 1}.</Text>
-          <Text style={styles.cardTitle}>{title}</Text>
+          <Text style={[styles.cardStep, { color: theme.textMut }]}>{index + 1}.</Text>
+          <Text style={[styles.cardTitle, { color: theme.text }]}>{title}</Text>
         </View>
-        <Text style={styles.cardDesc}>{desc}</Text>
+        <Text style={[styles.cardDesc, { color: theme.textSec }]}>{desc}</Text>
       </View>
     </Animated.View>
   );
@@ -97,6 +102,8 @@ function StepCard({
 
 export default function WelcomeScreen(): React.ReactElement {
   const router = useRouter();
+  const { mode } = useThemeMode();
+  const t = getTheme(mode);
 
   const headerOpacity = useRef(new Animated.Value(0)).current;
   const headerY = useRef(new Animated.Value(-16)).current;
@@ -130,7 +137,7 @@ export default function WelcomeScreen(): React.ReactElement {
   }, []);
 
   return (
-    <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top", "bottom"]}>
       <View style={styles.container}>
         <Animated.View
           style={[
@@ -139,17 +146,17 @@ export default function WelcomeScreen(): React.ReactElement {
           ]}
         >
           <Text style={styles.pixelLabel}>LET'S GO</Text>
-          <Text style={styles.title}>
+          <Text style={[styles.title, { color: t.text }]}>
             Welcome to <Text style={styles.titleAccent}>oneto</Text>
           </Text>
-          <Text style={styles.subtitle}>
+          <Text style={[styles.subtitle, { color: t.textSec }]}>
             Here's how we'll set up your account
           </Text>
         </Animated.View>
 
         <View style={styles.stepsContainer}>
           {STEPS.map((s, i) => (
-            <StepCard key={i} icon={s.icon} title={s.title} desc={s.desc} index={i} />
+            <StepCard key={i} icon={s.icon} title={s.title} desc={s.desc} index={i} theme={t} />
           ))}
         </View>
 
@@ -157,7 +164,12 @@ export default function WelcomeScreen(): React.ReactElement {
 
         <Animated.View style={{ opacity: buttonOpacity, width: "100%" }}>
           <Pressable
-            style={({ pressed }) => [styles.button, pressed && styles.buttonPressed]}
+            style={({ pressed }) => [
+              styles.button,
+              { borderColor: t.border },
+              t.shadow,
+              pressed && styles.buttonPressed,
+            ]}
             onPress={() => router.push("/(onboarding)/pin-setup")}
             accessibilityRole="button"
           >
@@ -170,7 +182,7 @@ export default function WelcomeScreen(): React.ReactElement {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.light.bg },
+  safe: { flex: 1 },
   container: {
     flex: 1,
     paddingHorizontal: spacing.screenHorizontal,
@@ -180,24 +192,24 @@ const styles = StyleSheet.create({
   },
   headerSection: { alignItems: "center" },
   pixelLabel: { fontFamily: fonts.pixel, fontSize: pixelFontSizes.lg, color: colors.primary, marginBottom: spacing.md },
-  title: { fontFamily: fonts.bold, fontSize: fontSizes.h2Lg, color: colors.light.text, textAlign: "center" },
+  title: { fontFamily: fonts.bold, fontSize: fontSizes.h2Lg, textAlign: "center" },
   titleAccent: { color: colors.primary },
-  subtitle: { fontFamily: fonts.regular, fontSize: fontSizes.body, color: colors.light.textSec, marginTop: spacing.sm, textAlign: "center" },
+  subtitle: { fontFamily: fonts.regular, fontSize: fontSizes.body, marginTop: spacing.sm, textAlign: "center" },
   stepsContainer: { gap: spacing.lg, marginTop: spacing["3xl"] },
   card: {
     flexDirection: "row", alignItems: "center", gap: spacing.lg,
-    backgroundColor: colors.light.card, borderWidth: borders.standard, borderColor: colors.light.border,
-    borderRadius: radii.xl, padding: spacing.cardPad, ...shadows.neu.light,
+    borderWidth: borders.standard,
+    borderRadius: radii.xl, padding: spacing.cardPad,
   },
-  cardIcon: { width: 52, height: 52, borderRadius: radii.lg, borderWidth: borders.medium, borderColor: colors.light.border, backgroundColor: colors.light.cardAlt, alignItems: "center", justifyContent: "center" },
+  cardIcon: { width: 52, height: 52, borderRadius: radii.lg, borderWidth: borders.medium, alignItems: "center", justifyContent: "center" },
   cardIconText: { fontSize: 24 },
   cardBody: { flex: 1 },
   cardTitleRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
-  cardStep: { fontFamily: fonts.pixel, fontSize: pixelFontSizes.sm, color: colors.light.textMut },
-  cardTitle: { fontFamily: fonts.bold, fontSize: fontSizes.sectionTitle, color: colors.light.text },
-  cardDesc: { fontFamily: fonts.regular, fontSize: fontSizes.caption, color: colors.light.textSec, marginTop: spacing.xs, lineHeight: 18 },
+  cardStep: { fontFamily: fonts.pixel, fontSize: pixelFontSizes.sm },
+  cardTitle: { fontFamily: fonts.bold, fontSize: fontSizes.sectionTitle },
+  cardDesc: { fontFamily: fonts.regular, fontSize: fontSizes.caption, marginTop: spacing.xs, lineHeight: 18 },
   spacer: { flex: 1 },
-  button: { height: 52, backgroundColor: colors.primary, borderRadius: radii.pill, borderWidth: borders.standard, borderColor: colors.light.border, alignItems: "center", justifyContent: "center", ...shadows.neu.light },
+  button: { height: 52, backgroundColor: colors.primary, borderRadius: radii.pill, borderWidth: borders.standard, alignItems: "center", justifyContent: "center" },
   buttonPressed: { transform: [{ translateX: 3 }, { translateY: 3 }], shadowOffset: { width: 0, height: 0 } },
   buttonText: { fontFamily: fonts.bold, fontSize: fontSizes.button, color: colors.primaryText },
 });

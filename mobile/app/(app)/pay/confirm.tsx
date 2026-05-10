@@ -24,15 +24,16 @@ import {
 } from "../../../src/payment/build-envelope";
 import { logger } from "../../../src/lib/logger";
 import { PaymentRequest } from "@oneto/shared";
+import { BackButton } from "../../../components/BackButton";
+import { useThemeMode } from "../../../src/theme/theme-provider";
 import {
+  getTheme,
   colors,
   fonts,
   fontSizes,
-  pixelFontSizes,
   spacing,
   radii,
   borders,
-  shadows,
   dimensions,
 } from "../../../src/theme/tokens";
 
@@ -56,6 +57,8 @@ export default function ConfirmPaymentScreen(): React.ReactElement | null {
   const router = useRouter();
   const { request } = useLocalSearchParams<{ request: string }>();
   const { state } = useAuth();
+  const { mode } = useThemeMode();
+  const t = getTheme(mode);
 
   const [pin, setPin] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -79,21 +82,23 @@ export default function ConfirmPaymentScreen(): React.ReactElement | null {
 
   if (!paymentRequest) {
     return (
-      <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
+      <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top", "bottom"]}>
         <View style={styles.errorContainer}>
           <Text style={styles.errorIcon}>⚠️</Text>
-          <Text style={styles.errorTitle}>Invalid Request</Text>
-          <Text style={styles.errorText}>
+          <Text style={[styles.errorTitle, { color: t.text }]}>Invalid Request</Text>
+          <Text style={[styles.errorText, { color: t.textSec }]}>
             This payment request could not be read.
           </Text>
           <Pressable
             style={({ pressed }) => [
               styles.errorButton,
+              { backgroundColor: t.card, borderColor: t.border },
+              t.shadow,
               pressed && styles.buttonPressed,
             ]}
             onPress={() => router.back()}
           >
-            <Text style={styles.errorButtonText}>Go Back</Text>
+            <Text style={[styles.errorButtonText, { color: t.text }]}>Go Back</Text>
           </Pressable>
         </View>
       </SafeAreaView>
@@ -185,18 +190,11 @@ export default function ConfirmPaymentScreen(): React.ReactElement | null {
   }
 
   return (
-    <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top", "bottom"]}>
       {/* Header */}
       <View style={styles.header}>
-        <Pressable
-          style={styles.backButton}
-          onPress={() => router.back()}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-        >
-          <Text style={styles.backIcon}>←</Text>
-        </Pressable>
-        <Text style={styles.headerTitle}>Confirm Payment</Text>
+        <BackButton />
+        <Text style={[styles.headerTitle, { color: t.text }]}>Confirm Payment</Text>
         <View style={styles.headerSpacer} />
       </View>
 
@@ -206,25 +204,25 @@ export default function ConfirmPaymentScreen(): React.ReactElement | null {
         showsVerticalScrollIndicator={false}
       >
         {/* Payment Card */}
-        <View style={styles.paymentCard}>
-          <Text style={styles.payingLabel}>Paying</Text>
-          <Text style={styles.merchantName}>
+        <View style={[styles.paymentCard, { backgroundColor: t.card, borderColor: t.border }, t.shadow]}>
+          <Text style={[styles.payingLabel, { color: t.textSec }]}>Paying</Text>
+          <Text style={[styles.merchantName, { color: t.text }]}>
             {paymentRequest.merchantLabel || paymentRequest.merchantId}
           </Text>
-          <Text style={[styles.amount, !canPay && styles.amountError]}>
+          <Text style={[styles.amount, { color: t.text }, !canPay && styles.amountError]}>
             {formatNaira(paymentRequest.amountKobo)}
           </Text>
 
-          <View style={styles.divider} />
+          <View style={[styles.divider, { backgroundColor: t.border }]} />
 
           <View style={styles.balanceRow}>
-            <Text style={styles.balanceLabel}>Your balance</Text>
-            <Text style={styles.balanceValue}>{formatNaira(balanceKobo)}</Text>
+            <Text style={[styles.balanceLabel, { color: t.textSec }]}>Your balance</Text>
+            <Text style={[styles.balanceValue, { color: t.text }]}>{formatNaira(balanceKobo)}</Text>
           </View>
 
           {canPay && (
             <View style={styles.balanceRow}>
-              <Text style={styles.balanceLabel}>After payment</Text>
+              <Text style={[styles.balanceLabel, { color: t.textSec }]}>After payment</Text>
               <Text style={styles.balanceValueGreen}>{formatNaira(afterBalanceKobo)}</Text>
             </View>
           )}
@@ -236,11 +234,11 @@ export default function ConfirmPaymentScreen(): React.ReactElement | null {
             {signing ? (
               <View style={styles.signingContainer}>
                 <ActivityIndicator size="large" color={colors.primary} />
-                <Text style={styles.signingText}>Signing payment...</Text>
+                <Text style={[styles.signingText, { color: t.textSec }]}>Signing payment...</Text>
               </View>
             ) : (
               <>
-                <Text style={styles.pinLabel}>Enter PIN to confirm</Text>
+                <Text style={[styles.pinLabel, { color: t.textSec }]}>Enter PIN to confirm</Text>
 
                 {/* PIN Dots */}
                 <Animated.View
@@ -254,6 +252,7 @@ export default function ConfirmPaymentScreen(): React.ReactElement | null {
                       key={i}
                       style={[
                         styles.dot,
+                        { borderColor: t.border },
                         i < pin.length && styles.dotFilled,
                       ]}
                     />
@@ -282,13 +281,15 @@ export default function ConfirmPaymentScreen(): React.ReactElement | null {
                             key={ki}
                             style={({ pressed }) => [
                               styles.numKey,
+                              { borderColor: t.border, backgroundColor: t.keyBg },
+                              t.shadow,
                               pressed && styles.numKeyPressed,
                             ]}
                             onPress={() =>
                               key === "del" ? onDelete() : onDigit(key as number)
                             }
                           >
-                            <Text style={styles.numKeyText}>
+                            <Text style={[styles.numKeyText, { color: t.text }]}>
                               {key === "del" ? "⌫" : key}
                             </Text>
                           </Pressable>
@@ -307,6 +308,8 @@ export default function ConfirmPaymentScreen(): React.ReactElement | null {
             <Pressable
               style={({ pressed }) => [
                 styles.topUpButton,
+                { borderColor: t.border },
+                t.shadow,
                 pressed && styles.buttonPressed,
               ]}
               onPress={() => router.push("/(app)/topup/amount")}
@@ -342,7 +345,6 @@ export default function ConfirmPaymentScreen(): React.ReactElement | null {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: colors.light.bg,
   },
 
   // Header
@@ -354,25 +356,10 @@ const styles = StyleSheet.create({
     minHeight: dimensions.headerMinHeight,
     gap: spacing.md,
   },
-  backButton: {
-    width: dimensions.headerBackButton.size,
-    height: dimensions.headerBackButton.size,
-    borderRadius: radii.md,
-    borderWidth: borders.medium,
-    borderColor: colors.light.border,
-    backgroundColor: colors.light.card,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  backIcon: {
-    fontSize: 18,
-    color: colors.light.text,
-  },
   headerTitle: {
     flex: 1,
     fontFamily: fonts.bold,
     fontSize: fontSizes.headerTitle,
-    color: colors.light.text,
   },
   headerSpacer: {
     width: dimensions.headerBackButton.size,
@@ -390,29 +377,23 @@ const styles = StyleSheet.create({
 
   // Payment Card
   paymentCard: {
-    backgroundColor: colors.light.card,
     borderWidth: borders.standard,
-    borderColor: colors.light.border,
     borderRadius: radii.xl,
     padding: spacing.cardPadLg,
     alignItems: "center",
-    ...shadows.neu.light,
   },
   payingLabel: {
     fontFamily: fonts.regular,
     fontSize: fontSizes.caption,
-    color: colors.light.textSec,
   },
   merchantName: {
     fontFamily: fonts.bold,
     fontSize: fontSizes.cardTitle,
-    color: colors.light.text,
     marginTop: spacing.xs,
   },
   amount: {
     fontFamily: fonts.bold,
     fontSize: 40,
-    color: colors.light.text,
     marginTop: spacing.sm,
     letterSpacing: -1,
   },
@@ -422,7 +403,6 @@ const styles = StyleSheet.create({
   divider: {
     width: "100%",
     height: 1,
-    backgroundColor: colors.light.border,
     marginVertical: spacing.lg,
   },
   balanceRow: {
@@ -434,12 +414,10 @@ const styles = StyleSheet.create({
   balanceLabel: {
     fontFamily: fonts.regular,
     fontSize: fontSizes.body,
-    color: colors.light.textSec,
   },
   balanceValue: {
     fontFamily: fonts.semibold,
     fontSize: fontSizes.body,
-    color: colors.light.text,
   },
   balanceValueGreen: {
     fontFamily: fonts.semibold,
@@ -451,7 +429,6 @@ const styles = StyleSheet.create({
   pinLabel: {
     fontFamily: fonts.regular,
     fontSize: fontSizes.body,
-    color: colors.light.textSec,
     textAlign: "center",
     marginTop: spacing["2xl"],
   },
@@ -466,7 +443,6 @@ const styles = StyleSheet.create({
     height: dimensions.pinDot.size,
     borderRadius: dimensions.pinDot.size / 2,
     borderWidth: borders.standard,
-    borderColor: colors.light.border,
     backgroundColor: "transparent",
   },
   dotFilled: {
@@ -516,11 +492,8 @@ const styles = StyleSheet.create({
     height: dimensions.numPadKey.size,
     borderRadius: dimensions.numPadKey.size / 2,
     borderWidth: borders.medium,
-    borderColor: colors.light.border,
-    backgroundColor: colors.light.keyBg,
     alignItems: "center",
     justifyContent: "center",
-    ...shadows.neu.light,
   },
   numKeyPressed: {
     transform: [{ scale: 0.9 }],
@@ -532,7 +505,6 @@ const styles = StyleSheet.create({
   numKeyText: {
     fontFamily: fonts.semibold,
     fontSize: fontSizes.numPad,
-    color: colors.light.text,
   },
 
   // Signing
@@ -544,7 +516,6 @@ const styles = StyleSheet.create({
   signingText: {
     fontFamily: fonts.medium,
     fontSize: fontSizes.body,
-    color: colors.light.textSec,
   },
 
   // Insufficient Balance
@@ -564,10 +535,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.secondary,
     borderRadius: radii.pill,
     borderWidth: borders.standard,
-    borderColor: colors.light.border,
     alignItems: "center",
     justifyContent: "center",
-    ...shadows.neu.light,
   },
   topUpButtonText: {
     fontFamily: fonts.bold,
@@ -589,29 +558,23 @@ const styles = StyleSheet.create({
   errorTitle: {
     fontFamily: fonts.bold,
     fontSize: fontSizes.h3,
-    color: colors.light.text,
     marginBottom: spacing.sm,
   },
   errorText: {
     fontFamily: fonts.regular,
     fontSize: fontSizes.body,
-    color: colors.light.textSec,
     textAlign: "center",
     marginBottom: spacing["2xl"],
   },
   errorButton: {
     paddingHorizontal: spacing["2xl"],
     paddingVertical: spacing.md,
-    backgroundColor: colors.light.card,
     borderRadius: radii.pill,
     borderWidth: borders.standard,
-    borderColor: colors.light.border,
-    ...shadows.neu.light,
   },
   errorButtonText: {
     fontFamily: fonts.semibold,
     fontSize: fontSizes.button,
-    color: colors.light.text,
   },
 
   // Shared

@@ -16,7 +16,9 @@ import { apiClient } from "../../src/api/client";
 import { listPendingByStatus, setLocalState } from "../../src/ledger/db";
 import { syncPendingEnvelopes } from "../../src/api/reconcile";
 import { logger } from "../../src/lib/logger";
+import { useThemeMode } from "../../src/theme/theme-provider";
 import {
+  getTheme,
   colors,
   fonts,
   fontSizes,
@@ -24,7 +26,6 @@ import {
   spacing,
   radii,
   borders,
-  shadows,
   dimensions,
 } from "../../src/theme/tokens";
 
@@ -48,13 +49,18 @@ interface TxnItemProps {
   status: "pending" | "confirmed";
 }
 
+interface TxnItemInternalProps extends TxnItemProps {
+  t: ReturnType<typeof getTheme>;
+}
+
 function TxnItem({
   type,
   label,
   amountKobo,
   time,
   status,
-}: TxnItemProps): React.ReactElement {
+  t,
+}: TxnItemInternalProps): React.ReactElement {
   const icons: Record<TxnType, string> = {
     sent: "↑",
     received: "↓",
@@ -72,15 +78,15 @@ function TxnItem({
   return (
     <View style={styles.txnItem}>
       <View
-        style={[styles.txnIcon, { backgroundColor: iconColors[type] + "18" }]}
+        style={[styles.txnIcon, { backgroundColor: iconColors[type] + "18", borderColor: t.border }]}
       >
         <Text style={[styles.txnIconText, { color: iconColors[type] }]}>
           {icons[type]}
         </Text>
       </View>
       <View style={styles.txnBody}>
-        <Text style={styles.txnLabel}>{label}</Text>
-        <Text style={styles.txnTime}>{time}</Text>
+        <Text style={[styles.txnLabel, { color: t.text }]}>{label}</Text>
+        <Text style={[styles.txnTime, { color: t.textSec }]}>{time}</Text>
       </View>
       <View style={styles.txnRight}>
         <Text
@@ -92,7 +98,7 @@ function TxnItem({
           {isDebit ? "−" : "+"}
           {formatNaira(amountKobo)}
         </Text>
-        <Text style={styles.txnStatus}>
+        <Text style={[styles.txnStatus, { color: t.textMut }]}>
           {status === "pending" ? "⏳ pending" : "✓"}
         </Text>
       </View>
@@ -160,6 +166,8 @@ async function fetchLedger(limit: number): Promise<RawLedgerEntry[]> {
 export default function HomeScreen(): React.ReactElement {
   const { state } = useAuth();
   const router = useRouter();
+  const { mode } = useThemeMode();
+  const t = getTheme(mode);
 
   const [balanceKobo, setBalanceKobo] = useState(
     state.status === "authed" ? Number(state.user.verifiedBalanceKobo) : 0,
@@ -249,19 +257,19 @@ export default function HomeScreen(): React.ReactElement {
   const activitySection = (
     <View style={styles.section}>
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Recent Activity</Text>
+        <Text style={[styles.sectionTitle, { color: t.text }]}>Recent Activity</Text>
         <Pressable onPress={() => router.push("/(app)/history")}>
           <Text style={styles.seeAllLink}>See All →</Text>
         </Pressable>
       </View>
-      <View style={styles.activityCard}>
+      <View style={[styles.activityCard, { backgroundColor: t.card, borderColor: t.border }, t.shadow]}>
         {ledgerEntries.length > 0 ? (
-          ledgerEntries.map((tx, i) => <TxnItem key={i} {...tx} />)
+          ledgerEntries.map((tx, i) => <TxnItem key={i} {...tx} t={t} />)
         ) : (
           <View style={styles.emptyActivity}>
-            <Text style={styles.emptyIcon}>₦</Text>
-            <Text style={styles.emptyTitle}>No transactions yet</Text>
-            <Text style={styles.emptyBody}>
+            <Text style={[styles.emptyIcon, { color: t.textMut }]}>₦</Text>
+            <Text style={[styles.emptyTitle, { color: t.text }]}>No transactions yet</Text>
+            <Text style={[styles.emptyBody, { color: t.textSec }]}>
               Top up and make your first payment to see activity here.
             </Text>
           </View>
@@ -272,7 +280,7 @@ export default function HomeScreen(): React.ReactElement {
 
   if (user.role === "STUDENT") {
     return (
-      <SafeAreaView style={styles.safe} edges={["top"]}>
+      <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top"]}>
         <ScrollView
           style={styles.scroll}
           contentContainerStyle={styles.scrollContent}
@@ -282,21 +290,23 @@ export default function HomeScreen(): React.ReactElement {
           {/* Header */}
           <View style={styles.header}>
             <View>
-              <Text style={styles.welcomeText}>
+              <Text style={[styles.welcomeText, { color: t.textSec }]}>
                 {isNewUser ? "Welcome," : "Welcome back,"}
               </Text>
-              <Text style={styles.nameText}>{capName} 👋</Text>
+              <Text style={[styles.nameText, { color: t.text }]}>{capName} 👋</Text>
             </View>
             <Pressable
               style={({ pressed }) => [
                 styles.settingsButton,
+                { borderColor: t.border, backgroundColor: t.card },
+                t.shadow,
                 pressed && styles.buttonPressed,
               ]}
               onPress={() => router.push("/(app)/settings")}
               accessibilityRole="button"
               accessibilityLabel="Settings"
             >
-              <Text style={styles.settingsIcon}>⚙</Text>
+              <Text style={[styles.settingsIcon, { color: t.text }]}>⚙</Text>
             </Pressable>
           </View>
 
@@ -309,7 +319,7 @@ export default function HomeScreen(): React.ReactElement {
           )}
 
           {/* Balance Card */}
-          <View style={styles.balanceCard}>
+          <View style={[styles.balanceCard, { backgroundColor: t.card, borderColor: t.border }, t.shadow]}>
             <View style={styles.pixelCorner}>
               {[0, 1, 2, 3, 4].map((r) => (
                 <View key={r} style={styles.pixelRow}>
@@ -327,11 +337,11 @@ export default function HomeScreen(): React.ReactElement {
             </View>
             <View style={styles.balanceHeader}>
               <View>
-                <Text style={styles.balanceLabel}>Total Balance</Text>
-                <Text style={styles.balanceAmount}>
+                <Text style={[styles.balanceLabel, { color: t.textSec }]}>Total Balance</Text>
+                <Text style={[styles.balanceAmount, { color: t.text }]}>
                   {formatNaira(balanceKobo)}
                 </Text>
-                <Text style={styles.balanceUpdated}>
+                <Text style={[styles.balanceUpdated, { color: t.textMut }]}>
                   {jwtFresh ? "✓ Updated just now" : "Last known balance"}
                 </Text>
               </View>
@@ -357,6 +367,8 @@ export default function HomeScreen(): React.ReactElement {
               style={({ pressed }) => [
                 styles.actionButton,
                 styles.actionButtonPrimary,
+                { borderColor: t.border },
+                t.shadow,
                 pressed && styles.buttonPressed,
               ]}
               onPress={() => router.push("/(app)/pay/scan")}
@@ -368,6 +380,8 @@ export default function HomeScreen(): React.ReactElement {
               style={({ pressed }) => [
                 styles.actionButton,
                 styles.actionButtonSecondary,
+                { backgroundColor: t.card, borderColor: t.border },
+                t.shadow,
                 pressed && styles.buttonPressed,
                 !jwtFresh && styles.buttonDisabled,
               ]}
@@ -376,18 +390,18 @@ export default function HomeScreen(): React.ReactElement {
               disabled={!jwtFresh}
             >
               <Text style={styles.actionIcon}>↓</Text>
-              <Text style={styles.actionTextSecondary}>Top Up</Text>
+              <Text style={[styles.actionTextSecondary, { color: t.text }]}>Top Up</Text>
             </Pressable>
           </View>
 
           {activitySection}
 
           {ledgerEntries.length >= 10 && ledgerEntries.length < 25 && (
-            <View style={styles.milestoneCard}>
+            <View style={[styles.milestoneCard, t.shadow]}>
               <Text style={styles.milestoneIcon}>🎯</Text>
               <View style={styles.milestoneBody}>
                 <Text style={styles.milestoneLabel}>MILESTONE</Text>
-                <Text style={styles.milestoneText}>
+                <Text style={[styles.milestoneText, { color: t.text }]}>
                   {ledgerEntries.length} payments! You're a regular.
                 </Text>
               </View>
@@ -402,7 +416,7 @@ export default function HomeScreen(): React.ReactElement {
   // MERCHANT VIEW
   // ══════════════════════════════════════════════════════════════════════
   return (
-    <SafeAreaView style={styles.safe} edges={["top"]}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top"]}>
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
@@ -411,21 +425,23 @@ export default function HomeScreen(): React.ReactElement {
       >
         <View style={styles.header}>
           <View>
-            <Text style={styles.welcomeText}>
+            <Text style={[styles.welcomeText, { color: t.textSec }]}>
               {isNewUser ? "Welcome," : "Welcome back,"}
             </Text>
-            <Text style={styles.nameText}>{capName} 🏪</Text>
+            <Text style={[styles.nameText, { color: t.text }]}>{capName} 🏪</Text>
           </View>
           <Pressable
             style={({ pressed }) => [
               styles.settingsButton,
+              { borderColor: t.border, backgroundColor: t.card },
+              t.shadow,
               pressed && styles.buttonPressed,
             ]}
             onPress={() => router.push("/(app)/settings")}
             accessibilityRole="button"
             accessibilityLabel="Settings"
           >
-            <Text style={styles.settingsIcon}>⚙</Text>
+            <Text style={[styles.settingsIcon, { color: t.text }]}>⚙</Text>
           </Pressable>
         </View>
 
@@ -437,7 +453,7 @@ export default function HomeScreen(): React.ReactElement {
           </View>
         )}
 
-        <View style={styles.balanceCard}>
+        <View style={[styles.balanceCard, { backgroundColor: t.card, borderColor: t.border }, t.shadow]}>
           <View style={styles.pixelCorner}>
             {[0, 1, 2, 3, 4].map((r) => (
               <View key={r} style={styles.pixelRow}>
@@ -455,11 +471,11 @@ export default function HomeScreen(): React.ReactElement {
           </View>
           <View style={styles.balanceHeader}>
             <View>
-              <Text style={styles.balanceLabel}>Total Balance</Text>
-              <Text style={styles.balanceAmount}>
+              <Text style={[styles.balanceLabel, { color: t.textSec }]}>Total Balance</Text>
+              <Text style={[styles.balanceAmount, { color: t.text }]}>
                 {formatNaira(balanceKobo)}
               </Text>
-              <Text style={styles.balanceUpdated}>
+              <Text style={[styles.balanceUpdated, { color: t.textMut }]}>
                 {jwtFresh ? "✓ Updated just now" : "Last known balance"}
               </Text>
             </View>
@@ -477,14 +493,15 @@ export default function HomeScreen(): React.ReactElement {
           </View>
         </View>
 
-        <View style={styles.syncCard}>
+        <View style={[styles.syncCard, { backgroundColor: t.card, borderColor: t.border }, t.shadow]}>
           <View>
-            <Text style={styles.syncTitle}>Pending Syncs</Text>
-            <Text style={styles.syncCount}>{pendingCount} payments</Text>
+            <Text style={[styles.syncTitle, { color: t.textSec }]}>Pending Syncs</Text>
+            <Text style={[styles.syncCount, { color: t.text }]}>{pendingCount} payments</Text>
           </View>
           <Pressable
             style={({ pressed }) => [
               styles.syncButton,
+              { backgroundColor: t.text },
               pressed && styles.buttonPressed,
               (isSyncing || pendingCount === 0 || !jwtFresh) &&
               styles.buttonDisabled,
@@ -492,7 +509,7 @@ export default function HomeScreen(): React.ReactElement {
             onPress={() => void handleSync()}
             disabled={isSyncing || pendingCount === 0 || !jwtFresh}
           >
-            <Text style={styles.syncButtonText}>
+            <Text style={[styles.syncButtonText, { color: t.bg }]}>
               {isSyncing ? "Syncing..." : "Sync Now"}
             </Text>
           </Pressable>
@@ -503,6 +520,8 @@ export default function HomeScreen(): React.ReactElement {
             style={({ pressed }) => [
               styles.actionButton,
               styles.actionButtonPrimary,
+              { borderColor: t.border },
+              t.shadow,
               pressed && styles.buttonPressed,
             ]}
             onPress={() => router.push("/(app)/merchant/charge")}
@@ -515,6 +534,8 @@ export default function HomeScreen(): React.ReactElement {
             style={({ pressed }) => [
               styles.actionButton,
               styles.actionButtonSecondary,
+              { backgroundColor: t.card, borderColor: t.border },
+              t.shadow,
               pressed && styles.buttonPressed,
               !jwtFresh && styles.buttonDisabled,
             ]}
@@ -523,7 +544,7 @@ export default function HomeScreen(): React.ReactElement {
             disabled={!jwtFresh}
           >
             <Text style={styles.actionIcon}>↑</Text>
-            <Text style={styles.actionTextSecondary}>Cash Out</Text>
+            <Text style={[styles.actionTextSecondary, { color: t.text }]}>Cash Out</Text>
           </Pressable>
         </View>
 
@@ -531,23 +552,27 @@ export default function HomeScreen(): React.ReactElement {
           <Pressable
             style={({ pressed }) => [
               styles.listItem,
+              { backgroundColor: t.card, borderColor: t.border },
+              t.shadow,
               pressed && styles.listItemPressed,
             ]}
             onPress={() => router.push("/(app)/merchant/cashout-history")}
             disabled={!jwtFresh}
           >
-            <Text style={styles.listItemText}>Cashout History</Text>
-            <Text style={styles.listItemArrow}>→</Text>
+            <Text style={[styles.listItemText, { color: t.text }]}>Cashout History</Text>
+            <Text style={[styles.listItemArrow, { color: t.textMut }]}>→</Text>
           </Pressable>
           <Pressable
             style={({ pressed }) => [
               styles.listItem,
+              { backgroundColor: t.card, borderColor: t.border },
+              t.shadow,
               pressed && styles.listItemPressed,
             ]}
             onPress={() => router.push("/(app)/history")}
           >
-            <Text style={styles.listItemText}>Transaction History</Text>
-            <Text style={styles.listItemArrow}>→</Text>
+            <Text style={[styles.listItemText, { color: t.text }]}>Transaction History</Text>
+            <Text style={[styles.listItemArrow, { color: t.textMut }]}>→</Text>
           </Pressable>
         </View>
       </ScrollView>
@@ -556,7 +581,7 @@ export default function HomeScreen(): React.ReactElement {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.light.bg },
+  safe: { flex: 1 },
   scroll: { flex: 1 },
   scrollContent: { paddingBottom: spacing["3xl"] },
 
@@ -571,12 +596,10 @@ const styles = StyleSheet.create({
   welcomeText: {
     fontFamily: fonts.regular,
     fontSize: fontSizes.caption,
-    color: colors.light.textSec,
   },
   nameText: {
     fontFamily: fonts.bold,
     fontSize: fontSizes.h3,
-    color: colors.light.text,
     marginTop: 2,
   },
   settingsButton: {
@@ -584,13 +607,10 @@ const styles = StyleSheet.create({
     height: 40,
     borderRadius: radii.md,
     borderWidth: borders.medium,
-    borderColor: colors.light.border,
-    backgroundColor: colors.light.card,
     alignItems: "center",
     justifyContent: "center",
-    ...shadows.neu.light,
   },
-  settingsIcon: { fontSize: 18, color: colors.light.text },
+  settingsIcon: { fontSize: 18 },
 
   staleBanner: {
     marginHorizontal: spacing.xl,
@@ -610,14 +630,11 @@ const styles = StyleSheet.create({
   balanceCard: {
     marginHorizontal: spacing.xl,
     marginTop: spacing.lg,
-    backgroundColor: colors.light.card,
     borderWidth: borders.standard,
-    borderColor: colors.light.border,
     borderRadius: radii.xl,
     padding: spacing.cardPadLg,
     position: "relative",
     overflow: "hidden",
-    ...shadows.neu.light,
   },
   pixelCorner: { position: "absolute", top: 0, right: 0, opacity: 0.08 },
   pixelRow: { flexDirection: "row" },
@@ -631,19 +648,16 @@ const styles = StyleSheet.create({
   balanceLabel: {
     fontFamily: fonts.semibold,
     fontSize: fontSizes.sm,
-    color: colors.light.textSec,
   },
   balanceAmount: {
     fontFamily: fonts.bold,
     fontSize: fontSizes.balance,
-    color: colors.light.text,
     marginTop: spacing.xs,
     letterSpacing: -1,
   },
   balanceUpdated: {
     fontFamily: fonts.regular,
     fontSize: fontSizes.sm,
-    color: colors.light.textMut,
     marginTop: spacing.xs,
   },
   connectDot: {
@@ -707,14 +721,8 @@ const styles = StyleSheet.create({
   },
   actionButtonPrimary: {
     backgroundColor: colors.primary,
-    borderColor: colors.light.border,
-    ...shadows.neu.light,
   },
-  actionButtonSecondary: {
-    backgroundColor: colors.light.card,
-    borderColor: colors.light.border,
-    ...shadows.neu.light,
-  },
+  actionButtonSecondary: {},
   actionIcon: { fontSize: 20 },
   actionTextPrimary: {
     fontFamily: fonts.bold,
@@ -724,7 +732,6 @@ const styles = StyleSheet.create({
   actionTextSecondary: {
     fontFamily: fonts.bold,
     fontSize: fontSizes.button,
-    color: colors.light.text,
   },
 
   section: { marginHorizontal: spacing.xl, marginTop: spacing.sectionGap },
@@ -737,7 +744,6 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontFamily: fonts.bold,
     fontSize: fontSizes.sectionTitle,
-    color: colors.light.text,
   },
   seeAllLink: {
     fontFamily: fonts.bold,
@@ -746,13 +752,10 @@ const styles = StyleSheet.create({
   },
 
   activityCard: {
-    backgroundColor: colors.light.card,
     borderWidth: borders.standard,
-    borderColor: colors.light.border,
     borderRadius: radii.xl,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.xs,
-    ...shadows.neu.light,
   },
 
   emptyActivity: {
@@ -760,16 +763,14 @@ const styles = StyleSheet.create({
     paddingVertical: spacing["3xl"],
     gap: spacing.sm,
   },
-  emptyIcon: { fontSize: 32, color: colors.light.textMut },
+  emptyIcon: { fontSize: 32 },
   emptyTitle: {
     fontFamily: fonts.bold,
     fontSize: fontSizes.bodyLg,
-    color: colors.light.text,
   },
   emptyBody: {
     fontFamily: fonts.regular,
     fontSize: fontSizes.body,
-    color: colors.light.textSec,
     textAlign: "center",
     lineHeight: 20,
   },
@@ -785,7 +786,6 @@ const styles = StyleSheet.create({
     height: dimensions.txnIcon.size,
     borderRadius: radii.md,
     borderWidth: borders.medium,
-    borderColor: colors.light.border,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -794,12 +794,10 @@ const styles = StyleSheet.create({
   txnLabel: {
     fontFamily: fonts.semibold,
     fontSize: fontSizes.body,
-    color: colors.light.text,
   },
   txnTime: {
     fontFamily: fonts.regular,
     fontSize: fontSizes.sm,
-    color: colors.light.textSec,
     marginTop: 2,
   },
   txnRight: { alignItems: "flex-end" },
@@ -807,7 +805,6 @@ const styles = StyleSheet.create({
   txnStatus: {
     fontFamily: fonts.regular,
     fontSize: fontSizes.xs,
-    color: colors.light.textMut,
     marginTop: 1,
   },
 
@@ -822,7 +819,6 @@ const styles = StyleSheet.create({
     borderColor: colors.secondary + "50",
     borderRadius: radii.xl,
     padding: spacing.cardPad,
-    ...shadows.neu.light,
   },
   milestoneIcon: { fontSize: 28 },
   milestoneBody: { flex: 1 },
@@ -834,7 +830,6 @@ const styles = StyleSheet.create({
   milestoneText: {
     fontFamily: fonts.semibold,
     fontSize: fontSizes.body,
-    color: colors.light.text,
     marginTop: spacing.xs,
   },
 
@@ -844,26 +839,20 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     marginHorizontal: spacing.xl,
     marginTop: spacing.lg,
-    backgroundColor: colors.light.card,
     borderWidth: borders.standard,
-    borderColor: colors.light.border,
     borderRadius: radii.xl,
     padding: spacing.cardPad,
-    ...shadows.neu.light,
   },
   syncTitle: {
     fontFamily: fonts.regular,
     fontSize: fontSizes.body,
-    color: colors.light.textSec,
   },
   syncCount: {
     fontFamily: fonts.bold,
     fontSize: fontSizes.cardTitle,
-    color: colors.light.text,
     marginTop: spacing.xs,
   },
   syncButton: {
-    backgroundColor: colors.light.text,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
     borderRadius: radii.sm,
@@ -871,20 +860,16 @@ const styles = StyleSheet.create({
   syncButtonText: {
     fontFamily: fonts.semibold,
     fontSize: fontSizes.body,
-    color: colors.light.bg,
   },
 
   listItem: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    backgroundColor: colors.light.card,
     borderWidth: borders.standard,
-    borderColor: colors.light.border,
     borderRadius: radii.xl,
     padding: spacing.cardPad,
     marginBottom: spacing.md,
-    ...shadows.neu.light,
   },
   listItemPressed: {
     transform: [{ translateX: 2 }, { translateY: 2 }],
@@ -893,12 +878,10 @@ const styles = StyleSheet.create({
   listItemText: {
     fontFamily: fonts.semibold,
     fontSize: fontSizes.bodyLg,
-    color: colors.light.text,
   },
   listItemArrow: {
     fontFamily: fonts.bold,
     fontSize: fontSizes.bodyLg,
-    color: colors.light.textMut,
   },
 
   buttonPressed: {

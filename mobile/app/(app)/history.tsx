@@ -13,7 +13,10 @@ import { useRouter } from "expo-router";
 import { useAuth } from "../../src/auth/auth-state";
 import { fetchLedger, LedgerEntry } from "../../src/api/ledger";
 import { mergeTransactions, DisplayTransaction } from "../../src/payment/transaction-list";
+import { BackButton } from "../../components/BackButton";
+import { useThemeMode } from "../../src/theme/theme-provider";
 import {
+  getTheme,
   colors,
   fonts,
   fontSizes,
@@ -21,7 +24,6 @@ import {
   spacing,
   radii,
   borders,
-  shadows,
   dimensions,
 } from "../../src/theme/tokens";
 
@@ -34,13 +36,13 @@ function formatNaira(kobo: number | bigint): string {
   });
 }
 
-function TxnIcon({ type }: { type: TxnType }): React.ReactElement {
+function TxnIcon({ type, theme }: { type: TxnType; theme: ReturnType<typeof getTheme> }): React.ReactElement {
   const isCredit = type === "credit";
   const bgColor = isCredit ? colors.primary + "18" : colors.error + "18";
   const iconColor = isCredit ? colors.primary : colors.error;
 
   return (
-    <View style={[styles.txnIcon, { backgroundColor: bgColor }]}>
+    <View style={[styles.txnIcon, { backgroundColor: bgColor, borderColor: theme.border }]}>
       <Text style={[styles.txnIconText, { color: iconColor }]}>
         {isCredit ? "↓" : "↑"}
       </Text>
@@ -51,6 +53,8 @@ function TxnIcon({ type }: { type: TxnType }): React.ReactElement {
 export default function HistoryScreen(): React.ReactElement {
   const router = useRouter();
   const { state } = useAuth();
+  const { mode } = useThemeMode();
+  const t = getTheme(mode);
 
   if (state.status !== "authed") {
     return <View />;
@@ -130,7 +134,7 @@ export default function HistoryScreen(): React.ReactElement {
     });
 
     let statusText = "";
-    let statusColor: string = colors.light.textMut;
+    let statusColor: string = t.textMut;
     if (item.status === "confirmed" || item.status === "reconciled") {
       statusText = "✓";
       statusColor = colors.primary;
@@ -143,13 +147,13 @@ export default function HistoryScreen(): React.ReactElement {
     }
 
     return (
-      <View style={styles.txnItem}>
-        <TxnIcon type={txnType} />
+      <View style={[styles.txnItem, { borderBottomColor: t.border + "40" }]}>
+        <TxnIcon type={txnType} theme={t} />
         <View style={styles.txnBody}>
-          <Text style={styles.txnLabel} numberOfLines={1}>
+          <Text style={[styles.txnLabel, { color: t.text }]} numberOfLines={1}>
             {label}
           </Text>
-          <Text style={styles.txnTime}>{dateStr}</Text>
+          <Text style={[styles.txnTime, { color: t.textSec }]}>{dateStr}</Text>
         </View>
         <View style={styles.txnRight}>
           <Text
@@ -198,7 +202,7 @@ export default function HistoryScreen(): React.ReactElement {
     if (!loading && !nextCursor && displayTransactions.length > 0) {
       return (
         <View style={styles.endOfHistory}>
-          <Text style={styles.endOfHistoryText}>END OF HISTORY</Text>
+          <Text style={[styles.endOfHistoryText, { color: t.textMut }]}>END OF HISTORY</Text>
         </View>
       );
     }
@@ -212,8 +216,8 @@ export default function HistoryScreen(): React.ReactElement {
     return (
       <View style={styles.emptyContainer}>
         <Text style={styles.emptyIcon}>📋</Text>
-        <Text style={styles.emptyTitle}>No Transactions</Text>
-        <Text style={styles.emptyText}>
+        <Text style={[styles.emptyTitle, { color: t.text }]}>No Transactions</Text>
+        <Text style={[styles.emptyText, { color: t.textSec }]}>
           Your transaction history will appear here.
         </Text>
       </View>
@@ -221,18 +225,11 @@ export default function HistoryScreen(): React.ReactElement {
   };
 
   return (
-    <SafeAreaView style={styles.safe} edges={["top"]}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top"]}>
       {/* Header */}
       <View style={styles.header}>
-        <Pressable
-          style={styles.backButton}
-          onPress={() => router.back()}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-        >
-          <Text style={styles.backIcon}>←</Text>
-        </Pressable>
-        <Text style={styles.headerTitle}>Transaction History</Text>
+        <BackButton />
+        <Text style={[styles.headerTitle, { color: t.text }]}>Transaction History</Text>
         <View style={styles.headerSpacer} />
       </View>
 
@@ -268,7 +265,6 @@ export default function HistoryScreen(): React.ReactElement {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: colors.light.bg,
   },
 
   // Header
@@ -280,25 +276,10 @@ const styles = StyleSheet.create({
     minHeight: dimensions.headerMinHeight,
     gap: spacing.md,
   },
-  backButton: {
-    width: dimensions.headerBackButton.size,
-    height: dimensions.headerBackButton.size,
-    borderRadius: radii.md,
-    borderWidth: borders.medium,
-    borderColor: colors.light.border,
-    backgroundColor: colors.light.card,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  backIcon: {
-    fontSize: 18,
-    color: colors.light.text,
-  },
   headerTitle: {
     flex: 1,
     fontFamily: fonts.bold,
     fontSize: fontSizes.headerTitle,
-    color: colors.light.text,
   },
   headerSpacer: {
     width: dimensions.headerBackButton.size,
@@ -347,14 +328,12 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     paddingVertical: spacing.md,
     borderBottomWidth: 1,
-    borderBottomColor: colors.light.border + "40",
   },
   txnIcon: {
     width: dimensions.txnIcon.size,
     height: dimensions.txnIcon.size,
     borderRadius: radii.md,
     borderWidth: borders.medium,
-    borderColor: colors.light.border,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -368,12 +347,10 @@ const styles = StyleSheet.create({
   txnLabel: {
     fontFamily: fonts.semibold,
     fontSize: fontSizes.body,
-    color: colors.light.text,
   },
   txnTime: {
     fontFamily: fonts.regular,
     fontSize: fontSizes.sm,
-    color: colors.light.textSec,
     marginTop: 2,
   },
   txnRight: {
@@ -401,7 +378,6 @@ const styles = StyleSheet.create({
   endOfHistoryText: {
     fontFamily: fonts.pixel,
     fontSize: pixelFontSizes.sm,
-    color: colors.light.textMut,
   },
 
   // Empty State
@@ -416,13 +392,11 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontFamily: fonts.bold,
     fontSize: fontSizes.cardTitle,
-    color: colors.light.text,
     marginBottom: spacing.sm,
   },
   emptyText: {
     fontFamily: fonts.regular,
     fontSize: fontSizes.body,
-    color: colors.light.textSec,
     textAlign: "center",
   },
 });

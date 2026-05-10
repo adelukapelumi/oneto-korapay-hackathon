@@ -5,6 +5,7 @@ import { useAuth } from "../../src/auth/auth-state";
 import { useThemeMode } from "../../src/theme/theme-provider";
 import { BackButton } from "../../components/BackButton";
 import {
+  getTheme,
   colors,
   fonts,
   fontSizes,
@@ -12,7 +13,6 @@ import {
   spacing,
   radii,
   borders,
-  shadows,
   dimensions,
 } from "../../src/theme/tokens";
 
@@ -22,6 +22,7 @@ interface SettingsRowProps {
   onPress?: () => void;
   showArrow?: boolean;
   isLast?: boolean;
+  theme: ReturnType<typeof getTheme>;
 }
 
 function SettingsRow({
@@ -30,19 +31,20 @@ function SettingsRow({
   onPress,
   showArrow,
   isLast,
+  theme,
 }: SettingsRowProps): React.ReactElement {
   return (
     <Pressable
-      style={[styles.settingsRow, !isLast && styles.settingsRowBorder]}
+      style={[styles.settingsRow, !isLast && [styles.settingsRowBorder, { borderBottomColor: theme.border + "40" }]]}
       onPress={onPress}
       disabled={!onPress}
     >
-      <Text style={styles.settingsRowLabel}>{label}</Text>
+      <Text style={[styles.settingsRowLabel, { color: theme.text }]}>{label}</Text>
       <View style={styles.settingsRowRight}>
         {value !== undefined && (
-          <Text style={styles.settingsRowValue}>{value}</Text>
+          <Text style={[styles.settingsRowValue, { color: theme.textSec }]}>{value}</Text>
         )}
-        {showArrow && <Text style={styles.settingsRowArrow}>→</Text>}
+        {showArrow && <Text style={[styles.settingsRowArrow, { color: theme.textMut }]}>→</Text>}
       </View>
     </Pressable>
   );
@@ -52,6 +54,7 @@ export default function SettingsScreen(): React.ReactElement {
   const router = useRouter();
   const { state, signOut } = useAuth();
   const { mode, toggleTheme } = useThemeMode();
+  const t = getTheme(mode);
 
   if (state.status !== "authed") {
     return <View />;
@@ -64,11 +67,11 @@ export default function SettingsScreen(): React.ReactElement {
   const statusDisplay = user.status === "ACTIVE" ? "✓ Active" : user.status;
 
   return (
-    <SafeAreaView style={styles.safe} edges={["top"]}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top"]}>
       {/* Header */}
       <View style={styles.header}>
         <BackButton />
-        <Text style={styles.headerTitle}>Settings</Text>
+        <Text style={[styles.headerTitle, { color: t.text }]}>Settings</Text>
         <View style={styles.headerSpacer} />
       </View>
 
@@ -82,7 +85,7 @@ export default function SettingsScreen(): React.ReactElement {
           <View style={styles.avatar}>
             <Text style={styles.avatarText}>👤</Text>
           </View>
-          <Text style={styles.profileName}>{displayName}</Text>
+          <Text style={[styles.profileName, { color: t.text }]}>{displayName}</Text>
           <View style={[styles.roleBadge, !isStudent && styles.merchantBadge]}>
             <Text
               style={[
@@ -96,12 +99,13 @@ export default function SettingsScreen(): React.ReactElement {
         </View>
 
         {/* Settings Card */}
-        <View style={styles.settingsCard}>
-          <SettingsRow label="Email" value={email} />
+        <View style={[styles.settingsCard, { backgroundColor: t.card, borderColor: t.border }, t.shadow]}>
+          <SettingsRow label="Email" value={email} theme={t} />
           <SettingsRow
             label="Change PIN"
             showArrow
             onPress={() => router.push("/(app)/change-pin")}
+            theme={t}
           />
           {/* Theme toggle — pressing cycles between Light and Dark.
               The preference is persisted across app restarts via SecureStore. */}
@@ -109,23 +113,25 @@ export default function SettingsScreen(): React.ReactElement {
             label="Appearance"
             value={mode === "light" ? "☀️  Light" : "🌙  Dark"}
             onPress={toggleTheme}
+            theme={t}
           />
           <SettingsRow
             label="Account Status"
             value={statusDisplay}
             isLast
+            theme={t}
           />
         </View>
 
         {/* Account Info Card */}
-        <View style={styles.infoCard}>
+        <View style={[styles.infoCard, { backgroundColor: t.cardAlt }]}>
           <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>User ID</Text>
-            <Text style={styles.infoValue}>{user.id.slice(0, 12)}...</Text>
+            <Text style={[styles.infoLabel, { color: t.textMut }]}>User ID</Text>
+            <Text style={[styles.infoValue, { color: t.textSec }]}>{user.id.slice(0, 12)}...</Text>
           </View>
           <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Role</Text>
-            <Text style={styles.infoValue}>{user.role}</Text>
+            <Text style={[styles.infoLabel, { color: t.textMut }]}>Role</Text>
+            <Text style={[styles.infoValue, { color: t.textSec }]}>{user.role}</Text>
           </View>
         </View>
 
@@ -133,6 +139,8 @@ export default function SettingsScreen(): React.ReactElement {
         <Pressable
           style={({ pressed }) => [
             styles.signOutButton,
+            { borderColor: t.border },
+            t.shadow,
             pressed && styles.signOutButtonPressed,
           ]}
           onPress={() => void signOut()}
@@ -141,9 +149,25 @@ export default function SettingsScreen(): React.ReactElement {
           <Text style={styles.signOutButtonText}>Sign Out</Text>
         </Pressable>
 
+        {/*remove this button in production it is just for testing*/}
+        <Pressable
+          style={({ pressed }) => [
+            styles.signOutButton,
+            pressed && styles.signOutButtonPressed,
+          ]}
+          onPress={async () => {
+            const { wipeKeypair } = await import("../../src/crypto/pin-derive");
+            await wipeKeypair();
+            await signOut();
+          }}
+          accessibilityRole="button"
+        >
+          <Text style={styles.signOutButtonText}>⚠️ Reset Device (Dev Only)</Text>
+        </Pressable>
+
         {/* Version */}
         <View style={styles.versionSection}>
-          <Text style={styles.versionText}>ONETO V1.0.0 — PILOT</Text>
+          <Text style={[styles.versionText, { color: t.textMut }]}>ONETO V1.0.0 — PILOT</Text>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -151,7 +175,7 @@ export default function SettingsScreen(): React.ReactElement {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.light.bg },
+  safe: { flex: 1 },
 
   header: {
     flexDirection: "row",
@@ -165,7 +189,6 @@ const styles = StyleSheet.create({
     flex: 1,
     fontFamily: fonts.bold,
     fontSize: fontSizes.headerTitle,
-    color: colors.light.text,
   },
   headerSpacer: { width: dimensions.headerBackButton.size },
 
@@ -190,7 +213,6 @@ const styles = StyleSheet.create({
   profileName: {
     fontFamily: fonts.bold,
     fontSize: fontSizes.cardTitle,
-    color: colors.light.text,
     marginTop: spacing.md,
   },
   roleBadge: {
@@ -214,12 +236,9 @@ const styles = StyleSheet.create({
   merchantBadgeText: { color: colors.secondary },
 
   settingsCard: {
-    backgroundColor: colors.light.card,
     borderWidth: borders.standard,
-    borderColor: colors.light.border,
     borderRadius: radii.xl,
     paddingHorizontal: spacing.lg,
-    ...shadows.neu.light,
   },
   settingsRow: {
     flexDirection: "row",
@@ -229,12 +248,10 @@ const styles = StyleSheet.create({
   },
   settingsRowBorder: {
     borderBottomWidth: 1,
-    borderBottomColor: colors.light.border + "40",
   },
   settingsRowLabel: {
     fontFamily: fonts.medium,
     fontSize: fontSizes.bodyLg,
-    color: colors.light.text,
   },
   settingsRowRight: {
     flexDirection: "row",
@@ -244,17 +261,14 @@ const styles = StyleSheet.create({
   settingsRowValue: {
     fontFamily: fonts.regular,
     fontSize: fontSizes.body,
-    color: colors.light.textSec,
   },
   settingsRowArrow: {
     fontFamily: fonts.bold,
     fontSize: fontSizes.body,
-    color: colors.light.textMut,
   },
 
   infoCard: {
     marginTop: spacing.lg,
-    backgroundColor: colors.light.cardAlt,
     borderRadius: radii.lg,
     padding: spacing.lg,
   },
@@ -266,12 +280,10 @@ const styles = StyleSheet.create({
   infoLabel: {
     fontFamily: fonts.regular,
     fontSize: fontSizes.caption,
-    color: colors.light.textMut,
   },
   infoValue: {
     fontFamily: fonts.medium,
     fontSize: fontSizes.caption,
-    color: colors.light.textSec,
   },
 
   signOutButton: {
@@ -280,10 +292,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.error,
     borderRadius: radii.pill,
     borderWidth: borders.standard,
-    borderColor: colors.light.border,
     alignItems: "center",
     justifyContent: "center",
-    ...shadows.neu.light,
   },
   signOutButtonPressed: {
     transform: [{ translateX: 3 }, { translateY: 3 }],
@@ -303,6 +313,5 @@ const styles = StyleSheet.create({
   versionText: {
     fontFamily: fonts.pixel,
     fontSize: pixelFontSizes.xs,
-    color: colors.light.textMut,
   },
 });

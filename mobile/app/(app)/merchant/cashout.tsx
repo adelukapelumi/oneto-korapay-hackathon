@@ -5,10 +5,25 @@ import { Stack, useRouter } from "expo-router";
 import { useAuth } from "../../../src/auth/auth-state";
 import { requestCashout, Cashout } from "../../../src/api/cashout";
 import { ApiError } from "../../../src/api/errors";
+import { BackButton } from "../../../components/BackButton";
+import { useThemeMode } from "../../../src/theme/theme-provider";
+import {
+  getTheme,
+  colors,
+  fonts,
+  fontSizes,
+  pixelFontSizes,
+  spacing,
+  radii,
+  borders,
+  dimensions,
+} from "../../../src/theme/tokens";
 
 export default function CashoutScreen(): React.ReactElement {
   const router = useRouter();
   const { state } = useAuth();
+  const { mode } = useThemeMode();
+  const t = getTheme(mode);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successData, setSuccessData] = useState<Cashout | null>(null);
@@ -43,8 +58,16 @@ export default function CashoutScreen(): React.ReactElement {
   };
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <Stack.Screen options={{ title: "Request Cashout", headerBackTitle: "Back" }} />
+    <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top", "bottom"]}>
+      <Stack.Screen options={{ headerShown: false }} />
+
+      {/* Header */}
+      <View style={styles.header}>
+        <BackButton />
+        <Text style={[styles.headerTitle, { color: t.text }]}>Request Cashout</Text>
+        <View style={styles.headerSpacer} />
+      </View>
+
       <View style={styles.container}>
         {!jwtFresh && (
           <View style={styles.staleBanner}>
@@ -54,9 +77,9 @@ export default function CashoutScreen(): React.ReactElement {
           </View>
         )}
 
-        <View style={styles.card}>
-          <Text style={styles.label}>Current Balance</Text>
-          <Text style={styles.balance}>₦{balanceNaira}</Text>
+        <View style={[styles.balanceCard, { backgroundColor: t.card, borderColor: t.border }, t.shadow]}>
+          <Text style={[styles.balanceLabel, { color: t.textSec }]}>Current Balance</Text>
+          <Text style={[styles.balanceAmount, { color: t.text }]}>₦{balanceNaira}</Text>
         </View>
 
         {error ? (
@@ -66,32 +89,52 @@ export default function CashoutScreen(): React.ReactElement {
         ) : null}
 
         {successData ? (
-          <View style={styles.successBox}>
-            <Text style={styles.successTitle}>Cashout Requested</Text>
-            <Text style={styles.successText}>Amount: ₦{(Number(successData.amountKobo) / 100).toFixed(2)}</Text>
-            <Text style={styles.successText}>Status: {successData.status}</Text>
+          <View style={[styles.successCard, { backgroundColor: t.card, borderColor: colors.primary }, t.shadow]}>
+            <View style={styles.pixelRow}>
+              {[0, 1, 2, 3, 4, 5].map((i) => (
+                <View key={i} style={[styles.pixel, i % 2 === 0 && styles.pixelFilled]} />
+              ))}
+            </View>
+            <Text style={styles.successLabel}>CASHOUT REQUESTED</Text>
+            <Text style={[styles.successAmount, { color: t.text }]}>
+              ₦{(Number(successData.amountKobo) / 100).toFixed(2)}
+            </Text>
+            <View style={styles.statusBadge}>
+              <Text style={styles.statusBadgeText}>⏳ {successData.status}</Text>
+            </View>
             <Pressable
-              style={styles.historyButton}
+              style={({ pressed }) => [
+                styles.historyButton,
+                { borderColor: t.border },
+                t.shadow,
+                pressed && styles.buttonPressed,
+              ]}
               onPress={() => router.replace("/(app)/merchant/cashout-history")}
             >
-              <Text style={styles.historyButtonText}>View History</Text>
+              <Text style={styles.historyButtonText}>View History →</Text>
             </Pressable>
           </View>
         ) : (
-          <Pressable
-            style={[
-              styles.primaryButton,
-              (!jwtFresh || loading || balanceKobo <= 0) && styles.disabledButton,
-            ]}
-            onPress={handleRequestCashout}
-            disabled={!jwtFresh || loading || balanceKobo <= 0}
-          >
-            {loading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.primaryButtonText}>Request Cashout</Text>
-            )}
-          </Pressable>
+          <>
+            <View style={styles.spacer} />
+            <Pressable
+              style={({ pressed }) => [
+                styles.primaryButton,
+                { borderColor: t.border },
+                t.shadow,
+                (!jwtFresh || loading || balanceKobo <= 0) && styles.disabledButton,
+                pressed && styles.buttonPressed,
+              ]}
+              onPress={handleRequestCashout}
+              disabled={!jwtFresh || loading || balanceKobo <= 0}
+            >
+              {loading ? (
+                <ActivityIndicator color={colors.primaryText} />
+              ) : (
+                <Text style={styles.primaryButtonText}>Request Cashout</Text>
+              )}
+            </Pressable>
+          </>
         )}
       </View>
     </SafeAreaView>
@@ -99,56 +142,137 @@ export default function CashoutScreen(): React.ReactElement {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#fff" },
-  container: { flex: 1, padding: 24 },
+  safe: { flex: 1 },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    minHeight: dimensions.headerMinHeight,
+    gap: spacing.md,
+  },
+  headerTitle: {
+    flex: 1,
+    fontFamily: fonts.bold,
+    fontSize: fontSizes.headerTitle,
+  },
+  headerSpacer: { width: dimensions.headerBackButton.size },
+  container: {
+    flex: 1,
+    paddingHorizontal: spacing.screenHorizontal,
+    paddingBottom: spacing["2xl"],
+  },
   staleBanner: {
-    backgroundColor: "#fff5e6",
-    borderColor: "#ffb84d",
-    borderWidth: 1,
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 24,
+    backgroundColor: colors.secondary + "20",
+    borderWidth: borders.thin,
+    borderColor: colors.secondary + "60",
+    borderRadius: radii.md,
+    padding: spacing.md,
+    marginBottom: spacing.lg,
   },
-  staleBannerText: { color: "#7a4d00", fontSize: 13 },
-  card: {
-    backgroundColor: "#f5f5f5",
-    padding: 24,
-    borderRadius: 16,
+  staleBannerText: {
+    fontFamily: fonts.medium,
+    fontSize: fontSizes.caption,
+    color: "#7a4d00",
+    textAlign: "center",
+  },
+  balanceCard: {
+    borderWidth: borders.standard,
+    borderRadius: radii.xl,
+    padding: spacing.cardPadLg,
     alignItems: "center",
-    marginBottom: 32,
+    marginBottom: spacing.lg,
   },
-  label: { fontSize: 14, color: "#666", marginBottom: 8 },
-  balance: { fontSize: 36, fontWeight: "700", color: "#000" },
+  balanceLabel: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.sm,
+  },
+  balanceAmount: {
+    fontFamily: fonts.bold,
+    fontSize: fontSizes.h2Lg,
+    marginTop: spacing.xs,
+    letterSpacing: -1,
+  },
   errorBox: {
-    backgroundColor: "#ffebee",
-    padding: 16,
-    borderRadius: 8,
-    marginBottom: 24,
+    backgroundColor: colors.error + "15",
+    borderWidth: borders.thin,
+    borderColor: colors.error + "30",
+    borderRadius: radii.md,
+    padding: spacing.md,
+    marginBottom: spacing.lg,
   },
-  errorText: { color: "#c62828", fontSize: 14 },
-  successBox: {
-    backgroundColor: "#e8f5e9",
-    padding: 24,
-    borderRadius: 16,
+  errorText: {
+    fontFamily: fonts.medium,
+    fontSize: fontSizes.caption,
+    color: colors.error,
+    textAlign: "center",
+  },
+  successCard: {
+    borderWidth: borders.standard,
+    borderRadius: radii.xl,
+    padding: spacing["2xl"],
     alignItems: "center",
+    gap: spacing.sm,
   },
-  successTitle: { fontSize: 18, fontWeight: "600", color: "#2e7d32", marginBottom: 12 },
-  successText: { fontSize: 16, color: "#1b5e20", marginBottom: 8 },
+  pixelRow: { flexDirection: "row", gap: 4, marginBottom: spacing.xs },
+  pixel: { width: 8, height: 8, backgroundColor: "transparent" },
+  pixelFilled: { backgroundColor: colors.primary },
+  successLabel: {
+    fontFamily: fonts.pixel,
+    fontSize: pixelFontSizes.sm,
+    color: colors.primary,
+    letterSpacing: 1,
+  },
+  successAmount: {
+    fontFamily: fonts.bold,
+    fontSize: fontSizes.h2Lg,
+    letterSpacing: -1,
+  },
+  statusBadge: {
+    backgroundColor: colors.secondary + "20",
+    borderWidth: borders.thin,
+    borderColor: colors.secondary + "40",
+    borderRadius: radii.pill,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.md,
+  },
+  statusBadgeText: {
+    fontFamily: fonts.medium,
+    fontSize: fontSizes.sm,
+    color: colors.secondary,
+  },
   historyButton: {
-    marginTop: 16,
-    backgroundColor: "#2e7d32",
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 8,
-  },
-  historyButtonText: { color: "#fff", fontWeight: "600", fontSize: 14 },
-  primaryButton: {
+    marginTop: spacing.md,
+    width: "100%",
     height: 52,
-    backgroundColor: "#000",
-    borderRadius: 12,
+    backgroundColor: colors.primary,
+    borderRadius: radii.pill,
+    borderWidth: borders.standard,
     alignItems: "center",
     justifyContent: "center",
   },
-  primaryButtonText: { fontSize: 16, fontWeight: "600", color: "#fff" },
+  historyButtonText: {
+    fontFamily: fonts.bold,
+    fontSize: fontSizes.button,
+    color: colors.primaryText,
+  },
+  spacer: { flex: 1 },
+  primaryButton: {
+    height: 52,
+    backgroundColor: colors.primary,
+    borderRadius: radii.pill,
+    borderWidth: borders.standard,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  primaryButtonText: {
+    fontFamily: fonts.bold,
+    fontSize: fontSizes.button,
+    color: colors.primaryText,
+  },
   disabledButton: { opacity: 0.5 },
+  buttonPressed: {
+    transform: [{ translateX: 3 }, { translateY: 3 }],
+    shadowOffset: { width: 0, height: 0 },
+  },
 });

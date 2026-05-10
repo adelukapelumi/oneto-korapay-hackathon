@@ -2,13 +2,16 @@ import { Redirect } from "expo-router";
 import { Animated, Easing, StyleSheet, Text, View } from "react-native";
 import { useEffect, useRef } from "react";
 import { useAuth } from "../src/auth/auth-state";
-import { colors, fonts, pixelFontSizes, spacing } from "../src/theme/tokens";
+import { useThemeMode } from "../src/theme/theme-provider";
+import { getTheme, colors, fonts, pixelFontSizes, spacing } from "../src/theme/tokens";
 
 // Decides where to send the user based on app state. While bootstrap
 // is in flight we render a tiny splash so the user doesn't see a flash
 // of /sign-in before we've checked storage.
 export default function Index(): React.ReactElement {
   const { state } = useAuth();
+  const { mode } = useThemeMode();
+  const t = getTheme(mode);
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -41,7 +44,7 @@ export default function Index(): React.ReactElement {
 
   if (state.status === "loading") {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, { backgroundColor: t.bg }]}>
         {/* Radial glow */}
         <Animated.View
           style={[styles.glow, { transform: [{ scale: pulseAnim }] }]}
@@ -69,7 +72,7 @@ export default function Index(): React.ReactElement {
         </View>
 
         {/* Tagline */}
-        <Text style={styles.tagline}>PAY OFFLINE. PAY EVERYWHERE.</Text>
+        <Text style={[styles.tagline, { color: t.textMut }]}>PAY OFFLINE. PAY EVERYWHERE.</Text>
 
         {/* Pixel corner decorations */}
         <View style={styles.cornerTopLeft}>
@@ -100,7 +103,6 @@ export default function Index(): React.ReactElement {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.dark.bg,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -138,7 +140,6 @@ const styles = StyleSheet.create({
   tagline: {
     fontFamily: fonts.pixel,
     fontSize: pixelFontSizes.sm,
-    color: colors.dark.textMut,
     marginTop: spacing['2xl'],
     letterSpacing: 1,
   },

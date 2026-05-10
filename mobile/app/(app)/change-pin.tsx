@@ -16,7 +16,9 @@ import {
 } from "../../src/crypto/pin-derive";
 import { logger } from "../../src/lib/logger";
 import { BackButton } from "../../components/BackButton";
+import { useThemeMode } from "../../src/theme/theme-provider";
 import {
+  getTheme,
   colors,
   fonts,
   fontSizes,
@@ -24,7 +26,6 @@ import {
   spacing,
   radii,
   borders,
-  shadows,
   dimensions,
 } from "../../src/theme/tokens";
 
@@ -62,6 +63,8 @@ const NUM_ROWS: (number | "del" | "")[][] = [
 
 export default function ChangePinScreen(): React.ReactElement {
   const router = useRouter();
+  const { mode } = useThemeMode();
+  const t = getTheme(mode);
 
   const [step, setStep] = useState<Step>("current");
   const [pin, setPin] = useState("");
@@ -174,7 +177,7 @@ export default function ChangePinScreen(): React.ReactElement {
   // ── Success overlay ─────────────────────────────────────────────────────
   if (success) {
     return (
-      <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
+      <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top", "bottom"]}>
         <View style={styles.successContainer}>
           <Animated.View
             style={[
@@ -182,11 +185,11 @@ export default function ChangePinScreen(): React.ReactElement {
               { transform: [{ scale: successScale }], opacity: successScale },
             ]}
           >
-            <View style={styles.successCircle}>
+            <View style={[styles.successCircle, t.shadow]}>
               <Text style={styles.successTick}>✓</Text>
             </View>
             <Text style={styles.successLabel}>PIN CHANGED</Text>
-            <Text style={styles.successBody}>Your new PIN is active.</Text>
+            <Text style={[styles.successBody, { color: t.textSec }]}>Your new PIN is active.</Text>
           </Animated.View>
         </View>
       </SafeAreaView>
@@ -194,7 +197,7 @@ export default function ChangePinScreen(): React.ReactElement {
   }
 
   return (
-    <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top", "bottom"]}>
       {/* Header */}
       <View style={styles.header}>
         <BackButton />
@@ -210,7 +213,7 @@ export default function ChangePinScreen(): React.ReactElement {
                   : (step === "new" && s === "current") ||
                     (step === "confirm" && (s === "current" || s === "new"))
                     ? styles.pillDone
-                    : styles.pillInactive,
+                    : [styles.pillInactive, { backgroundColor: t.border + "60" }],
               ]}
             />
           ))}
@@ -222,10 +225,10 @@ export default function ChangePinScreen(): React.ReactElement {
         <Text style={styles.stepLabel}>{config.label}</Text>
 
         {/* Title */}
-        <Text style={styles.title}>{config.title}</Text>
+        <Text style={[styles.title, { color: t.text }]}>{config.title}</Text>
 
         {/* Subtitle */}
-        <Text style={styles.subtitle}>{config.subtitle}</Text>
+        <Text style={[styles.subtitle, { color: t.textSec }]}>{config.subtitle}</Text>
 
         {/* PIN dots */}
         <Animated.View
@@ -237,7 +240,7 @@ export default function ChangePinScreen(): React.ReactElement {
           {Array.from({ length: PIN_LENGTH }).map((_, i) => (
             <View
               key={i}
-              style={[styles.dot, i < pin.length && styles.dotFilled]}
+              style={[styles.dot, { borderColor: t.border }, i < pin.length && styles.dotFilled]}
             />
           ))}
         </Animated.View>
@@ -262,13 +265,15 @@ export default function ChangePinScreen(): React.ReactElement {
                     key={ki}
                     style={({ pressed }) => [
                       styles.numKey,
+                      { borderColor: t.border, backgroundColor: t.keyBg },
+                      t.shadow,
                       pressed && styles.numKeyPressed,
                     ]}
                     onPress={() =>
                       key === "del" ? onDelete() : onDigit(key as number)
                     }
                   >
-                    <Text style={styles.numKeyText}>
+                    <Text style={[styles.numKeyText, { color: t.text }]}>
                       {key === "del" ? "⌫" : key}
                     </Text>
                   </Pressable>
@@ -299,7 +304,7 @@ export default function ChangePinScreen(): React.ReactElement {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.light.bg },
+  safe: { flex: 1 },
 
   header: {
     flexDirection: "row",
@@ -321,7 +326,7 @@ const styles = StyleSheet.create({
   },
   pillActive: { backgroundColor: colors.primary },
   pillDone: { backgroundColor: colors.primary + "60" },
-  pillInactive: { backgroundColor: colors.light.border + "60" },
+  pillInactive: {},
 
   container: {
     flex: 1,
@@ -339,12 +344,10 @@ const styles = StyleSheet.create({
   title: {
     fontFamily: fonts.bold,
     fontSize: fontSizes.h2,
-    color: colors.light.text,
   },
   subtitle: {
     fontFamily: fonts.regular,
     fontSize: fontSizes.body,
-    color: colors.light.textSec,
     marginTop: spacing.sm,
     textAlign: "center",
   },
@@ -360,7 +363,6 @@ const styles = StyleSheet.create({
     height: dimensions.pinDot.size,
     borderRadius: dimensions.pinDot.size / 2,
     borderWidth: borders.standard,
-    borderColor: colors.light.border,
     backgroundColor: "transparent",
   },
   dotFilled: {
@@ -399,11 +401,8 @@ const styles = StyleSheet.create({
     height: dimensions.numPadKey.size,
     borderRadius: dimensions.numPadKey.size / 2,
     borderWidth: borders.medium,
-    borderColor: colors.light.border,
-    backgroundColor: colors.light.keyBg,
     alignItems: "center",
     justifyContent: "center",
-    ...shadows.neu.light,
   },
   numKeyPressed: { transform: [{ scale: 0.9 }] },
   numKeyEmpty: {
@@ -413,7 +412,6 @@ const styles = StyleSheet.create({
   numKeyText: {
     fontFamily: fonts.semibold,
     fontSize: fontSizes.numPad,
-    color: colors.light.text,
   },
 
   hiddenInput: {
@@ -443,7 +441,6 @@ const styles = StyleSheet.create({
     borderColor: colors.primaryText,
     alignItems: "center",
     justifyContent: "center",
-    ...shadows.neu.light,
   },
   successTick: {
     fontSize: 32,
@@ -462,6 +459,5 @@ const styles = StyleSheet.create({
   successBody: {
     fontFamily: fonts.regular,
     fontSize: fontSizes.body,
-    color: colors.light.textSec,
   },
 });

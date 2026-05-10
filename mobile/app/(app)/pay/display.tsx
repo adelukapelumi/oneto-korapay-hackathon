@@ -10,7 +10,9 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import QRCode from "react-native-qrcode-svg";
 import { TransactionEnvelope } from "@oneto/shared";
+import { useThemeMode } from "../../../src/theme/theme-provider";
 import {
+  getTheme,
   colors,
   fonts,
   fontSizes,
@@ -18,7 +20,6 @@ import {
   spacing,
   radii,
   borders,
-  shadows,
 } from "../../../src/theme/tokens";
 
 function formatNaira(kobo: number): string {
@@ -31,6 +32,8 @@ function formatNaira(kobo: number): string {
 export default function DisplayScreen(): React.ReactElement | null {
   const router = useRouter();
   const { envelope: envelopeRaw } = useLocalSearchParams<{ envelope: string }>();
+  const { mode } = useThemeMode();
+  const t = getTheme(mode);
 
   // Floating sparkle animation
   const floatAnim = useRef(new Animated.Value(0)).current;
@@ -85,21 +88,23 @@ export default function DisplayScreen(): React.ReactElement | null {
 
   if (!envelope) {
     return (
-      <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
+      <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top", "bottom"]}>
         <View style={styles.errorContainer}>
           <Text style={styles.errorIcon}>⚠️</Text>
-          <Text style={styles.errorTitle}>Invalid Data</Text>
-          <Text style={styles.errorText}>
+          <Text style={[styles.errorTitle, { color: t.text }]}>Invalid Data</Text>
+          <Text style={[styles.errorText, { color: t.textSec }]}>
             The payment envelope could not be read.
           </Text>
           <Pressable
             style={({ pressed }) => [
               styles.errorButton,
+              { backgroundColor: t.card, borderColor: t.border },
+              t.shadow,
               pressed && styles.buttonPressed,
             ]}
             onPress={() => router.replace("/(app)/home")}
           >
-            <Text style={styles.errorButtonText}>Go Home</Text>
+            <Text style={[styles.errorButtonText, { color: t.text }]}>Go Home</Text>
           </Pressable>
         </View>
       </SafeAreaView>
@@ -107,7 +112,7 @@ export default function DisplayScreen(): React.ReactElement | null {
   }
 
   return (
-    <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top", "bottom"]}>
       <View style={styles.container}>
         {/* Header */}
         <Animated.View
@@ -117,13 +122,15 @@ export default function DisplayScreen(): React.ReactElement | null {
           ]}
         >
           <Text style={styles.pixelLabel}>PAYMENT SIGNED</Text>
-          <Text style={styles.title}>Show this to the merchant</Text>
+          <Text style={[styles.title, { color: t.text }]}>Show this to the merchant</Text>
         </Animated.View>
 
         {/* QR Card */}
         <Animated.View
           style={[
             styles.qrCard,
+            { backgroundColor: t.card, borderColor: t.border },
+            t.shadow,
             {
               opacity: fadeAnim,
               transform: [{ scale: scaleAnim }],
@@ -157,8 +164,8 @@ export default function DisplayScreen(): React.ReactElement | null {
             { opacity: fadeAnim },
           ]}
         >
-          <Text style={styles.amount}>{formatNaira(envelope.amountKobo)}</Text>
-          <Text style={styles.merchantLabel}>
+          <Text style={[styles.amount, { color: t.text }]}>{formatNaira(envelope.amountKobo)}</Text>
+          <Text style={[styles.merchantLabel, { color: t.textSec }]}>
             to {envelope.recipientUserId.slice(0, 12)}...
           </Text>
         </Animated.View>
@@ -174,6 +181,8 @@ export default function DisplayScreen(): React.ReactElement | null {
         <Pressable
           style={({ pressed }) => [
             styles.doneButton,
+            { borderColor: t.border },
+            t.shadow,
             pressed && styles.buttonPressed,
           ]}
           onPress={() => router.replace("/(app)/home")}
@@ -189,7 +198,6 @@ export default function DisplayScreen(): React.ReactElement | null {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: colors.light.bg,
   },
   container: {
     flex: 1,
@@ -213,24 +221,15 @@ const styles = StyleSheet.create({
   title: {
     fontFamily: fonts.bold,
     fontSize: fontSizes.h3,
-    color: colors.light.text,
     textAlign: "center",
   },
 
   // QR Card
   qrCard: {
-    backgroundColor: colors.light.card,
     borderWidth: borders.standard,
-    borderColor: colors.light.border,
     borderRadius: radii.xl,
     padding: spacing.cardPadLg,
     position: "relative",
-    ...shadows.neu.light,
-    // Glow effect
-    shadowColor: colors.primary,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.15,
-    shadowRadius: 20,
   },
   sparkle: {
     position: "absolute",
@@ -253,13 +252,11 @@ const styles = StyleSheet.create({
   amount: {
     fontFamily: fonts.bold,
     fontSize: fontSizes.h2Lg,
-    color: colors.light.text,
     letterSpacing: -1,
   },
   merchantLabel: {
     fontFamily: fonts.regular,
     fontSize: fontSizes.body,
-    color: colors.light.textSec,
     marginTop: spacing.xs,
   },
 
@@ -290,10 +287,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
     borderRadius: radii.pill,
     borderWidth: borders.standard,
-    borderColor: colors.light.border,
     alignItems: "center",
     justifyContent: "center",
-    ...shadows.neu.light,
   },
   doneButtonText: {
     fontFamily: fonts.bold,
@@ -315,29 +310,23 @@ const styles = StyleSheet.create({
   errorTitle: {
     fontFamily: fonts.bold,
     fontSize: fontSizes.h3,
-    color: colors.light.text,
     marginBottom: spacing.sm,
   },
   errorText: {
     fontFamily: fonts.regular,
     fontSize: fontSizes.body,
-    color: colors.light.textSec,
     textAlign: "center",
     marginBottom: spacing["2xl"],
   },
   errorButton: {
     paddingHorizontal: spacing["2xl"],
     paddingVertical: spacing.md,
-    backgroundColor: colors.light.card,
     borderRadius: radii.pill,
     borderWidth: borders.standard,
-    borderColor: colors.light.border,
-    ...shadows.neu.light,
   },
   errorButtonText: {
     fontFamily: fonts.semibold,
     fontSize: fontSizes.button,
-    color: colors.light.text,
   },
 
   // Shared

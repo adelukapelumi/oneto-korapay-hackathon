@@ -1,11 +1,27 @@
 import { useState, useEffect, useCallback } from "react";
-import { View, Text, StyleSheet, FlatList, ActivityIndicator, RefreshControl } from "react-native";
+import { View, Text, StyleSheet, FlatList, ActivityIndicator, RefreshControl, Pressable } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Stack } from "expo-router";
+import { Stack, useRouter } from "expo-router";
 import { getCashoutStatus, Cashout } from "../../../src/api/cashout";
 import { ApiError } from "../../../src/api/errors";
+import { useThemeMode } from "../../../src/theme/theme-provider";
+import {
+  getTheme,
+  colors,
+  fonts,
+  fontSizes,
+  pixelFontSizes,
+  spacing,
+  radii,
+  borders,
+  dimensions,
+} from "../../../src/theme/tokens";
 
 export default function CashoutHistoryScreen(): React.ReactElement {
+  const router = useRouter();
+  const { mode } = useThemeMode();
+  const t = getTheme(mode);
+
   const [cashouts, setCashouts] = useState<Cashout[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -16,11 +32,13 @@ export default function CashoutHistoryScreen(): React.ReactElement {
     try {
       const data = await getCashoutStatus();
       setCashouts(data);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         setError(err.message || "Failed to fetch history");
-      } else {
+      } else if (err instanceof Error) {
         setError(err.message || "An unexpected error occurred");
+      } else {
+        setError("An unexpected error occurred");
       }
     }
   };
@@ -34,42 +52,62 @@ export default function CashoutHistoryScreen(): React.ReactElement {
     fetchHistory().finally(() => setRefreshing(false));
   }, []);
 
-  const getStatusColor = (status: string) => {
+  const getStatusColors = (status: string) => {
     switch (status) {
       case "PENDING":
-        return { bg: "#fff5e6", text: "#ff8c00" }; // Yellow/Orange
+        return { bg: colors.secondary + "20", text: colors.secondary };
       case "PROCESSING":
-        return { bg: "#e3f2fd", text: "#1976d2" }; // Blue
+        return { bg: colors.primary + "20", text: colors.primary };
       case "COMPLETED":
-        return { bg: "#e8f5e9", text: "#2e7d32" }; // Green
+        return { bg: colors.primary + "20", text: colors.primary };
       case "FAILED":
-        return { bg: "#ffebee", text: "#c62828" }; // Red
+        return { bg: colors.error + "20", text: colors.error };
       default:
-        return { bg: "#f5f5f5", text: "#666666" }; // Gray
+        return { bg: t.cardAlt, text: t.textMut };
     }
   };
 
   const renderItem = ({ item }: { item: Cashout }) => {
     const amountNaira = (Number(item.amountKobo) / 100).toFixed(2);
-    const date = new Date(item.requestedAt).toLocaleString();
-    const colors = getStatusColor(item.status);
+    const dateStr = new Date(item.requestedAt).toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    const statusColors = getStatusColors(item.status);
 
     return (
-      <View style={styles.card}>
+      <View style={[styles.card, { backgroundColor: t.card, borderColor: t.border }]}>
         <View style={styles.cardHeader}>
-          <Text style={styles.amount}>₦{amountNaira}</Text>
-          <View style={[styles.badge, { backgroundColor: colors.bg }]}>
-            <Text style={[styles.badgeText, { color: colors.text }]}>{item.status}</Text>
+          <Text style={[styles.amount, { color: t.text }]}>₦{amountNaira}</Text>
+          <View style={[styles.badge, { backgroundColor: statusColors.bg }]}>
+            <Text style={[styles.badgeText, { color: statusColors.text }]}>{item.status}</Text>
           </View>
         </View>
-        <Text style={styles.date}>{date}</Text>
+        <Text style={[styles.date, { color: t.textSec }]}>{dateStr}</Text>
       </View>
     );
   };
 
   return (
-    <SafeAreaView style={styles.safe} edges={["bottom"]}>
-      <Stack.Screen options={{ title: "Cashout History", headerBackTitle: "Back" }} />
+    <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top"]}>
+      <Stack.Screen options={{ headerShown: false }} />
+
+      {/* Header */}
+      <View style={styles.header}>
+        <Pressable
+          style={[styles.backButton, { borderColor: t.border, backgroundColor: t.card }]}
+          onPress={() => router.back()}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
+          <Text style={[styles.backIcon, { color: t.text }]}>←</Text>
+        </Pressable>
+        <Text style={[styles.headerTitle, { color: t.text }]}>Cashout History</Text>
+        <View style={styles.headerSpacer} />
+      </View>
+
       <View style={styles.container}>
         {error ? (
           <View style={styles.errorBox}>
@@ -78,18 +116,37 @@ export default function CashoutHistoryScreen(): React.ReactElement {
         ) : null}
 
         {loading ? (
-          <ActivityIndicator style={styles.loader} size="large" />
+          <ActivityIndicator style={styles.loader} size="large" color={colors.primary} />
         ) : (
           <FlatList
             data={cashouts}
             keyExtractor={(item) => item.id}
             renderItem={renderItem}
             contentContainerStyle={styles.listContent}
-            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                tintColor={colors.primary}
+                colors={[colors.primary]}
+              />
+            }
             ListEmptyComponent={
               !error ? (
-                <View style={styles.emptyBox}>
-                  <Text style={styles.emptyText}>No cashouts yet.</Text>
+                <View style={styles.emptyContainer}>
+                  <Text style={styles.emptyIcon}>💸</Text>
+                  <Text style={[styles.emptyTitle, { color: t.text }]}>No Cashouts</Text>
+                  <Text style={[styles.emptyText, { color: t.textSec }]}>
+                    Your cashout history will appear here.
+                  </Text>
+                </View>
+              ) : null
+            }
+            ListFooterComponent={
+              !loading && cashouts.length > 0 ? (
+                <View style={styles.endOfList}>
+                  <Text style={[styles.endOfListText, { color: t.textMut }]}>END OF HISTORY</Text>
                 </View>
               ) : null
             }
@@ -101,39 +158,101 @@ export default function CashoutHistoryScreen(): React.ReactElement {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#fff" },
-  container: { flex: 1 },
-  loader: { marginTop: 40 },
-  listContent: { padding: 16 },
-  errorBox: {
-    backgroundColor: "#ffebee",
-    padding: 16,
-    margin: 16,
-    borderRadius: 8,
+  safe: { flex: 1 },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    minHeight: dimensions.headerMinHeight,
+    gap: spacing.md,
   },
-  errorText: { color: "#c62828", fontSize: 14 },
+  backButton: {
+    width: dimensions.headerBackButton.size,
+    height: dimensions.headerBackButton.size,
+    borderRadius: radii.md,
+    borderWidth: borders.medium,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  backIcon: { fontSize: 18 },
+  headerTitle: {
+    flex: 1,
+    fontFamily: fonts.bold,
+    fontSize: fontSizes.headerTitle,
+  },
+  headerSpacer: { width: dimensions.headerBackButton.size },
+  container: { flex: 1 },
+  loader: { marginTop: spacing["4xl"] },
+  listContent: {
+    paddingHorizontal: spacing.xl,
+    paddingBottom: spacing["3xl"],
+  },
+  errorBox: {
+    backgroundColor: colors.error + "15",
+    borderWidth: borders.thin,
+    borderColor: colors.error + "30",
+    borderRadius: radii.md,
+    padding: spacing.md,
+    marginHorizontal: spacing.xl,
+    marginBottom: spacing.lg,
+  },
+  errorText: {
+    fontFamily: fonts.medium,
+    fontSize: fontSizes.caption,
+    color: colors.error,
+    textAlign: "center",
+  },
   card: {
-    backgroundColor: "#fff",
-    padding: 16,
-    marginBottom: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#eee",
+    padding: spacing.lg,
+    marginBottom: spacing.md,
+    borderRadius: radii.lg,
+    borderWidth: borders.standard,
   },
   cardHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 8,
+    marginBottom: spacing.xs,
   },
-  amount: { fontSize: 18, fontWeight: "600", color: "#000" },
+  amount: {
+    fontFamily: fonts.bold,
+    fontSize: fontSizes.cardTitle,
+  },
   badge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 16,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: radii.pill,
   },
-  badgeText: { fontSize: 12, fontWeight: "600" },
-  date: { fontSize: 14, color: "#888" },
-  emptyBox: { padding: 32, alignItems: "center" },
-  emptyText: { color: "#888", fontSize: 16 },
+  badgeText: {
+    fontFamily: fonts.semibold,
+    fontSize: fontSizes.xs,
+  },
+  date: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.sm,
+  },
+  emptyContainer: {
+    alignItems: "center",
+    paddingVertical: spacing["6xl"],
+  },
+  emptyIcon: { fontSize: 48, marginBottom: spacing.lg },
+  emptyTitle: {
+    fontFamily: fonts.bold,
+    fontSize: fontSizes.cardTitle,
+    marginBottom: spacing.sm,
+  },
+  emptyText: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.body,
+    textAlign: "center",
+  },
+  endOfList: {
+    paddingVertical: spacing["4xl"],
+    alignItems: "center",
+  },
+  endOfListText: {
+    fontFamily: fonts.pixel,
+    fontSize: pixelFontSizes.sm,
+  },
 });

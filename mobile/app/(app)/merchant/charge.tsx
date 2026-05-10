@@ -5,11 +5,25 @@ import { useRouter } from "expo-router";
 import { useAuth } from "../../../src/auth/auth-state";
 import { createPaymentRequest } from "../../../src/payment/create-request";
 import { MAX_OFFLINE_TRANSACTION_KOBO } from "@oneto/shared";
+import { BackButton } from "../../../components/BackButton";
+import { useThemeMode } from "../../../src/theme/theme-provider";
+import {
+  getTheme,
+  colors,
+  fonts,
+  fontSizes,
+  spacing,
+  radii,
+  borders,
+  dimensions,
+} from "../../../src/theme/tokens";
 
 export default function ChargeScreen() {
   const [amountStr, setAmountStr] = useState("");
   const { state } = useAuth();
   const router = useRouter();
+  const { mode } = useThemeMode();
+  const t = getTheme(mode);
 
   if (state.status !== "authed") return null;
 
@@ -36,19 +50,35 @@ export default function ChargeScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top", "bottom"]}>
+      {/* Header */}
+      <View style={styles.header}>
+        <BackButton />
+        <Text style={[styles.headerTitle, { color: t.text }]}>Charge Customer</Text>
+        <View style={styles.headerSpacer} />
+      </View>
+
       <View style={styles.container}>
-        <Text style={styles.label}>Enter Amount (₦)</Text>
+        <Text style={[styles.label, { color: t.textSec }]}>Enter Amount (₦)</Text>
         <TextInput
-          style={styles.input}
+          style={[styles.input, { color: t.text, borderBottomColor: t.border }]}
           keyboardType="numeric"
           value={amountStr}
           onChangeText={setAmountStr}
           placeholder="0.00"
+          placeholderTextColor={t.textMut}
           autoFocus
         />
 
-        <Pressable style={styles.button} onPress={handleGenerate}>
+        <Pressable
+          style={({ pressed }) => [
+            styles.button,
+            { borderColor: t.border },
+            t.shadow,
+            pressed && styles.buttonPressed,
+          ]}
+          onPress={handleGenerate}
+        >
           <Text style={styles.buttonText}>Generate QR</Text>
         </Pressable>
       </View>
@@ -57,24 +87,51 @@ export default function ChargeScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#fff" },
-  container: { flex: 1, padding: 24, justifyContent: "center" },
-  label: { fontSize: 16, color: "#666", marginBottom: 8, textAlign: "center" },
-  input: {
-    fontSize: 48,
-    fontWeight: "bold",
+  safe: { flex: 1 },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    minHeight: dimensions.headerMinHeight,
+    gap: spacing.md,
+  },
+  headerTitle: {
+    flex: 1,
+    fontFamily: fonts.bold,
+    fontSize: fontSizes.headerTitle,
+  },
+  headerSpacer: { width: dimensions.headerBackButton.size },
+  container: { flex: 1, paddingHorizontal: spacing.screenHorizontal, justifyContent: "center" },
+  label: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.body,
+    marginBottom: spacing.sm,
     textAlign: "center",
-    marginBottom: 32,
-    borderBottomWidth: 1,
-    borderBottomColor: "#ccc",
-    paddingBottom: 8,
+  },
+  input: {
+    fontFamily: fonts.bold,
+    fontSize: fontSizes.h1,
+    textAlign: "center",
+    marginBottom: spacing["2xl"],
+    borderBottomWidth: borders.thin,
+    paddingBottom: spacing.sm,
   },
   button: {
-    backgroundColor: "#000",
-    height: 56,
-    borderRadius: 12,
+    backgroundColor: colors.primary,
+    height: 52,
+    borderRadius: radii.pill,
+    borderWidth: borders.standard,
     alignItems: "center",
     justifyContent: "center",
   },
-  buttonText: { color: "#fff", fontSize: 18, fontWeight: "600" },
+  buttonText: {
+    fontFamily: fonts.bold,
+    fontSize: fontSizes.button,
+    color: colors.primaryText,
+  },
+  buttonPressed: {
+    transform: [{ translateX: 3 }, { translateY: 3 }],
+    shadowOffset: { width: 0, height: 0 },
+  },
 });

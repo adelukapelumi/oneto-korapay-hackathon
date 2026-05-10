@@ -16,15 +16,15 @@ import { registerPublicKey, RotationSignatureRequiredError } from "../../src/api
 import { NetworkError } from "../../src/api/errors";
 import { useAuth } from "../../src/auth/auth-state";
 import { logger } from "../../src/lib/logger";
+import { useThemeMode } from "../../src/theme/theme-provider";
 import {
+  getTheme,
   colors,
   fonts,
   fontSizes,
-  pixelFontSizes,
   spacing,
   radii,
   borders,
-  shadows,
 } from "../../src/theme/tokens";
 
 type Phase =
@@ -41,6 +41,8 @@ const PROGRESS_CELLS = 8;
 
 export default function GeneratingKeysScreen(): React.ReactElement {
   const { completeOnboarding } = useAuth();
+  const { mode } = useThemeMode();
+  const t = getTheme(mode);
   const params = useLocalSearchParams<{ pin?: string }>();
   const pin = typeof params.pin === "string" ? params.pin : "";
   const [phase, setPhase] = useState<Phase>({
@@ -142,17 +144,17 @@ export default function GeneratingKeysScreen(): React.ReactElement {
 
   if (phase.kind === "rotation_required") {
     return (
-      <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
+      <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top", "bottom"]}>
         <View style={styles.container}>
-          <Text style={styles.title}>We need to verify it's you</Text>
-          <Text style={styles.body}>
+          <Text style={[styles.title, { color: t.text }]}>We need to verify it's you</Text>
+          <Text style={[styles.body, { color: t.textSec }]}>
             This account already has a key registered on another device. To
             set up oneto on this phone, please contact support so we can
             help you safely transfer.
           </Text>
-          <View style={styles.contactBox}>
-            <Text style={styles.contactLabel}>Email</Text>
-            <Text style={styles.contactValue}>support@getoneto.com</Text>
+          <View style={[styles.contactBox, { borderColor: t.borderSolid, backgroundColor: t.card }]}>
+            <Text style={[styles.contactLabel, { color: t.textMut }]}>Email</Text>
+            <Text style={[styles.contactValue, { color: t.text }]}>support@getoneto.com</Text>
           </View>
         </View>
       </SafeAreaView>
@@ -161,13 +163,15 @@ export default function GeneratingKeysScreen(): React.ReactElement {
 
   if (phase.kind === "error") {
     return (
-      <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
+      <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top", "bottom"]}>
         <View style={styles.container}>
-          <Text style={styles.title}>Setup failed</Text>
-          <Text style={styles.body}>{phase.message}</Text>
+          <Text style={[styles.title, { color: t.text }]}>Setup failed</Text>
+          <Text style={[styles.body, { color: t.textSec }]}>{phase.message}</Text>
           <Pressable
             style={({ pressed }) => [
               styles.button,
+              { borderColor: t.border },
+              t.shadow,
               pressed && styles.buttonPressed,
             ]}
             onPress={() => {
@@ -184,7 +188,7 @@ export default function GeneratingKeysScreen(): React.ReactElement {
   }
 
   return (
-    <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top", "bottom"]}>
       <View style={styles.container}>
         {/* Pulsing glow */}
         <Animated.View
@@ -200,7 +204,7 @@ export default function GeneratingKeysScreen(): React.ReactElement {
         />
 
         {/* Status message */}
-        <Text style={styles.workingMessage}>{phase.message}</Text>
+        <Text style={[styles.workingMessage, { color: t.text }]}>{phase.message}</Text>
 
         {/* Pixel progress bar */}
         <View style={styles.progressRow}>
@@ -209,6 +213,7 @@ export default function GeneratingKeysScreen(): React.ReactElement {
               key={i}
               style={[
                 styles.progressCell,
+                { backgroundColor: mode === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)' },
                 i <= progressStep * 2 + 1 && styles.progressCellActive,
               ]}
             />
@@ -220,7 +225,7 @@ export default function GeneratingKeysScreen(): React.ReactElement {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.dark.bg },
+  safe: { flex: 1 },
   container: {
     flex: 1,
     paddingHorizontal: spacing.screenHorizontal,
@@ -246,7 +251,6 @@ const styles = StyleSheet.create({
   workingMessage: {
     fontFamily: fonts.bold,
     fontSize: fontSizes.headerTitle,
-    color: "#FFFFFF",
     marginTop: spacing.sectionGap,
   },
   progressRow: {
@@ -257,7 +261,6 @@ const styles = StyleSheet.create({
   progressCell: {
     width: 12,
     height: 12,
-    backgroundColor: "rgba(255,255,255,0.1)",
   },
   progressCellActive: {
     backgroundColor: colors.primary,
@@ -265,35 +268,29 @@ const styles = StyleSheet.create({
   title: {
     fontFamily: fonts.bold,
     fontSize: fontSizes.h3,
-    color: colors.dark.text,
     marginBottom: spacing.md,
     textAlign: "center",
   },
   body: {
     fontFamily: fonts.regular,
     fontSize: fontSizes.input,
-    color: colors.dark.textSec,
     lineHeight: 22,
     textAlign: "center",
     marginBottom: spacing["2xl"],
   },
   contactBox: {
     borderWidth: borders.standard,
-    borderColor: colors.dark.borderSolid,
     borderRadius: radii.md,
-    backgroundColor: colors.dark.card,
     padding: spacing.lg,
     width: "100%",
   },
   contactLabel: {
     fontFamily: fonts.regular,
-    color: colors.dark.textMut,
     fontSize: fontSizes.sm,
     marginBottom: spacing.xs,
   },
   contactValue: {
     fontFamily: fonts.semibold,
-    color: colors.dark.text,
     fontSize: fontSizes.headerTitle,
   },
   button: {
@@ -301,11 +298,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
     borderRadius: radii.pill,
     borderWidth: borders.standard,
-    borderColor: colors.primary,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: spacing["3xl"],
-    ...shadows.neu.dark,
   },
   buttonPressed: {
     transform: [{ translateX: 3 }, { translateY: 3 }],

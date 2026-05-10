@@ -9,7 +9,9 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import { useThemeMode } from "../../src/theme/theme-provider";
 import {
+  getTheme,
   colors,
   fonts,
   fontSizes,
@@ -17,7 +19,6 @@ import {
   spacing,
   radii,
   borders,
-  shadows,
   dimensions,
 } from "@/theme/tokens";
 
@@ -37,6 +38,8 @@ const NUM_ROWS: (number | "del" | "")[][] = [
 
 export default function PinSetupScreen(): React.ReactElement {
   const router = useRouter();
+  const { mode } = useThemeMode();
+  const t = getTheme(mode);
   const [step, setStep] = useState<Step>("enter");
   const [firstPin, setFirstPin] = useState("");
   const [pin, setPin] = useState("");
@@ -109,7 +112,10 @@ export default function PinSetupScreen(): React.ReactElement {
   }
 
   return (
-    <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
+    <SafeAreaView
+      style={[styles.safe, { backgroundColor: t.bg }]}
+      edges={["top", "bottom"]}
+    >
       {/* Header with back button */}
       <View style={styles.header}>
         <BackButton />
@@ -122,12 +128,12 @@ export default function PinSetupScreen(): React.ReactElement {
         </Text>
 
         {/* Heading */}
-        <Text style={styles.title}>
+        <Text style={[styles.title, { color: t.text }]}>
           {step === "enter" ? "Create your PIN" : "Enter PIN again"}
         </Text>
 
         {/* Subtitle */}
-        <Text style={styles.subtitle}>
+        <Text style={[styles.subtitle, { color: t.textSec }]}>
           {step === "enter"
             ? "This 6-digit PIN secures your payments"
             : "Re-enter your 6-digit PIN to confirm"}
@@ -145,6 +151,7 @@ export default function PinSetupScreen(): React.ReactElement {
               key={i}
               style={[
                 styles.dot,
+                { borderColor: t.border },
                 i < pin.length && styles.dotFilled,
               ]}
             />
@@ -171,13 +178,14 @@ export default function PinSetupScreen(): React.ReactElement {
                     key={ki}
                     style={({ pressed }) => [
                       styles.numKey,
+                      { borderColor: t.border, backgroundColor: t.keyBg },
                       pressed && styles.numKeyPressed,
                     ]}
                     onPress={() =>
                       key === "del" ? onDelete() : onDigit(key as number)
                     }
                   >
-                    <Text style={styles.numKeyText}>
+                    <Text style={[styles.numKeyText, { color: t.text }]}>
                       {key === "del" ? "⌫" : key}
                     </Text>
                   </Pressable>
@@ -188,7 +196,7 @@ export default function PinSetupScreen(): React.ReactElement {
         </View>
 
         {/* Hint */}
-        <Text style={styles.hint}>
+        <Text style={[styles.hint, { color: t.textMut }]}>
           {step === "enter" ? "Don't share your PIN with anyone" : ""}
         </Text>
 
@@ -211,27 +219,13 @@ export default function PinSetupScreen(): React.ReactElement {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.light.bg },
+  safe: { flex: 1 },
   header: {
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.md,
     minHeight: dimensions.headerMinHeight,
-  },
-  backButton: {
-    width: dimensions.headerBackButton.size,
-    height: dimensions.headerBackButton.size,
-    borderRadius: radii.md,
-    borderWidth: borders.medium,
-    borderColor: colors.light.border,
-    backgroundColor: colors.light.card,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  backIcon: {
-    fontSize: 18,
-    color: colors.light.text,
   },
   container: {
     flex: 1,
@@ -248,12 +242,10 @@ const styles = StyleSheet.create({
   title: {
     fontFamily: fonts.bold,
     fontSize: fontSizes.h2,
-    color: colors.light.text,
   },
   subtitle: {
     fontFamily: fonts.regular,
     fontSize: fontSizes.body,
-    color: colors.light.textSec,
     marginTop: spacing.sm,
   },
   dotsRow: {
@@ -267,7 +259,6 @@ const styles = StyleSheet.create({
     height: dimensions.pinDot.size,
     borderRadius: dimensions.pinDot.size / 2,
     borderWidth: borders.standard,
-    borderColor: colors.light.border,
     backgroundColor: "transparent",
   },
   dotFilled: {
@@ -306,11 +297,8 @@ const styles = StyleSheet.create({
     height: dimensions.numPadKey.size,
     borderRadius: dimensions.numPadKey.size / 2,
     borderWidth: borders.medium,
-    borderColor: colors.light.border,
-    backgroundColor: colors.light.keyBg,
     alignItems: "center",
     justifyContent: "center",
-    ...shadows.neu.light,
   },
   numKeyPressed: {
     transform: [{ scale: 0.9 }],
@@ -322,11 +310,9 @@ const styles = StyleSheet.create({
   numKeyText: {
     fontFamily: fonts.semibold,
     fontSize: fontSizes.numPad,
-    color: colors.light.text,
   },
   hint: {
     fontFamily: fonts.regular,
-    color: colors.light.textMut,
     fontSize: fontSizes.sm,
     marginTop: spacing["2xl"],
     textAlign: "center",

@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
+import { useFocusEffect } from "expo-router";
+import { fetchMe } from "../../../src/api/auth";
 import {
   ActivityIndicator,
   Alert,
@@ -19,14 +21,16 @@ import {
   TopupAmountError,
 } from "../../../src/payment/topup-flow";
 import { ApiError } from "../../../src/api/errors";
+import { BackButton } from "../../../components/BackButton";
+import { useThemeMode } from "../../../src/theme/theme-provider";
 import {
+  getTheme,
   colors,
   fonts,
   fontSizes,
   spacing,
   radii,
   borders,
-  shadows,
   dimensions,
 } from "../../../src/theme/tokens";
 
@@ -42,13 +46,26 @@ function formatNaira(kobo: number): string {
 export default function TopupAmountScreen(): React.ReactElement {
   const router = useRouter();
   const { state } = useAuth();
+  const { mode } = useThemeMode();
+  const t = getTheme(mode);
   const [amountStr, setAmountStr] = useState("");
   const [loading, setLoading] = useState(false);
   const [inputFocused, setInputFocused] = useState(false);
 
   const jwtFresh = state.status === "authed" && state.jwtFresh;
   const user = state.status === "authed" ? state.user : null;
-  const balanceKobo = user ? Number(user.verifiedBalanceKobo) : 0;
+  const [balanceKobo, setBalanceKobo] = useState(
+    user ? Number(user.verifiedBalanceKobo) : 0,
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchMe()
+        .then((fresh) => setBalanceKobo(Number(fresh.verifiedBalanceKobo)))
+        .catch(() => { });
+    }, []),
+  );
+
 
   // Parse amount
   const amountNgn = parseFloat(amountStr) || 0;
@@ -62,21 +79,23 @@ export default function TopupAmountScreen(): React.ReactElement {
 
   if (!jwtFresh) {
     return (
-      <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
+      <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top", "bottom"]}>
         <View style={styles.notAuthContainer}>
           <Text style={styles.notAuthIcon}>🔒</Text>
-          <Text style={styles.notAuthTitle}>Sign In Required</Text>
-          <Text style={styles.notAuthText}>
+          <Text style={[styles.notAuthTitle, { color: t.text }]}>Sign In Required</Text>
+          <Text style={[styles.notAuthText, { color: t.textSec }]}>
             Please sign in to top up your balance.
           </Text>
           <Pressable
             style={({ pressed }) => [
               styles.notAuthButton,
+              { backgroundColor: t.card, borderColor: t.border },
+              t.shadow,
               pressed && styles.buttonPressed,
             ]}
             onPress={() => router.back()}
           >
-            <Text style={styles.notAuthButtonText}>Go Back</Text>
+            <Text style={[styles.notAuthButtonText, { color: t.text }]}>Go Back</Text>
           </Pressable>
         </View>
       </SafeAreaView>
@@ -116,18 +135,11 @@ export default function TopupAmountScreen(): React.ReactElement {
   };
 
   return (
-    <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top", "bottom"]}>
       {/* Header */}
       <View style={styles.header}>
-        <Pressable
-          style={styles.backButton}
-          onPress={() => router.back()}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-        >
-          <Text style={styles.backIcon}>←</Text>
-        </Pressable>
-        <Text style={styles.headerTitle}>Top Up</Text>
+        <BackButton />
+        <Text style={[styles.headerTitle, { color: t.text }]}>Top Up</Text>
         <View style={styles.headerSpacer} />
       </View>
 
@@ -138,27 +150,28 @@ export default function TopupAmountScreen(): React.ReactElement {
         keyboardShouldPersistTaps="handled"
       >
         {/* Current Balance Card */}
-        <View style={styles.balanceCard}>
-          <Text style={styles.balanceLabel}>Current Balance</Text>
-          <Text style={styles.balanceAmount}>{formatNaira(balanceKobo)}</Text>
+        <View style={[styles.balanceCard, { backgroundColor: t.card, borderColor: t.border }, t.shadow]}>
+          <Text style={[styles.balanceLabel, { color: t.textSec }]}>Current Balance</Text>
+          <Text style={[styles.balanceAmount, { color: t.text }]}>{formatNaira(balanceKobo)}</Text>
         </View>
 
         {/* Amount Input */}
-        <Text style={styles.inputLabel}>Enter amount</Text>
+        <Text style={[styles.inputLabel, { color: t.text }]}>Enter amount</Text>
         <View
           style={[
             styles.inputContainer,
+            { backgroundColor: t.inputBg, borderColor: t.border },
             inputFocused && styles.inputContainerFocused,
             showError && styles.inputContainerError,
           ]}
         >
-          <Text style={styles.inputIcon}>₦</Text>
+          <Text style={[styles.inputIcon, { color: t.textSec }]}>₦</Text>
           <TextInput
-            style={styles.input}
+            style={[styles.input, { color: t.text }]}
             value={amountStr}
-            onChangeText={(t) => setAmountStr(t.replace(/[^0-9.]/g, ""))}
+            onChangeText={(txt) => setAmountStr(txt.replace(/[^0-9.]/g, ""))}
             placeholder="0.00"
-            placeholderTextColor={colors.light.textMut}
+            placeholderTextColor={t.textMut}
             keyboardType="decimal-pad"
             editable={!loading}
             onFocus={() => setInputFocused(true)}
@@ -181,6 +194,7 @@ export default function TopupAmountScreen(): React.ReactElement {
                 key={p}
                 style={[
                   styles.presetChip,
+                  { borderColor: t.border, backgroundColor: t.card },
                   isActive && styles.presetChipActive,
                 ]}
                 onPress={() => handlePreset(p)}
@@ -188,6 +202,7 @@ export default function TopupAmountScreen(): React.ReactElement {
                 <Text
                   style={[
                     styles.presetChipText,
+                    { color: t.text },
                     isActive && styles.presetChipTextActive,
                   ]}
                 >
@@ -201,7 +216,7 @@ export default function TopupAmountScreen(): React.ReactElement {
         {/* New Balance Preview */}
         {amountKobo > 0 && (
           <View style={styles.previewCard}>
-            <Text style={styles.previewLabel}>New balance</Text>
+            <Text style={[styles.previewLabel, { color: t.textSec }]}>New balance</Text>
             <Text style={styles.previewAmount}>{formatNaira(newBalanceKobo)}</Text>
           </View>
         )}
@@ -212,6 +227,8 @@ export default function TopupAmountScreen(): React.ReactElement {
         <Pressable
           style={({ pressed }) => [
             styles.continueButton,
+            { borderColor: t.border },
+            t.shadow,
             pressed && styles.buttonPressed,
             (!isValidAmount || loading) && styles.buttonDisabled,
           ]}
@@ -232,7 +249,6 @@ export default function TopupAmountScreen(): React.ReactElement {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: colors.light.bg,
   },
 
   // Header
@@ -244,25 +260,10 @@ const styles = StyleSheet.create({
     minHeight: dimensions.headerMinHeight,
     gap: spacing.md,
   },
-  backButton: {
-    width: dimensions.headerBackButton.size,
-    height: dimensions.headerBackButton.size,
-    borderRadius: radii.md,
-    borderWidth: borders.medium,
-    borderColor: colors.light.border,
-    backgroundColor: colors.light.card,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  backIcon: {
-    fontSize: 18,
-    color: colors.light.text,
-  },
   headerTitle: {
     flex: 1,
     fontFamily: fonts.bold,
     fontSize: fontSizes.headerTitle,
-    color: colors.light.text,
   },
   headerSpacer: {
     width: dimensions.headerBackButton.size,
@@ -280,24 +281,19 @@ const styles = StyleSheet.create({
 
   // Balance Card
   balanceCard: {
-    backgroundColor: colors.light.card,
     borderWidth: borders.standard,
-    borderColor: colors.light.border,
     borderRadius: radii.xl,
     padding: spacing.cardPadLg,
     alignItems: "center",
     marginBottom: spacing["2xl"],
-    ...shadows.neu.light,
   },
   balanceLabel: {
     fontFamily: fonts.regular,
     fontSize: fontSizes.sm,
-    color: colors.light.textSec,
   },
   balanceAmount: {
     fontFamily: fonts.bold,
     fontSize: fontSizes.h2Lg,
-    color: colors.light.text,
     marginTop: spacing.xs,
     letterSpacing: -1,
   },
@@ -306,16 +302,13 @@ const styles = StyleSheet.create({
   inputLabel: {
     fontFamily: fonts.bold,
     fontSize: fontSizes.bodyLg,
-    color: colors.light.text,
     marginBottom: spacing.md,
   },
   inputContainer: {
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.sm,
-    backgroundColor: colors.light.inputBg,
     borderWidth: borders.standard,
-    borderColor: colors.light.border,
     borderRadius: radii.md,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
@@ -329,13 +322,11 @@ const styles = StyleSheet.create({
   inputIcon: {
     fontFamily: fonts.semibold,
     fontSize: fontSizes.cardTitle,
-    color: colors.light.textSec,
   },
   input: {
     flex: 1,
     fontFamily: fonts.semibold,
     fontSize: fontSizes.input,
-    color: colors.light.text,
     padding: 0,
   },
   errorText: {
@@ -357,8 +348,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     borderRadius: radii.pill,
     borderWidth: borders.medium,
-    borderColor: colors.light.border,
-    backgroundColor: colors.light.card,
   },
   presetChipActive: {
     borderColor: colors.primary,
@@ -367,7 +356,6 @@ const styles = StyleSheet.create({
   presetChipText: {
     fontFamily: fonts.semibold,
     fontSize: fontSizes.body,
-    color: colors.light.text,
   },
   presetChipTextActive: {
     color: colors.primary,
@@ -388,7 +376,6 @@ const styles = StyleSheet.create({
   previewLabel: {
     fontFamily: fonts.regular,
     fontSize: fontSizes.caption,
-    color: colors.light.textSec,
   },
   previewAmount: {
     fontFamily: fonts.bold,
@@ -406,10 +393,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
     borderRadius: radii.pill,
     borderWidth: borders.standard,
-    borderColor: colors.light.border,
     alignItems: "center",
     justifyContent: "center",
-    ...shadows.neu.light,
   },
   continueButtonText: {
     fontFamily: fonts.bold,
@@ -431,29 +416,23 @@ const styles = StyleSheet.create({
   notAuthTitle: {
     fontFamily: fonts.bold,
     fontSize: fontSizes.h3,
-    color: colors.light.text,
     marginBottom: spacing.sm,
   },
   notAuthText: {
     fontFamily: fonts.regular,
     fontSize: fontSizes.body,
-    color: colors.light.textSec,
     textAlign: "center",
     marginBottom: spacing["2xl"],
   },
   notAuthButton: {
     paddingHorizontal: spacing["2xl"],
     paddingVertical: spacing.md,
-    backgroundColor: colors.light.card,
     borderRadius: radii.pill,
     borderWidth: borders.standard,
-    borderColor: colors.light.border,
-    ...shadows.neu.light,
   },
   notAuthButtonText: {
     fontFamily: fonts.semibold,
     fontSize: fontSizes.button,
-    color: colors.light.text,
   },
 
   // Shared
