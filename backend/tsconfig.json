@@ -29,7 +29,8 @@
     "dist",
     "jest.config.ts",
     "prisma/seed.ts",
-    "scratch"
+    "scratch",
+    "scripts"
   ],
   "references": [
     {
