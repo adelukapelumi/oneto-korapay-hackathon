@@ -85,7 +85,6 @@ export class KorapayService {
       amount: amountNgn,
       reference: params.reference,
       currency: 'NGN',
-      redirect_url: 'https://oneto.return/checkout/complete', // fake domain, intercepted by WebView
       customer: {
         email: params.customerEmail,
         name: params.customerName || 'Oneto User',
