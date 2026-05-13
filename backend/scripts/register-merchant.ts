@@ -1,3 +1,8 @@
+import dotenv from 'dotenv';
+import { resolve } from 'path';
+
+dotenv.config({ path: resolve(__dirname, '..', '.env') });
+
 import * as fs from 'fs';
 import { PrismaClient } from '@prisma/client';
 import { randomBytes } from 'crypto';

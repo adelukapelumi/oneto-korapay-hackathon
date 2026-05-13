@@ -17,6 +17,8 @@ describe('TopupService', () => {
       update: jest.fn(),
     },
     paymentTopup: {
+      findUnique: jest.fn(),
+      upsert: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
     },
@@ -43,10 +45,14 @@ describe('TopupService', () => {
     service = module.get<TopupService>(TopupService);
     korapayService = module.get<KorapayService>(KorapayService);
     prismaService = module.get<PrismaService>(PrismaService);
+
+    // Baseline behavior for tests that don't care about pending-topup lookup.
+    mockPrisma.paymentTopup.findUnique.mockResolvedValue(null);
+    mockPrisma.paymentTopup.upsert.mockResolvedValue({});
   });
 
   afterEach(() => {
-    jest.clearAllMocks();
+    jest.resetAllMocks();
   });
 
   describe('initiate', () => {
@@ -238,7 +244,7 @@ describe('TopupService', () => {
       expect(mockPrisma.$transaction).not.toHaveBeenCalled();
     });
 
-    it('charge.failed: creates FAILED PaymentTopup, no balance change', async () => {
+    it('charge.failed: upserts FAILED PaymentTopup, no balance change', async () => {
       mockKorapay.verifyWebhookSignature.mockReturnValue(true);
       const payload = {
         event: 'charge.failed',
@@ -252,8 +258,12 @@ describe('TopupService', () => {
 
       const result = await service.handleWebhook(payload, 'good-sig');
       expect(result).toEqual({ success: true });
-      expect(mockPrisma.paymentTopup.create).toHaveBeenCalledWith(expect.objectContaining({
-        data: expect.objectContaining({
+      expect(mockPrisma.paymentTopup.upsert).toHaveBeenCalledWith(expect.objectContaining({
+        where: { reference: 'top_fail' },
+        update: expect.objectContaining({
+          status: 'FAILED',
+        }),
+        create: expect.objectContaining({
           reference: 'top_fail',
           userId: 'u_123',
           amountKobo: BigInt(50000),
@@ -269,7 +279,7 @@ describe('TopupService', () => {
       
       const result = await service.handleWebhook(payload, 'good-sig');
       expect(result).toEqual({ success: true });
-      expect(mockPrisma.paymentTopup.create).not.toHaveBeenCalled();
+      expect(mockPrisma.paymentTopup.upsert).not.toHaveBeenCalled();
     });
 
     it('detects event/status mismatch in webhook (Fix 3)', async () => {
@@ -286,7 +296,7 @@ describe('TopupService', () => {
 
       const result = await service.handleWebhook(spoofPayload, 'good-sig');
       expect(result).toEqual({ success: true });
-      expect(mockPrisma.paymentTopup.create).not.toHaveBeenCalled();
+      expect(mockPrisma.paymentTopup.upsert).not.toHaveBeenCalled();
       expect(mockPrisma.user.update).not.toHaveBeenCalled();
     });
 

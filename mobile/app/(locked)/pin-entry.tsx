@@ -255,7 +255,7 @@ export default function PinEntryScreen(): React.ReactElement {
         )}
 
         {/* Footer */}
-        <View style={styles.footer}>
+        {/* <View style={styles.footer}>
           <Pressable
             onPress={() => void signOut()}
             accessibilityRole="button"
@@ -265,7 +265,7 @@ export default function PinEntryScreen(): React.ReactElement {
               Sign in with a different account
             </Text>
           </Pressable>
-        </View>
+        </View> */}
 
         {/* Hidden input */}
         <TextInput

@@ -36,6 +36,13 @@ export interface AuthState {
   /** Sign out: drop token + lock keypair (keypair stays on disk). */
   signOut: () => Promise<void>;
   /**
+   * Re-authenticate using the stored email. Sends an OTP to
+   * state.user.email — no free-text email input is shown. Returns the
+   * email string so the caller can navigate to the OTP verify screen.
+   * Throws if no stored email is available.
+   */
+  reauthenticate: () => Promise<string>;
+  /**
    * Decrypted private key access for in-memory use only. Returns null when
    * locked or onboarding incomplete. NEVER returned to React state — this
    * accessor reads a useRef so the value never enters component snapshots.

@@ -1,17 +1,17 @@
-# CLAUDE.md — oneto Project Context
+# AGENTS.md — oneto Project Context
 
-This file is the source of truth for any AI coding assistant (Claude Code, Antigravity, Cursor, Copilot) working on oneto. Read it in full before making changes. Re-read the relevant section before any non-trivial edit. If anything in this file conflicts with a user instruction, stop and ask — do not silently override.
+This file is the source of truth for any AI coding assistant (Codex, Antigravity, Cursor, Copilot) working on oneto. Read it in full before making changes. Re-read the relevant section before any non-trivial edit. If anything in this file conflicts with a user instruction, stop and ask — do not silently override.
 
 ---
 ## 0. Required reading before any change
 
 Before touching code, every AI agent must:
-1. Read this entire CLAUDE.md
+1. Read this entire AGENTS.md
 2. Read `.agents/rules/oneto-project-rules.md`
 3. Run `git status` and understand the current state
 4. Read `/shared/src/index.ts` to understand shared types
 5. If touching `/backend/`, read `/backend/src/app.module.ts` to see wired modules
-6. If touching security-critical folders (crypto, auth, reconcile, balance), read CLAUDE.md sections 6, 7, 8 again immediately before starting
+6. If touching security-critical folders (crypto, auth, reconcile, balance), read AGENTS.md sections 6, 7, 8 again immediately before starting
 
 Do not skip any of these. If skipped, you will make decisions inconsistent with the project's architecture.
 
@@ -65,7 +65,6 @@ Three independent security audit rounds completed. Seven audit fixes shipped:
 ### Stubbed
 
 (none — backend feature-complete)
-
 
 ### NEW UPDATE
 - Mobile app (React Native / Expo) — keypair generation, QR scan, local SQLite ledger, offline-first UI. Phase 2 in ROADMAP.
@@ -139,8 +138,10 @@ The primary developer is a junior engineer, final-year university student, solo 
 3. **Reconciliation:** The merchant (recipient) submits pending envelopes to `/reconcile` when online. Server verifies signature, confirms the authenticated user matches `recipientUserId` in the envelope, checks that `senderSequenceNumber` has not been used before (per-user uniqueness, NOT strict monotonic ordering — envelopes may arrive out of order from different merchants), checks current server balance is sufficient to cover the debit, writes double-entry ledger rows in a Serializable transaction, updates both users' `verifiedBalanceKobo`.
 4. **Merchant cashout:** Merchant requests cashout via app. Admin reviews (manual during pilot). Korapay Transfer API sends naira to the merchant's bank account. Operating account debited in the ledger.
 
+
 ### NEW UPDATE TO TRANSACTION CYCLE (NOT YET IMPLEMENTED)
 2. **Offline payment:** When student wants to pay, the student clicks the pay button and a list of merchants pre-registered will show up, the student clicks on the merchant they want to pay to and then the amount of money they want to pay and then their PIN to confirm then a QR code will be generated with the merchant's ID and the amount to be paid Then the merchant will scan the QR code and confirm the payment. 
+
 ---
 
 ## 4. Technology stack — exact versions and why
@@ -181,7 +182,7 @@ Lock these in `package.json`. Do not upgrade casually. Security-critical librari
 - **Auth:** Email + OTP via Resend (CU bans SIMs on campus; SMS not viable). Phone is optional and highly recommended for merchants. No passwords for end users.
 - **Payments:** Korapay for top-ups and cashouts. Verify all webhooks via HMAC signature.
 - **Monitoring:** Sentry for errors, Axiom or Logtail for logs, UptimeRobot for heartbeat checks.
-- **Secrets:** Doppler or Infisical for environment variable management. Never commit `.env` files. Never paste secrets into Claude Code or Antigravity prompts.
+- **Secrets:** Doppler or Infisical for environment variable management. Never commit `.env` files. Never paste secrets into Codex or Antigravity prompts.
 
 ### 4.4 Forbidden choices and why
 
@@ -199,7 +200,7 @@ Lock these in `package.json`. Do not upgrade casually. Security-critical librari
 
 ```
 oneto/
-├── CLAUDE.md                        this file
+├── AGENTS.md                        this file
 ├── README.md                        human-facing quickstart
 ├── mobile/                          React Native Expo app
 │   ├── app/                         expo-router screens
@@ -462,7 +463,7 @@ Every endpoint has:
 ---
 
 ## 11. Working with AI assistants
-Claude code sessions should open by reading CLAUDE.md end to end then reading /shared/src/index.ts to understand what already exists.
+Codex sessions should open by reading AGENTS.md end to end then reading /shared/src/index.ts to understand what already exists.
 
 ### 11.1 Before asking for code
 
@@ -473,7 +474,7 @@ Claude code sessions should open by reading CLAUDE.md end to end then reading /s
 
 ### 11.2 Reviewing AI-generated code
 
-Claude Code is a coding assistant, not a security reviewer. For every piece of security-critical code it produces, the developer must:
+Codex is a coding assistant, not a security reviewer. For every piece of security-critical code it produces, the developer must:
 
 1. Read every line. Understand every line. If you cannot explain a line to another person, delete it and ask the assistant to simplify.
 2. For each security property (signature validity, no double-spend, no negative balance, proper auth), ask "how does this line contribute to or threaten that property?"
@@ -489,11 +490,11 @@ Claude Code is a coding assistant, not a security reviewer. For every piece of s
 
 ### 11.4 Prompts that work well
 
-- "In `/backend/src/reconcile/verify.ts`, implement `verifyEnvelope` following the 8-step checklist in CLAUDE.md section 7.3. Add a failing test for each step."
+- "In `/backend/src/reconcile/verify.ts`, implement `verifyEnvelope` following the 8-step checklist in AGENTS.md section 7.3. Add a failing test for each step."
 - "I want to add a `/admin/user/:id/flag` endpoint. It must be admin-only, rate-limited to 10/min, log the action to the audit log, and return a 404 for non-existent users. Show me the controller, DTO, and one e2e test."
-- "Review this function against CLAUDE.md section 7. List anything that violates the rules."
+- "Review this function against AGENTS.md section 7. List anything that violates the rules."
 
-### 11.5 When Claude Code is likely to be wrong
+### 11.5 When Codex is likely to be wrong
 
 Watch out carefully in these areas — even smart assistants regularly produce subtly wrong code:
 
@@ -506,19 +507,19 @@ Watch out carefully in these areas — even smart assistants regularly produce s
 
 ---
 
-## 12. Antigravity and Claude Code workflow
+## 12. Antigravity and Codex workflow
 
 ### 12.1 Recommended division of labor
 
 - **Antigravity:** use for multi-file refactors, running the dev server, debugging with breakpoints, visualizing the codebase. Good for when you need to see the whole picture.
-- **Claude Code (terminal):** use for generating specific files, writing tests, explaining existing code, pair-debugging. Good for focused, one-file-at-a-time work.
+- **Codex (terminal):** use for generating specific files, writing tests, explaining existing code, pair-debugging. Good for focused, one-file-at-a-time work.
 - **Manual editing:** use for anything in security-critical folders when you want full control and no surprises.
 
 ### 12.2 Context management
 
 Both tools have context limits and hallucinate more when stretched. To get the best results:
 
-- Start each session by pointing the tool at this CLAUDE.md and the relevant subdirectory.
+- Start each session by pointing the tool at this AGENTS.md and the relevant subdirectory.
 - Work one feature at a time. Close one before starting the next.
 - Regularly run tests and commit. Small, verifiable steps beat large vibes-based refactors.
 - When an AI tool suggests a change across many files, do it in chunks. Review each chunk.
@@ -527,7 +528,7 @@ Both tools have context limits and hallucinate more when stretched. To get the b
 
 ```
 This change touches a security-critical folder. Before finalizing:
-1. Confirm the change does not weaken any property in CLAUDE.md section 7.
+1. Confirm the change does not weaken any property in AGENTS.md section 7.
 2. Confirm no private keys, raw signatures, or balance values are logged.
 3. Add a red-team unit test: what's the malicious input this should reject?
 4. Confirm the code uses only approved crypto libraries per section 4.
@@ -596,7 +597,7 @@ When in doubt, STOP and ask the developer. Do not guess on:
 - **Terminal:** PowerShell (not cmd, not Git Bash)
 - **Node:** 20+
 - **Package manager:** pnpm 10+
-- **Editor:** Antigravity (primary), with Claude Code in terminal as companion
+- **Editor:** Antigravity (primary), with Codex in terminal as companion
 
 When providing shell commands, use **PowerShell syntax**, not Unix/bash. Examples:
 - Use `New-Item -ItemType Directory -Force -Path ...` not `mkdir -p ...`
