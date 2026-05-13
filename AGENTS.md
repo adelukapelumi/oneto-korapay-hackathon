@@ -7,13 +7,31 @@ This file is the source of truth for any AI coding assistant (Codex, Antigravity
 
 Before touching code, every AI agent must:
 1. Read this entire AGENTS.md
-2. Read `.agents/rules/oneto-project-rules.md`
-3. Run `git status` and understand the current state
-4. Read `/shared/src/index.ts` to understand shared types
-5. If touching `/backend/`, read `/backend/src/app.module.ts` to see wired modules
-6. If touching security-critical folders (crypto, auth, reconcile, balance), read AGENTS.md sections 6, 7, 8 again immediately before starting
+2. Read this entire CLAUDE.md
+3. Read `.agents/rules/oneto-project-rules.md`
+4. Run `git status` and understand the current state
+5. Read `/shared/src/index.ts` to understand shared types
+6. If touching `/backend/`, read `/backend/src/app.module.ts` to see wired modules
+7. If touching security-critical folders (crypto, auth, reconcile, balance), read AGENTS.md sections 6, 7, 8 again immediately before starting
 
 Do not skip any of these. If skipped, you will make decisions inconsistent with the project's architecture.
+
+## 0.25 Production build gate (must pass before saying "commit-ready")
+
+Passing tests alone is not enough.
+
+Backend-affecting changes require:
+- `pnpm --filter @oneto/shared build`
+- `pnpm --filter @oneto/backend build`
+- `pnpm --filter @oneto/backend test`
+
+Full-stack/mobile/payment-flow changes require:
+- `pnpm --filter @oneto/shared build`
+- `pnpm --filter @oneto/backend build`
+- `pnpm --filter @oneto/backend test`
+- `pnpm --filter @oneto/mobile test`
+
+If the Railway/deploy command differs from local commands, run the production-equivalent command before declaring ready.
 
 ## 0.5 Current implementation state
 
@@ -84,6 +102,11 @@ Three independent security audit rounds completed. Seven audit fixes shipped:
 - Reconcile flow is unidirectional (merchant submits). Phantom-sync for offline merchants (where we proactively push reconciled state to a merchant who can't reach the network) is post-pilot.
 - Daily invariant cron not yet running. Currently can be checked manually with: SUM all user balances + u_operating balance should equal 0.
 
+### Current readiness posture
+
+- Near controlled founder-supervised beta after real-device testing.
+- Not ready for public College Week scale yet.
+
 ### Deferred to post-pilot
 
 See `/POST_PILOT.md` at repo root for the full list. High-level categories: Redis-backed OTP and throttler storage, licensed NIN/BVN verification, PSSP/MMO license pursuit, professional penetration test, Google Workspace for team email, end-to-end integration tests with a real test database, lost-key recovery flow, daily invariant cron, branded Email type rename, multi-device support.
@@ -99,6 +122,11 @@ oneto is an offline-capable payment system piloting at Covenant University, Nige
 **Legal structure for the pilot:** closed-loop prepaid program. Students buy credits with naira, spend credits only at participating merchants, merchants cash out weekly. This is not an MMO and not e-money under CBN rules. The closed-loop structure is **load-bearing** — if code enables student-to-student credit transfers or student cashouts, it breaks the legal basis of the entire operation.
 
 **Mental model:** oneto is a Starbucks-style gift card program with offline payment capability, not a wallet or a bank.
+
+**Non-negotiable guardrails:**
+- No student-to-student transfers (no P2P).
+- No student cashout to naira.
+- Approved merchants only.
 
 ---
 
@@ -134,13 +162,9 @@ The primary developer is a junior engineer, final-year university student, solo 
 ### 3.3 The transaction lifecycle
 
 1. **Top-up (online):** Student pays naira via Korapay. Server verifies webhook signature. Server increments the student's `verifiedBalanceKobo`. Two ledger rows written.
-2. **Offline payment:** Merchant generates a payment request QR (amount + merchant ID + nonce). Student scans, confirms, the student's app constructs and signs a transaction envelope, displays the signed envelope as a second QR. Merchant scans the signed envelope and verifies the signature locally. Both phones store the envelope in their local SQLite ledgers as `pending_reconciliation`.
+2. **Offline payment (current primary flow):** Student opens Pay, selects a merchant from a locally cached merchant list (fetched from `GET /merchants/list` and cached in SQLite), enters amount, and continues through the existing confirm PIN flow. The existing confirm/sign/display flow is preserved: the student app creates a local payment request, signs the envelope, and displays a signed QR. Merchant scans the student-generated signed envelope directly and verifies locally. Replay protection remains in place via `requestNonce` + `senderSequenceNumber`.
 3. **Reconciliation:** The merchant (recipient) submits pending envelopes to `/reconcile` when online. Server verifies signature, confirms the authenticated user matches `recipientUserId` in the envelope, checks that `senderSequenceNumber` has not been used before (per-user uniqueness, NOT strict monotonic ordering — envelopes may arrive out of order from different merchants), checks current server balance is sufficient to cover the debit, writes double-entry ledger rows in a Serializable transaction, updates both users' `verifiedBalanceKobo`.
 4. **Merchant cashout:** Merchant requests cashout via app. Admin reviews (manual during pilot). Korapay Transfer API sends naira to the merchant's bank account. Operating account debited in the ledger.
-
-
-### NEW UPDATE TO TRANSACTION CYCLE (NOT YET IMPLEMENTED)
-2. **Offline payment:** When student wants to pay, the student clicks the pay button and a list of merchants pre-registered will show up, the student clicks on the merchant they want to pay to and then the amount of money they want to pay and then their PIN to confirm then a QR code will be generated with the merchant's ID and the amount to be paid Then the merchant will scan the QR code and confirm the payment. 
 
 ---
 

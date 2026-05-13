@@ -1,10 +1,32 @@
 # POST_PILOT.md
 
-Living document of features, infrastructure, and operational items deferred from the pilot. This is the "what we'll do later" list — anything that's nice-to-have, blocking-only-at-scale, or required for graduation beyond the closed-loop pilot.
+Living document of features, infrastructure, and operational items deferred until after controlled beta/public pilot. This is the "what we'll do later" list for scale and expansion work, not pre-launch readiness.
+
+ROADMAP.md is now the source of truth for pre-pilot and pilot-readiness work.
+POST_PILOT.md is for after controlled beta/public pilot only.
+
+Closed-loop guardrails remain non-negotiable in all phases:
+- no P2P
+- no student cashout
+- approved merchants only
 
 Format per item: brief description, current pilot impact, trigger for prioritization, rough effort estimate. Each item ends up on the post-pilot roadmap when its trigger fires.
 
-Last updated: 2026-05-01
+Last updated: 2026-05-13
+
+---
+
+## Scope boundary (not post-pilot)
+
+These are required before real-money public launch and are tracked in ROADMAP.md, not here:
+- CI/build gate and production-equivalent build checks
+- Daily invariant check procedure
+- Basic incident playbook
+- Merchant onboarding checklist
+- Refund/support process
+- Cashout dry run
+- Written legal opinion before public real-money launch
+- Manual key-recovery runbook for support ops
 
 ---
 
@@ -56,11 +78,6 @@ These break the closed-loop legal structure of the pilot. Cannot ship until regu
 - Trigger: 200+ users in 6 months.
 - Designate a Data Protection Officer at the same time.
 
-**Professional legal review of terms and privacy notice**
-- By a Nigerian data protection lawyer.
-- Trigger: before any launch beyond the 500-user pilot.
-- Cost: ₦75,000-150,000 at pilot scale.
-
 **Insurance**
 - Operational risk, cyber risk, director liability.
 - Trigger: any expansion beyond pilot.
@@ -103,11 +120,10 @@ These break the closed-loop legal structure of the pilot. Cannot ship until regu
 
 **Lost-key recovery flow** *(from audit round 3)*
 - Current: if a user loses their phone, admin must manually clear their public key from the database before they can re-register from a new device.
-- Pilot impact: medium-high — likelihood of at least one phone loss during a 5-day pilot is real.
-- Workaround during pilot: admin runs SQL to set publicKey=NULL for affected user; user re-registers normally.
-- Trigger: post-pilot or earlier if frequency exceeds expectations.
-- Effort: ~2 days. Email-based confirmation with 48-hour cooling-off window before old key is invalidated. Lock outgoing payments during cooling period to prevent attacker race.
-
+- Pilot/public-launch requirement: keep and follow the manual key-recovery runbook (tracked in ROADMAP.md).
+- Post-pilot item: automate this with email-based confirmation + cooling-off window to reduce support load.
+- Trigger: after pilot if recovery volume is non-trivial.
+- Effort: ~2 days.
 **Multi-device support**
 - Current: one public key per user; re-registering on a second device replaces the first.
 - Trigger: post-pilot user feedback or web dashboard launch.
@@ -162,13 +178,6 @@ These break the closed-loop legal structure of the pilot. Cannot ship until regu
 - Pilot impact: low.
 - Trigger: any abuse incident.
 - Effort: ~1 hour per endpoint.
-
-**Daily invariant check cron** *(from audit round 3)*
-- Current: not running.
-- Manual check: `SELECT SUM(verifiedBalanceKobo) FROM "User"` should be exactly 0 (sum of all user balances + u_operating's negative balance).
-- Pilot impact: medium — without this, a silent balance bug could go undetected.
-- Trigger: before pilot launch. Manual daily check during pilot week is acceptable interim.
-- Effort: ~half day. NestJS @Cron task that runs daily, alerts via Slack webhook or email if invariant breaks.
 
 **Health endpoint upgrade** *(from audit round 3)*
 - Current: /health returns hardcoded `{"status":"ok"}` — true even if database is unreachable.
@@ -314,17 +323,6 @@ These break the closed-loop legal structure of the pilot. Cannot ship until regu
 **Replace float math for kobo/naira conversions with integer/BigInt throughout**
 - Trigger: code health pass.
 
-**E2E test that boots the actual NestJS app against a real Postgres** *(from deployment lessons)*
-- Current: 170 unit tests with mocks, but no test exercises the full DI bootstrap + DB connection path.
-- Lessons learned: production-deploy bugs (OtpStore DI missing @Optional, Prisma adapter mismatch, BOM in migrations) all could have been caught earlier with one e2e smoke test.
-- Trigger: before mobile app launch (mobile dev means more deploys, more infra issues).
-- Effort: ~half day. Use Testcontainers Postgres + Supertest against a freshly migrated database.
-
-**CI pipeline that runs `pnpm build` end-to-end and asserts dist/main.js exists**
-- Current: tests run in CI but a clean build is only verified by deploys themselves.
-- Trigger: same as above.
-- Effort: ~1 hour.
-
 **Add .gitattributes to enforce consistent line endings across the repo**
 - After multiple BOM/encoding issues during deployment.
 
@@ -340,7 +338,7 @@ These break the closed-loop legal structure of the pilot. Cannot ship until regu
 **Merchant-auth silent enumeration check** *(from audit round 2)*
 - Current: signing up as merchant with a student-already-registered email returns `email_already_registered_as_student`.
 - Minor enumeration leak (confirms an email is a student).
-- Trigger: pre-launch hardening.
+- Note: this is pre-public-launch hardening and should be tracked in ROADMAP.md until closed.
 - Effort: ~half day. Match the pattern used in regular auth (silent success).
 
 **Chunked OTP cleanup sweep**
@@ -366,7 +364,7 @@ These break the closed-loop legal structure of the pilot. Cannot ship until regu
 When evaluating "what should we do next?" after pilot:
 
 1. **Critical path:** items where the trigger has fired (200+ users → NDPC; new feature → KYC; etc.). Do these first.
-2. **Risk reduction:** lost-key recovery, daily invariant cron, e2e tests, audit log. Cheap, defensive, prevent embarrassing incidents.
+2. **Risk reduction:** lost-key automation (post-pilot), audit log, backup verification, and hardening work that prevents expensive incidents at scale.
 3. **Growth enablers:** VBAs, partnerships, multi-device, push notifications. Drive adoption.
 4. **Polish:** dark mode, branded emails, bank code lookup UX. Last.
 
