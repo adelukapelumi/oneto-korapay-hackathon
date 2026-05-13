@@ -149,22 +149,6 @@ export default function SettingsScreen(): React.ReactElement {
           <Text style={styles.signOutButtonText}>Sign Out</Text>
         </Pressable>
 
-        {/*remove this button in production it is just for testing*/}
-        <Pressable
-          style={({ pressed }) => [
-            styles.signOutButton,
-            pressed && styles.signOutButtonPressed,
-          ]}
-          onPress={async () => {
-            const { wipeKeypair } = await import("../../src/crypto/pin-derive");
-            await wipeKeypair();
-            await signOut();
-          }}
-          accessibilityRole="button"
-        >
-          <Text style={styles.signOutButtonText}>⚠️ Reset Device (Dev Only)</Text>
-        </Pressable>
-
         {/* Version */}
         <View style={styles.versionSection}>
           <Text style={[styles.versionText, { color: t.textMut }]}>ONETO V1.0.0 — PILOT</Text>

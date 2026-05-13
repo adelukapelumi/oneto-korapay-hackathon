@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppState as RNAppState, type AppStateStatus } from "react-native";
-import { fetchMe, type Me } from "../api/auth";
+import { fetchMe, requestOtp, type Me } from "../api/auth";
 import { setUnauthorizedHandler } from "../api/client";
 import { NetworkError } from "../api/errors";
 import {
@@ -51,10 +51,28 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
   }, []);
 
   const signOut = useCallback(async () => {
-    wipeInMemoryKey();
     await clearToken();
+    wipeInMemoryKey();
     if (!isMounted.current) return;
-    setState({ status: "unauthed" });
+    // If a keypair exists on disk, go to locked (not unauthed). This
+    // prevents the email input screen from being reachable — the user
+    // re-enters their PIN for offline use, then taps re-authenticate
+    // (which sends OTP to their *stored* email, not a free-text input).
+    const keypairPresent = await hasKeypair();
+    if (!isMounted.current) return;
+    if (keypairPresent) {
+      setState((prev) => {
+        const user =
+          prev.status === "authed" ||
+          prev.status === "locked" ||
+          prev.status === "onboarding"
+            ? prev.user
+            : makePlaceholderMe();
+        return { status: "locked", user, hasJwt: false };
+      });
+    } else {
+      setState({ status: "unauthed" });
+    }
   }, [wipeInMemoryKey]);
 
   const signIn = useCallback(
@@ -141,14 +159,24 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
       // keypair on disk — the user just needs to sign back in.
       wipeInMemoryKey();
       void (async () => {
+        await clearToken();
         const keypairPresent = await hasKeypair();
         if (!isMounted.current) return;
         if (!keypairPresent) {
           setState({ status: "unauthed" });
         } else {
-          // We'd ideally keep the user record, but we no longer trust
-          // it; force a re-OTP. Show locked iff we have offline material.
-          setState({ status: "unauthed" });
+          // Keypair exists: go to locked, not unauthed. This prevents
+          // the email input screen from being reachable. Preserve the
+          // user object so the stored email is available for re-auth.
+          setState((prev) => {
+            const user =
+              prev.status === "authed" ||
+              prev.status === "locked" ||
+              prev.status === "onboarding"
+                ? prev.user
+                : makePlaceholderMe();
+            return { status: "locked", user, hasJwt: false };
+          });
         }
       })();
     });
@@ -303,6 +331,30 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
     return () => clearInterval(id);
   }, [state.status]);
 
+  // Re-authenticate using the stored email. Sends an OTP to the email
+  // already on the user object — no free-text email input is shown.
+  // Returns the email so the caller can navigate to the OTP verify screen.
+  const reauthenticate = useCallback(async (): Promise<string> => {
+    const email = (() => {
+      const s = state;
+      if (
+        s.status === "authed" ||
+        s.status === "locked" ||
+        s.status === "onboarding"
+      ) {
+        return s.user.email;
+      }
+      return "";
+    })();
+    if (!email) {
+      throw new Error(
+        "Cannot re-authenticate: no stored email. The user must sign in from scratch.",
+      );
+    }
+    await requestOtp(email);
+    return email;
+  }, [state]);
+
   const value = useMemo<AuthState>(
     () => ({
       state,
@@ -311,6 +363,7 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
       unlock,
       lock,
       signOut,
+      reauthenticate,
       getDecryptedPrivateKey,
     }),
     [
@@ -320,6 +373,7 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
       unlock,
       lock,
       signOut,
+      reauthenticate,
       getDecryptedPrivateKey,
     ],
   );

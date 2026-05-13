@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import {
+  ActivityIndicator,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -163,8 +164,16 @@ async function fetchLedger(limit: number): Promise<RawLedgerEntry[]> {
   return response.data.entries ?? [];
 }
 
+/** Mask an email for display: "pelumi@stu.cu.edu.ng" → "pel***@stu.cu.edu.ng" */
+function maskEmail(email: string): string {
+  const [local, domain] = email.split("@");
+  if (!local || !domain) return email;
+  const visible = Math.min(3, local.length);
+  return local.slice(0, visible) + "***@" + domain;
+}
+
 export default function HomeScreen(): React.ReactElement {
-  const { state } = useAuth();
+  const { state, reauthenticate } = useAuth();
   const router = useRouter();
   const { mode } = useThemeMode();
   const t = getTheme(mode);
@@ -176,6 +185,8 @@ export default function HomeScreen(): React.ReactElement {
   const [refreshing, setRefreshing] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [reauthSending, setReauthSending] = useState(false);
+  const [reauthError, setReauthError] = useState<string | null>(null);
 
   const user = state.status === "authed" ? state.user : null;
   const jwtFresh = state.status === "authed" ? state.jwtFresh : false;
@@ -190,12 +201,30 @@ export default function HomeScreen(): React.ReactElement {
           "incoming",
         );
         setPendingCount(pending.length);
+
+        if (pending.length > 0 && jwtFresh && !isSyncing) {
+          void (async () => {
+            setIsSyncing(true);
+            try {
+              await syncPendingEnvelopes();
+            } catch (err) {
+              logger.info("Merchant auto-sync on focus failed", err);
+            } finally {
+              const refreshedPending = listPendingByStatus(
+                "pending_reconciliation",
+                "incoming",
+              );
+              setPendingCount(refreshedPending.length);
+              setIsSyncing(false);
+            }
+          })();
+        }
       }
 
       const interval = setInterval(() => void refreshData(), 30_000);
       return () => clearInterval(interval);
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [user?.role]),
+    }, [user?.role, jwtFresh, isSyncing]),
   );
 
   async function refreshData(): Promise<void> {
@@ -234,6 +263,22 @@ export default function HomeScreen(): React.ReactElement {
     const pending = listPendingByStatus("pending_reconciliation", "incoming");
     setPendingCount(pending.length);
     setIsSyncing(false);
+  };
+
+  // Re-auth: send OTP to the stored email and navigate to verify screen.
+  // No email input shown — the stored email is used automatically.
+  const handleReauth = async (): Promise<void> => {
+    setReauthSending(true);
+    setReauthError(null);
+    try {
+      const storedEmail = await reauthenticate();
+      router.push({ pathname: "/(auth)/verify", params: { email: storedEmail } });
+    } catch (err) {
+      logger.info("Re-auth OTP request failed", err);
+      setReauthError("Could not send OTP. Check your connection.");
+    } finally {
+      setReauthSending(false);
+    }
   };
 
   if (state.status !== "authed" || !user) {
@@ -313,8 +358,27 @@ export default function HomeScreen(): React.ReactElement {
           {!jwtFresh && (
             <View style={styles.staleBanner}>
               <Text style={styles.staleBannerText}>
-                Sign in again to top up or see your latest balance.
+                Your session has expired.
               </Text>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.reauthButton,
+                  pressed && styles.reauthButtonPressed,
+                ]}
+                onPress={() => void handleReauth()}
+                disabled={reauthSending || !email}
+              >
+                {reauthSending ? (
+                  <ActivityIndicator size="small" color={colors.primary} />
+                ) : (
+                  <Text style={styles.reauthButtonText}>
+                    Send OTP to {maskEmail(email)}
+                  </Text>
+                )}
+              </Pressable>
+              {reauthError ? (
+                <Text style={styles.reauthError}>{reauthError}</Text>
+              ) : null}
             </View>
           )}
 
@@ -448,8 +512,27 @@ export default function HomeScreen(): React.ReactElement {
         {!jwtFresh && (
           <View style={styles.staleBanner}>
             <Text style={styles.staleBannerText}>
-              Sign in again to cash out or see your latest balance.
+              Your session has expired.
             </Text>
+            <Pressable
+              style={({ pressed }) => [
+                styles.reauthButton,
+                pressed && styles.reauthButtonPressed,
+              ]}
+              onPress={() => void handleReauth()}
+              disabled={reauthSending || !email}
+            >
+              {reauthSending ? (
+                <ActivityIndicator size="small" color={colors.primary} />
+              ) : (
+                <Text style={styles.reauthButtonText}>
+                  Send OTP to {maskEmail(email)}
+                </Text>
+              )}
+            </Pressable>
+            {reauthError ? (
+              <Text style={styles.reauthError}>{reauthError}</Text>
+            ) : null}
           </View>
         )}
 
@@ -625,6 +708,30 @@ const styles = StyleSheet.create({
     fontFamily: fonts.medium,
     fontSize: fontSizes.caption,
     color: "#7a4d00",
+  },
+  reauthButton: {
+    marginTop: spacing.sm,
+    backgroundColor: colors.primary + "18",
+    borderWidth: borders.thin,
+    borderColor: colors.primary + "40",
+    borderRadius: radii.sm,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    alignItems: "center",
+  },
+  reauthButtonPressed: {
+    opacity: 0.7,
+  },
+  reauthButtonText: {
+    fontFamily: fonts.bold,
+    fontSize: fontSizes.caption,
+    color: colors.primary,
+  },
+  reauthError: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.sm,
+    color: colors.error,
+    marginTop: spacing.xs,
   },
 
   balanceCard: {
