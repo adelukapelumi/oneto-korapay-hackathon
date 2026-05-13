@@ -2,11 +2,10 @@ import { useState, useEffect, useRef } from "react";
 import { View, Text, StyleSheet, Alert, Pressable, Animated, Easing } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { CameraView, useCameraPermissions } from "expo-camera";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 import { verifyEnvelopeLocally } from "../../../src/payment/verify-local";
 import { insertPendingTransaction } from "../../../src/ledger/db";
 import { useAuth } from "../../../src/auth/auth-state";
-import type { PaymentRequest } from "@oneto/shared";
 import { useThemeMode } from "../../../src/theme/theme-provider";
 import {
   getTheme,
@@ -51,7 +50,6 @@ function ScanCorner({
 }
 
 export default function ScanEnvelopeScreen() {
-  const { requestJson } = useLocalSearchParams<{ requestJson: string }>();
   const router = useRouter();
   const { state } = useAuth();
   const { mode } = useThemeMode();
@@ -111,40 +109,40 @@ export default function ScanEnvelopeScreen() {
   }, [permission, requestPermission]);
 
   if (state.status !== "authed") return null;
-  if (!requestJson) return null;
-
-  const originalRequest = JSON.parse(requestJson) as PaymentRequest;
 
   const handleBarCodeScanned = ({ data }: { data: string }) => {
     if (scanned) return;
     setScanned(true);
 
+    let parsedData: unknown;
     try {
-      const parsedData = JSON.parse(data);
-      const verifyResult = verifyEnvelopeLocally(parsedData);
+      parsedData = JSON.parse(data);
+    } catch {
+      Alert.alert("Invalid QR", "Could not parse payment data.", [
+        { text: "Try Again", onPress: () => setScanned(false) }
+      ]);
+      return;
+    }
 
-      if (!verifyResult.ok) {
-        Alert.alert("Invalid Payment", "The payment could not be verified.", [
-          { text: "Try Again", onPress: () => setScanned(false) }
-        ]);
-        return;
-      }
+    const verifyResult = verifyEnvelopeLocally(parsedData);
 
-      const envelope = verifyResult.envelope;
+    if (!verifyResult.ok) {
+      Alert.alert("Invalid Payment", "The payment could not be verified.", [
+        { text: "Try Again", onPress: () => setScanned(false) }
+      ]);
+      return;
+    }
 
-      if (
-        envelope.requestNonce !== originalRequest.requestNonce ||
-        envelope.recipientUserId !== state.user.id ||
-        envelope.amountKobo !== originalRequest.amountKobo
-      ) {
-        Alert.alert("Invalid Payment", "This payment does not match the request.", [
-          { text: "Try Again", onPress: () => setScanned(false) }
-        ]);
-        return;
-      }
+    const envelope = verifyResult.envelope;
 
-      setShowSuccess(true);
+    if (envelope.recipientUserId !== state.user.id) {
+      Alert.alert("Invalid Payment", "This payment is not addressed to this merchant.", [
+        { text: "Try Again", onPress: () => setScanned(false) }
+      ]);
+      return;
+    }
 
+    try {
       insertPendingTransaction({
         id: envelope.transactionId,
         envelopeJson: JSON.stringify(envelope),
@@ -153,21 +151,39 @@ export default function ScanEnvelopeScreen() {
         amountKobo: envelope.amountKobo,
         sequenceNumber: envelope.senderSequenceNumber,
         direction: "incoming",
-        createdAt: new Date().toISOString(),
+        createdAt: envelope.timestamp,
       });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "";
+      const isDuplicateScan = /unique constraint|primary key|sqlite_constraint/i.test(errorMessage);
 
-      setTimeout(() => {
-        router.replace({
-          pathname: "/(app)/merchant/success",
-          params: { senderUserId: envelope.senderUserId, amountKobo: String(envelope.amountKobo) }
-        });
-      }, 400);
+      if (isDuplicateScan) {
+        Alert.alert(
+          "Payment Already Scanned",
+          "This payment has already been scanned on this device.",
+          [
+            { text: "Try Again", onPress: () => setScanned(false) },
+            { text: "Back", onPress: () => router.back() },
+          ]
+        );
+        return;
+      }
 
-    } catch {
-      Alert.alert("Invalid QR", "Could not parse payment data.", [
-        { text: "Try Again", onPress: () => setScanned(false) }
+      Alert.alert("Save Failed", "Could not save payment data.", [
+        { text: "Try Again", onPress: () => setScanned(false) },
+        { text: "Back", onPress: () => router.back() },
       ]);
+      return;
     }
+
+    setShowSuccess(true);
+
+    setTimeout(() => {
+      router.replace({
+        pathname: "/(app)/merchant/success",
+        params: { senderUserId: envelope.senderUserId, amountKobo: String(envelope.amountKobo) }
+      });
+    }, 400);
   };
 
   const scanLineTranslate = scanLineAnim.interpolate({
@@ -185,14 +201,14 @@ export default function ScanEnvelopeScreen() {
             accessibilityRole="button"
             accessibilityLabel="Go back"
           >
-            <Text style={styles.backIcon}>←</Text>
+            <Text style={styles.backIcon}>{"<"}</Text>
           </Pressable>
           <View style={styles.headerSpacer} />
           <Text style={styles.headerLabel}>Scan Response</Text>
         </View>
         <View style={styles.permissionContainer}>
           <View style={styles.permissionCard}>
-            <Text style={styles.permissionIcon}>📷</Text>
+            <Text style={styles.permissionIcon}>CAM</Text>
             <Text style={styles.permissionTitle}>Camera Access Required</Text>
             <Text style={styles.permissionText}>
               We need camera access to scan the customer's payment QR code.
@@ -231,7 +247,7 @@ export default function ScanEnvelopeScreen() {
                 accessibilityRole="button"
                 accessibilityLabel="Go back"
               >
-                <Text style={styles.backIconWhite}>←</Text>
+                <Text style={styles.backIconWhite}>{"<"}</Text>
               </Pressable>
               <View style={styles.headerSpacer} />
               <Text style={styles.headerLabelWhite}>Scan Response</Text>
@@ -260,7 +276,7 @@ export default function ScanEnvelopeScreen() {
 
           <View style={styles.bottomSection}>
             <Text style={styles.scanText}>
-              {showSuccess ? "Payment verified ✓" : "Scan the customer's response"}
+              {showSuccess ? "Payment verified" : "Scan the customer's response"}
             </Text>
           </View>
         </View>

@@ -1,18 +1,25 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
-  StyleSheet,
-  View,
-  Text,
+  ActivityIndicator,
   Pressable,
-  Alert,
-  Animated,
-  Easing,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from "react-native";
-import { CameraView, useCameraPermissions } from "expo-camera";
-import { useRouter, useFocusEffect } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useFocusEffect, useRouter } from "expo-router";
+import { MAX_OFFLINE_TRANSACTION_KOBO } from "@oneto/shared";
+import { useAuth } from "../../../src/auth/auth-state";
+import { fetchActiveMerchants } from "../../../src/api/merchants";
+import {
+  listCachedMerchants,
+  replaceCachedMerchants,
+} from "../../../src/ledger/db";
+import { createPaymentRequest } from "../../../src/payment/create-request";
+import { logger } from "../../../src/lib/logger";
 import { BackButton } from "../../../components/BackButton";
-import { PaymentRequestSchema } from "@oneto/shared";
 import { useThemeMode } from "../../../src/theme/theme-provider";
 import {
   getTheme,
@@ -25,273 +32,263 @@ import {
   dimensions,
 } from "../../../src/theme/tokens";
 
-const SCAN_FRAME_SIZE = 260;
-const CORNER_SIZE = 40;
-const CORNER_THICKNESS = 4;
+interface MerchantOption {
+  readonly userId: string;
+  readonly label: string;
+}
 
-function ScanCorner({
-  position,
-}: {
-  position: "top-left" | "top-right" | "bottom-left" | "bottom-right";
-}): React.ReactElement {
-  const isTop = position.includes("top");
-  const isLeft = position.includes("left");
+function parseAmountInputToKobo(input: string): number | null {
+  const trimmed = input.trim();
+  if (trimmed.length === 0) return null;
 
+  // Allow only digits with optional 1-2 decimal places.
+  if (!/^\d+(\.\d{1,2})?$/.test(trimmed)) return null;
+
+  const [wholeRaw, fracRaw = ""] = trimmed.split(".");
+  const whole = Number.parseInt(wholeRaw, 10);
+  if (!Number.isFinite(whole) || whole < 0) return null;
+
+  const fracPadded = (fracRaw + "00").slice(0, 2);
+  const frac = Number.parseInt(fracPadded, 10);
+  if (!Number.isFinite(frac) || frac < 0 || frac > 99) return null;
+
+  const kobo = whole * 100 + frac;
+  return Number.isInteger(kobo) ? kobo : null;
+}
+
+function formatNaira(kobo: number): string {
   return (
-    <View
-      style={[
-        styles.corner,
-        {
-          top: isTop ? -2 : undefined,
-          bottom: !isTop ? -2 : undefined,
-          left: isLeft ? -2 : undefined,
-          right: !isLeft ? -2 : undefined,
-          borderTopWidth: isTop ? CORNER_THICKNESS : 0,
-          borderBottomWidth: !isTop ? CORNER_THICKNESS : 0,
-          borderLeftWidth: isLeft ? CORNER_THICKNESS : 0,
-          borderRightWidth: !isLeft ? CORNER_THICKNESS : 0,
-        },
-      ]}
-    />
+    "NGN " +
+    (kobo / 100).toLocaleString("en", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })
   );
 }
 
-export default function ScanScreen(): React.ReactElement {
-  const [permission, requestPermission] = useCameraPermissions();
+export default function ScanScreen(): React.ReactElement | null {
   const router = useRouter();
+  const { state } = useAuth();
   const { mode } = useThemeMode();
   const t = getTheme(mode);
-  const scanned = useRef(false);
-  const [showSuccess, setShowSuccess] = useState(false);
 
-  // Scan line animation
-  const scanLineAnim = useRef(new Animated.Value(0)).current;
+  const [merchants, setMerchants] = useState<MerchantOption[]>([]);
+  const [selectedMerchantId, setSelectedMerchantId] = useState<string | null>(
+    null,
+  );
+  const [amountInput, setAmountInput] = useState("");
+  const [loadingMerchants, setLoadingMerchants] = useState(false);
+  const [creatingRequest, setCreatingRequest] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const animation = Animated.loop(
-      Animated.sequence([
-        Animated.timing(scanLineAnim, {
-          toValue: 1,
-          duration: 2000,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
-        }),
-        Animated.timing(scanLineAnim, {
-          toValue: 0,
-          duration: 2000,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
-        }),
-      ])
-    );
-    animation.start();
-    return () => animation.stop();
-  }, [scanLineAnim]);
-
-  // Corner pulse animation
-  const pulseAnim = useRef(new Animated.Value(1)).current;
-
-  useEffect(() => {
-    const animation = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, {
-          toValue: 0.7,
-          duration: 1000,
-          useNativeDriver: true,
-        }),
-        Animated.timing(pulseAnim, {
-          toValue: 1,
-          duration: 1000,
-          useNativeDriver: true,
-        }),
-      ])
-    );
-    animation.start();
-    return () => animation.stop();
-  }, [pulseAnim]);
+  const isAuthed = state.status === "authed";
+  const jwtFresh = isAuthed ? state.jwtFresh : false;
 
   useFocusEffect(
     useCallback(() => {
-      scanned.current = false;
-      setShowSuccess(false);
-    }, [])
+      const cached = listCachedMerchants().map((m) => ({
+        userId: m.userId,
+        label: m.label,
+      }));
+      setMerchants(cached);
+      setError(null);
+
+      if (!isAuthed || !jwtFresh) return;
+
+      setLoadingMerchants(true);
+      void (async () => {
+        try {
+          const fresh = await fetchActiveMerchants();
+          const mapped = fresh.map((m) => ({
+            userId: m.id,
+            label: m.label,
+          }));
+          replaceCachedMerchants(mapped);
+          setMerchants(mapped);
+        } catch (err) {
+          logger.info("Merchant refresh failed, using cached list", err);
+        } finally {
+          setLoadingMerchants(false);
+        }
+      })();
+    }, [isAuthed, jwtFresh]),
   );
 
-  if (!permission) {
-    return (
-      <SafeAreaView style={styles.safe} edges={["top"]}>
-        <View style={styles.permissionContainer}>
-          <Text style={styles.loadingText}>Loading camera...</Text>
-        </View>
-      </SafeAreaView>
-    );
+  const amountKobo = useMemo(() => parseAmountInputToKobo(amountInput), [
+    amountInput,
+  ]);
+
+  if (!isAuthed) {
+    return null;
   }
 
-  if (!permission.granted) {
-    return (
-      <SafeAreaView style={styles.safe} edges={["top"]}>
-        {/* Header */}
-        <View style={styles.header}>
-          <BackButton />
-          <View style={styles.headerSpacer} />
-          <Text style={styles.headerLabel}>QR Scanner</Text>
-        </View>
+  const selectedMerchant =
+    selectedMerchantId === null
+      ? null
+      : merchants.find((m) => m.userId === selectedMerchantId) ?? null;
 
-        <View style={styles.permissionContainer}>
-          <View style={styles.permissionCard}>
-            <Text style={styles.permissionIcon}>📷</Text>
-            <Text style={styles.permissionTitle}>Camera Access Required</Text>
-            <Text style={styles.permissionText}>
-              We need camera access to scan merchant QR codes for payments.
-            </Text>
-            <Pressable
-              style={({ pressed }) => [
-                styles.permissionButton,
-                pressed && styles.buttonPressed,
-              ]}
-              onPress={requestPermission}
-            >
-              <Text style={styles.permissionButtonText}>Grant Permission</Text>
-            </Pressable>
-          </View>
-        </View>
-      </SafeAreaView>
-    );
-  }
+  const canContinue =
+    selectedMerchant !== null &&
+    amountKobo !== null &&
+    amountKobo > 0 &&
+    amountKobo <= MAX_OFFLINE_TRANSACTION_KOBO &&
+    !creatingRequest;
 
-  const handleBarcodeScanned = ({ data }: { data: string }) => {
-    if (scanned.current) return;
+  const handleContinue = async (): Promise<void> => {
+    if (!selectedMerchant || amountKobo === null) return;
 
+    if (amountKobo <= 0 || amountKobo > MAX_OFFLINE_TRANSACTION_KOBO) {
+      setError(
+        `Amount must be between NGN 0.01 and ${formatNaira(MAX_OFFLINE_TRANSACTION_KOBO)}.`,
+      );
+      return;
+    }
+
+    setError(null);
+    setCreatingRequest(true);
     try {
-      const parsedJson = JSON.parse(data);
-      const result = PaymentRequestSchema.safeParse(parsedJson);
-
-      if (result.success) {
-        scanned.current = true;
-        setShowSuccess(true);
-
-        // Brief delay to show success state
-        setTimeout(() => {
-          router.push({
-            pathname: "/(app)/pay/confirm",
-            params: { request: JSON.stringify(result.data) },
-          });
-        }, 400);
-      } else {
-        scanned.current = true;
-        Alert.alert(
-          "Invalid QR Code",
-          "This doesn't look like a valid oneto merchant request.",
-          [
-            {
-              text: "Try Again",
-              onPress: () => {
-                scanned.current = false;
-              },
-            },
-          ]
-        );
-      }
-    } catch {
-      scanned.current = true;
-      Alert.alert("Invalid QR Code", "Could not read this QR code.", [
-        {
-          text: "Try Again",
-          onPress: () => {
-            scanned.current = false;
-          },
-        },
-      ]);
+      const request = await createPaymentRequest(
+        selectedMerchant.userId,
+        amountKobo,
+        selectedMerchant.label,
+      );
+      router.push({
+        pathname: "/(app)/pay/confirm",
+        params: { request: JSON.stringify(request) },
+      });
+    } catch (err) {
+      logger.info("Failed to create local payment request", err);
+      setError("Could not create payment request. Try again.");
+    } finally {
+      setCreatingRequest(false);
     }
   };
 
-  const scanLineTranslate = scanLineAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [10, SCAN_FRAME_SIZE - 20],
-  });
-
   return (
-    <View style={styles.container}>
-      <CameraView
-        style={styles.camera}
-        facing="back"
-        barcodeScannerSettings={{
-          barcodeTypes: ["qr"],
-        }}
-        onBarcodeScanned={handleBarcodeScanned}
+    <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top"]}>
+      <View style={styles.header}>
+        <BackButton />
+        <Text style={[styles.headerTitle, { color: t.text }]}>Pay Merchant</Text>
+        <View style={styles.headerSpacer} />
+      </View>
+
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
       >
-        {/* Overlay */}
-        <View style={styles.overlay}>
-          {/* Header - transparent */}
-          <SafeAreaView edges={["top"]} style={styles.headerTransparent}>
-            <View style={styles.headerRow}>
-              <Pressable
-                style={styles.backButtonTransparent}
-                onPress={() => router.back()}
-                accessibilityRole="button"
-                accessibilityLabel="Go back"
-              >
-                <Text style={styles.backIconWhite}>←</Text>
-              </Pressable>
-              <View style={styles.headerSpacer} />
-              <Text style={styles.headerLabelWhite}>QR Scanner</Text>
-            </View>
-          </SafeAreaView>
-
-          {/* Center scan area */}
-          <View style={styles.scanAreaWrapper}>
-            <Animated.View style={[styles.scanFrame, { opacity: pulseAnim }]}>
-              {/* Corners */}
-              <ScanCorner position="top-left" />
-              <ScanCorner position="top-right" />
-              <ScanCorner position="bottom-left" />
-              <ScanCorner position="bottom-right" />
-
-              {/* Scan line */}
-              {!showSuccess && (
-                <Animated.View
-                  style={[
-                    styles.scanLine,
-                    { transform: [{ translateY: scanLineTranslate }] },
-                  ]}
-                />
-              )}
-
-              {/* Success flash */}
-              {showSuccess && <View style={styles.successFlash} />}
-            </Animated.View>
-          </View>
-
-          {/* Bottom text */}
-          <View style={styles.bottomSection}>
-            <Text style={styles.scanText}>
-              {showSuccess ? "QR detected ✓" : "Scan the merchant's QR code"}
+        <View
+          style={[
+            styles.card,
+            { backgroundColor: t.card, borderColor: t.border },
+            t.shadow,
+          ]}
+        >
+          <View style={styles.sectionHeader}>
+            <Text style={[styles.sectionTitle, { color: t.text }]}>
+              Select Merchant
             </Text>
+            {loadingMerchants && (
+              <ActivityIndicator size="small" color={colors.primary} />
+            )}
           </View>
+
+          {merchants.length === 0 ? (
+            <Text style={[styles.emptyText, { color: t.textSec }]}>
+              No cached merchants yet. Connect to the internet to refresh.
+            </Text>
+          ) : (
+            <View style={styles.merchantList}>
+              {merchants.map((merchant) => {
+                const selected = merchant.userId === selectedMerchantId;
+                return (
+                  <Pressable
+                    key={merchant.userId}
+                    style={({ pressed }) => [
+                      styles.merchantItem,
+                      {
+                        borderColor: selected ? colors.primary : t.border,
+                        backgroundColor: selected ? colors.primary + "12" : t.card,
+                      },
+                      pressed && styles.itemPressed,
+                    ]}
+                    onPress={() => {
+                      setSelectedMerchantId(merchant.userId);
+                      setError(null);
+                    }}
+                  >
+                    <Text style={[styles.merchantName, { color: t.text }]}>
+                      {merchant.label}
+                    </Text>
+                    <Text style={[styles.merchantId, { color: t.textMut }]}>
+                      {merchant.userId}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          )}
         </View>
-      </CameraView>
-    </View>
+
+        <View
+          style={[
+            styles.card,
+            { backgroundColor: t.card, borderColor: t.border },
+            t.shadow,
+          ]}
+        >
+          <Text style={[styles.sectionTitle, { color: t.text }]}>Amount</Text>
+          <TextInput
+            style={[
+              styles.amountInput,
+              { color: t.text, borderBottomColor: t.border },
+            ]}
+            value={amountInput}
+            onChangeText={(text) => {
+              setAmountInput(text);
+              setError(null);
+            }}
+            placeholder="0.00"
+            placeholderTextColor={t.textMut}
+            keyboardType="decimal-pad"
+          />
+          <Text style={[styles.helperText, { color: t.textSec }]}>
+            Max offline amount: {formatNaira(MAX_OFFLINE_TRANSACTION_KOBO)}
+          </Text>
+          {amountKobo !== null && amountKobo > 0 ? (
+            <Text style={[styles.previewText, { color: t.text }]}>
+              You will pay {formatNaira(amountKobo)}
+            </Text>
+          ) : null}
+        </View>
+
+        {error ? (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        ) : null}
+
+        <Pressable
+          style={({ pressed }) => [
+            styles.continueButton,
+            { borderColor: t.border },
+            !canContinue && styles.disabledButton,
+            pressed && canContinue && styles.buttonPressed,
+          ]}
+          disabled={!canContinue}
+          onPress={() => void handleContinue()}
+        >
+          <Text style={styles.continueText}>
+            {creatingRequest ? "Preparing..." : "Continue"}
+          </Text>
+        </Pressable>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#000",
-  },
-  safe: {
-    flex: 1,
-    backgroundColor: "#000",
-  },
-  camera: {
-    flex: 1,
-  },
-  overlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
-  },
-
-  // Header - solid bg
+  safe: { flex: 1 },
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -300,152 +297,104 @@ const styles = StyleSheet.create({
     minHeight: dimensions.headerMinHeight,
     gap: spacing.md,
   },
-  headerSpacer: {
+  headerTitle: {
     flex: 1,
-  },
-  headerLabel: {
-    fontFamily: fonts.medium,
-    fontSize: fontSizes.caption,
-    color: colors.dark.textSec,
-  },
-
-  // Header - transparent (over camera)
-  headerTransparent: {
-    backgroundColor: "transparent",
-  },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.md,
-    minHeight: dimensions.headerMinHeight,
-    gap: spacing.md,
-  },
-  backButtonTransparent: {
-    width: dimensions.headerBackButton.size,
-    height: dimensions.headerBackButton.size,
-    borderRadius: radii.md,
-    borderWidth: borders.medium,
-    borderColor: "rgba(255,255,255,0.3)",
-    backgroundColor: "rgba(0,0,0,0.3)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  backIconWhite: {
-    fontSize: 18,
-    color: "#fff",
-  },
-  headerLabelWhite: {
-    fontFamily: fonts.medium,
-    fontSize: fontSizes.caption,
-    color: "#fff",
-  },
-
-  // Scan area
-  scanAreaWrapper: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  scanFrame: {
-    width: SCAN_FRAME_SIZE,
-    height: SCAN_FRAME_SIZE,
-    position: "relative",
-  },
-  corner: {
-    position: "absolute",
-    width: CORNER_SIZE,
-    height: CORNER_SIZE,
-    borderColor: colors.primary,
-  },
-  scanLine: {
-    position: "absolute",
-    left: 10,
-    right: 10,
-    height: 3,
-    backgroundColor: colors.primary,
-    shadowColor: colors.primary,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.8,
-    shadowRadius: 10,
-    elevation: 5,
-  },
-  successFlash: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: colors.primary + "30",
-    borderRadius: radii.sm,
-  },
-
-  // Bottom section
-  bottomSection: {
-    paddingBottom: 80,
-    alignItems: "center",
-  },
-  scanText: {
-    fontFamily: fonts.medium,
-    fontSize: fontSizes.body,
-    color: "#fff",
-  },
-
-  // Permission screen
-  permissionContainer: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: spacing.screenHorizontal,
-  },
-  loadingText: {
-    fontFamily: fonts.medium,
-    fontSize: fontSizes.body,
-    color: colors.dark.textSec,
-  },
-  permissionCard: {
-    backgroundColor: colors.dark.card,
-    borderWidth: borders.standard,
-    borderColor: colors.dark.border,
-    borderRadius: radii.xl,
-    padding: spacing["2xl"],
-    alignItems: "center",
-    width: "100%",
-  },
-  permissionIcon: {
-    fontSize: 48,
-    marginBottom: spacing.lg,
-  },
-  permissionTitle: {
     fontFamily: fonts.bold,
-    fontSize: fontSizes.cardTitle,
-    color: colors.dark.text,
+    fontSize: fontSizes.headerTitle,
+  },
+  headerSpacer: { width: dimensions.headerBackButton.size },
+  scroll: { flex: 1 },
+  scrollContent: {
+    paddingHorizontal: spacing.screenHorizontal,
+    paddingBottom: spacing["3xl"],
+    gap: spacing.lg,
+  },
+  card: {
+    borderWidth: borders.standard,
+    borderRadius: radii.xl,
+    padding: spacing.cardPad,
+  },
+  sectionHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     marginBottom: spacing.sm,
   },
-  permissionText: {
+  sectionTitle: {
+    fontFamily: fonts.bold,
+    fontSize: fontSizes.bodyLg,
+  },
+  emptyText: {
     fontFamily: fonts.regular,
     fontSize: fontSizes.body,
-    color: colors.dark.textSec,
-    textAlign: "center",
-    lineHeight: 22,
-    marginBottom: spacing["2xl"],
   },
-  permissionButton: {
-    width: "100%",
+  merchantList: {
+    gap: spacing.sm,
+  },
+  merchantItem: {
+    borderWidth: borders.standard,
+    borderRadius: radii.md,
+    padding: spacing.md,
+  },
+  merchantName: {
+    fontFamily: fonts.semibold,
+    fontSize: fontSizes.body,
+  },
+  merchantId: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.xs,
+    marginTop: 2,
+  },
+  amountInput: {
+    fontFamily: fonts.bold,
+    fontSize: fontSizes.h2,
+    borderBottomWidth: borders.thin,
+    paddingVertical: spacing.sm,
+  },
+  helperText: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.sm,
+    marginTop: spacing.sm,
+  },
+  previewText: {
+    fontFamily: fonts.semibold,
+    fontSize: fontSizes.body,
+    marginTop: spacing.sm,
+  },
+  errorBanner: {
+    backgroundColor: colors.error + "20",
+    borderWidth: borders.thin,
+    borderColor: colors.error + "40",
+    borderRadius: radii.sm,
+    padding: spacing.sm,
+  },
+  errorText: {
+    fontFamily: fonts.medium,
+    fontSize: fontSizes.sm,
+    color: colors.error,
+  },
+  continueButton: {
     height: 52,
     backgroundColor: colors.primary,
     borderRadius: radii.pill,
     borderWidth: borders.standard,
-    borderColor: colors.dark.border,
     alignItems: "center",
     justifyContent: "center",
   },
-  permissionButtonText: {
+  continueText: {
     fontFamily: fonts.bold,
     fontSize: fontSizes.button,
     color: colors.primaryText,
   },
+  disabledButton: {
+    opacity: 0.5,
+  },
   buttonPressed: {
-    transform: [{ translateX: 2 }, { translateY: 2 }],
+    transform: [{ translateX: 3 }, { translateY: 3 }],
+    shadowOffset: { width: 0, height: 0 },
+  },
+  itemPressed: {
+    opacity: 0.75,
   },
 });
+

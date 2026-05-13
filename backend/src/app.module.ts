@@ -12,6 +12,7 @@ import { TopupModule } from "./topup/topup.module";
 import { HealthModule } from "./health/health.module";
 import { SentryModule, SentryGlobalFilter } from '@sentry/nestjs/setup';
 import { APP_FILTER } from '@nestjs/core';
+import { MerchantsModule } from "./merchants/merchants.module";
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { APP_FILTER } from '@nestjs/core';
     AuthModule,
     ReconcileModule,
     TopupModule,
+    MerchantsModule,
     MeModule,
     CashoutModule,
     HealthModule,

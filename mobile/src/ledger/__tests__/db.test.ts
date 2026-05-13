@@ -22,12 +22,24 @@ type TableStore = Map<string, MockRow[]>;
 // Create a fresh mock DB instance (in-memory)
 function createMockDb() {
   const tables: TableStore = new Map();
+  let failCachedMerchantInsertForUserId: string | null = null;
 
   // Idempotent table creation (we only need to create the two tables we use)
   function ensureTable(name: string) {
     if (!tables.has(name)) {
       tables.set(name, []);
     }
+  }
+
+  function cloneTables(source: TableStore): TableStore {
+    const copy: TableStore = new Map();
+    source.forEach((rows, name) => {
+      copy.set(
+        name,
+        rows.map((row) => ({ ...row })),
+      );
+    });
+    return copy;
   }
 
   // execSync: called for CREATE TABLE IF NOT EXISTS etc. We parse table names.
@@ -96,6 +108,35 @@ function createMockDb() {
       return { changes: 0 };
     }
 
+    if (s.startsWith("DELETE FROM CACHED_MERCHANTS")) {
+      ensureTable("cached_merchants");
+      const rows = tables.get("cached_merchants")!;
+      const before = rows.length;
+      rows.splice(0);
+      return { changes: before };
+    }
+
+    if (s.startsWith("INSERT INTO CACHED_MERCHANTS")) {
+      ensureTable("cached_merchants");
+      const rows = tables.get("cached_merchants")!;
+      const [user_id, label, updated_at] = params;
+      if (
+        failCachedMerchantInsertForUserId !== null &&
+        user_id === failCachedMerchantInsertForUserId
+      ) {
+        throw new Error("Mock cached merchant insert failure");
+      }
+      if (rows.some((r) => r["user_id"] === user_id)) {
+        throw new Error("UNIQUE constraint failed: cached_merchants.user_id");
+      }
+      rows.push({
+        user_id: user_id as string,
+        label: label as string,
+        updated_at: updated_at as string,
+      });
+      return { changes: 1 };
+    }
+
     return { changes: 0 };
   }
 
@@ -155,6 +196,17 @@ function createMockDb() {
       return sorted as unknown as T[];
     }
 
+    if (s.includes("FROM CACHED_MERCHANTS")) {
+      ensureTable("cached_merchants");
+      const rows = tables.get("cached_merchants")!;
+      const sorted = [...rows].sort((a, b) => {
+        const aLabel = a["label"] as string;
+        const bLabel = b["label"] as string;
+        return aLabel.localeCompare(bLabel);
+      });
+      return sorted as unknown as T[];
+    }
+
     if (s.includes("FROM PENDING_TRANSACTIONS")) {
       ensureTable("pending_transactions");
       const rows = tables.get("pending_transactions")!;
@@ -172,7 +224,32 @@ function createMockDb() {
     return [];
   }
 
-  return { execSync, runSync, getFirstSync, getAllSync, tables };
+  function withTransactionSync(task: () => void): void {
+    const snapshot = cloneTables(tables);
+    try {
+      task();
+    } catch (error) {
+      tables.clear();
+      snapshot.forEach((rows, name) => {
+        tables.set(name, rows);
+      });
+      throw error;
+    }
+  }
+
+  function setFailCachedMerchantInsertForUserId(userId: string | null): void {
+    failCachedMerchantInsertForUserId = userId;
+  }
+
+  return {
+    execSync,
+    runSync,
+    getFirstSync,
+    getAllSync,
+    withTransactionSync,
+    setFailCachedMerchantInsertForUserId,
+    tables,
+  };
 }
 
 // Jest mock for expo-sqlite
@@ -194,6 +271,8 @@ import {
   setLocalState,
   listPendingByStatus,
   updateTransactionStatus,
+  listCachedMerchants,
+  replaceCachedMerchants,
 } from "../db";
 
 // ---- Helpers -------------------------------------------------------------
@@ -206,6 +285,7 @@ function makeEnvelopeJson(): string {
 function resetDb(): void {
   // Clear tables and reinitialise
   mockDbInstance.tables.forEach((rows) => rows.splice(0));
+  mockDbInstance.setFailCachedMerchantInsertForUserId(null);
   initDb();
 }
 
@@ -484,5 +564,56 @@ describe("updateTransactionStatus", () => {
     const rows = mockDbInstance.tables.get("pending_transactions")!;
     expect(rows[0]!["status"]).toBe("reconciled");
     expect(rows[0]!["reconciled_at"]).not.toBeNull();
+  });
+});
+
+describe("cached merchants", () => {
+  beforeEach(() => resetDb());
+
+  it("replaces cache snapshot and returns entries sorted by label", () => {
+    replaceCachedMerchants([
+      { userId: "u_bbbbbbbbbbbbbbbb", label: "Zulu Kitchen" },
+      { userId: "u_aaaaaaaaaaaaaaaa", label: "Bookshop" },
+    ]);
+
+    const merchants = listCachedMerchants();
+    expect(merchants).toHaveLength(2);
+    expect(merchants[0]!.label).toBe("Bookshop");
+    expect(merchants[1]!.label).toBe("Zulu Kitchen");
+  });
+
+  it("clears old cache entries on replacement", () => {
+    replaceCachedMerchants([
+      { userId: "u_aaaaaaaaaaaaaaaa", label: "Old Merchant" },
+    ]);
+    replaceCachedMerchants([
+      { userId: "u_cccccccccccccccc", label: "New Merchant" },
+    ]);
+
+    const merchants = listCachedMerchants();
+    expect(merchants).toHaveLength(1);
+    expect(merchants[0]!.userId).toBe("u_cccccccccccccccc");
+    expect(merchants[0]!.label).toBe("New Merchant");
+  });
+
+  it("rolls back replacement when an insert fails", () => {
+    replaceCachedMerchants([
+      { userId: "u_oldmerchant000001", label: "Old Merchant 1" },
+      { userId: "u_oldmerchant000002", label: "Old Merchant 2" },
+    ]);
+
+    mockDbInstance.setFailCachedMerchantInsertForUserId("u_failmerchant0001");
+
+    expect(() =>
+      replaceCachedMerchants([
+        { userId: "u_newmerchant000001", label: "New Merchant 1" },
+        { userId: "u_failmerchant0001", label: "Will Fail" },
+      ]),
+    ).toThrow(/Mock cached merchant insert failure/);
+
+    const merchants = listCachedMerchants();
+    expect(merchants).toHaveLength(2);
+    expect(merchants[0]!.userId).toBe("u_oldmerchant000001");
+    expect(merchants[1]!.userId).toBe("u_oldmerchant000002");
   });
 });

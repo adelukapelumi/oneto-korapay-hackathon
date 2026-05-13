@@ -67,10 +67,7 @@ export default function RequestQRScreen() {
             t.shadow,
             pressed && styles.buttonPressed,
           ]}
-          onPress={() => router.push({
-            pathname: "/(app)/merchant/scan-envelope",
-            params: { requestJson }
-          })}
+          onPress={() => router.push("/(app)/merchant/scan-envelope")}
         >
           <Text style={styles.buttonText}>Scan Response →</Text>
         </Pressable>

@@ -49,6 +49,12 @@ export interface PendingTransaction {
   readonly reconciledAt: string | null; // ISO 8601 UTC, or null
 }
 
+export interface CachedMerchant {
+  readonly userId: string;
+  readonly label: string;
+  readonly updatedAt: string;
+}
+
 // ----------------------------------------------------------------
 // Init / migrations
 // ----------------------------------------------------------------
@@ -81,6 +87,12 @@ export function initDb(): void {
     CREATE TABLE IF NOT EXISTS local_state (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS cached_merchants (
+      user_id TEXT PRIMARY KEY,
+      label TEXT NOT NULL,
+      updated_at TEXT NOT NULL
     );
   `);
 }
@@ -272,6 +284,58 @@ export function updateTransactionStatus(
     reconciledAt,
     transactionId,
   );
+}
+
+// ----------------------------------------------------------------
+// Cached merchants
+// ----------------------------------------------------------------
+
+/**
+ * Replace cached merchants atomically for the local student flow.
+ * The cache is a full snapshot from the backend endpoint.
+ */
+export function replaceCachedMerchants(
+  merchants: ReadonlyArray<{ userId: string; label: string }>,
+): void {
+  const dbInstance = getDb();
+  const nowIso = new Date().toISOString();
+
+  // Delete+insert runs inside one SQLite transaction so a mid-batch failure
+  // rolls everything back and preserves the previous cache snapshot.
+  dbInstance.withTransactionSync(() => {
+    dbInstance.runSync(`DELETE FROM cached_merchants`);
+
+    for (const merchant of merchants) {
+      dbInstance.runSync(
+        `INSERT INTO cached_merchants (user_id, label, updated_at)
+         VALUES (?, ?, ?)`,
+        merchant.userId,
+        merchant.label,
+        nowIso,
+      );
+    }
+  });
+}
+
+/**
+ * Read cached merchants sorted by label.
+ */
+export function listCachedMerchants(): CachedMerchant[] {
+  const rows = getDb().getAllSync<{
+    user_id: string;
+    label: string;
+    updated_at: string;
+  }>(
+    `SELECT user_id, label, updated_at
+     FROM cached_merchants
+     ORDER BY label ASC`,
+  );
+
+  return rows.map((r) => ({
+    userId: r.user_id,
+    label: r.label,
+    updatedAt: r.updated_at,
+  }));
 }
 
 // ----------------------------------------------------------------
