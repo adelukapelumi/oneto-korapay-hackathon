@@ -13,6 +13,7 @@ import { HealthModule } from "./health/health.module";
 import { SentryModule, SentryGlobalFilter } from '@sentry/nestjs/setup';
 import { APP_FILTER } from '@nestjs/core';
 import { MerchantsModule } from "./merchants/merchants.module";
+import { AdminModule } from "./admin/admin.module";
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { MerchantsModule } from "./merchants/merchants.module";
     MerchantsModule,
     MeModule,
     CashoutModule,
+    AdminModule,
     HealthModule,
   ],
   controllers: [],
