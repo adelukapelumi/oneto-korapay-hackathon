@@ -4,7 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { OtpStoreService, OtpRateLimitExceededError } from "./otp-store.service";
 import { JwtWrapperService } from "./jwt.service";
 import { IOtpProvider } from "../otp-channel/otp-provider.interface";
-import { BadRequestException, ForbiddenException, ServiceUnavailableException, UnauthorizedException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, ServiceUnavailableException, UnauthorizedException } from "@nestjs/common";
 
 describe("MerchantAuthService", () => {
   let service: MerchantAuthService;
@@ -62,6 +62,14 @@ describe("MerchantAuthService", () => {
     cashoutBankCode: "035",
     cashoutAccountNumber: "1234567890",
     cashoutAccountName: "Test Account Name",
+  };
+
+  const attackerMerchantData: MerchantSignupData = {
+    businessName: "Attacker Biz",
+    cashoutBankName: "Bad Bank",
+    cashoutBankCode: "999",
+    cashoutAccountNumber: "0000000000",
+    cashoutAccountName: "Attacker Account",
   };
 
   const getStash = (): Map<string, { merchantData: MerchantSignupData; expiresAt: number }> => {
@@ -123,29 +131,20 @@ describe("MerchantAuthService", () => {
       });
     });
 
-    it("6. requestMerchantOtp: allows overwriting an existing email even when stash cap is reached", async () => {
-      const stash = getStash();
-      const futureExpiry = Date.now() + 60_000;
+    it("6. requestMerchantOtp: rejects second request for same email before expiry and does not overwrite stashed profile", async () => {
+      await expect(service.requestMerchantOtp("test@example.com", validMerchantData)).resolves.toBeUndefined();
 
-      for (let i = 0; i < 999; i += 1) {
-        stash.set(`existing-${i}@example.com`, {
-          merchantData: validMerchantData,
-          expiresAt: futureExpiry,
-        });
-      }
+      const before = getStash().get("test@example.com");
+      expect(before).toBeDefined();
 
-      stash.set("test@example.com", {
-        merchantData: validMerchantData,
-        expiresAt: futureExpiry,
-      });
+      await expect(
+        service.requestMerchantOtp("test@example.com", attackerMerchantData),
+      ).rejects.toThrow(ConflictException);
 
-      await expect(service.requestMerchantOtp("test@example.com", {
-        ...validMerchantData,
-        businessName: "Updated Biz Name",
-      })).resolves.toBeUndefined();
-
-      expect(getStash().get("test@example.com")?.merchantData.businessName).toBe("Updated Biz Name");
-      expect(getStash().size).toBe(1_000);
+      const after = getStash().get("test@example.com");
+      expect(after?.merchantData).toEqual(before?.merchantData);
+      expect(otpStore.saveOtp).toHaveBeenCalledTimes(1);
+      expect(otpProvider.sendOtp).toHaveBeenCalledTimes(1);
     });
 
     it("7. requestMerchantOtp: cleans expired stash entries before enforcing cap", async () => {
@@ -169,7 +168,17 @@ describe("MerchantAuthService", () => {
       expect(getStash().has("fresh@example.com")).toBe(true);
     });
 
-    it("8. requestMerchantOtp: silently ignores ADMIN emails to prevent enumeration", async () => {
+    it("8. requestMerchantOtp: allows same email request after previous pending entry has expired", async () => {
+      getStash().set("test@example.com", {
+        merchantData: validMerchantData,
+        expiresAt: Date.now() - 10_000,
+      });
+
+      await expect(service.requestMerchantOtp("test@example.com", attackerMerchantData)).resolves.toBeUndefined();
+      expect(getStash().get("test@example.com")?.merchantData).toEqual(attackerMerchantData);
+    });
+
+    it("9. requestMerchantOtp: silently ignores ADMIN emails to prevent enumeration", async () => {
       prisma.user.findUnique.mockResolvedValue({ id: "u_1", email: "admin@example.com", role: "ADMIN" });
       await expect(service.requestMerchantOtp("admin@example.com", validMerchantData)).resolves.toBeUndefined();
       expect(otpStore.checkAndRecordRequest).not.toHaveBeenCalled();
@@ -243,6 +252,42 @@ describe("MerchantAuthService", () => {
           userId: "u_1",
           businessName: validMerchantData.businessName,
           businessAddress: undefined,
+          cashoutBankName: validMerchantData.cashoutBankName,
+          cashoutBankCode: validMerchantData.cashoutBankCode,
+          cashoutAccountNumber: validMerchantData.cashoutAccountNumber,
+          cashoutAccountName: validMerchantData.cashoutAccountName,
+        },
+      });
+    });
+
+    it("8b. verifyMerchantOtp: retains original stashed bank details after second signup request for same email is rejected", async () => {
+      const guardedEmail = "guarded@example.com";
+
+      await expect(service.requestMerchantOtp(guardedEmail, validMerchantData)).resolves.toBeUndefined();
+      await expect(service.requestMerchantOtp(guardedEmail, attackerMerchantData)).rejects.toThrow(ConflictException);
+
+      otpStore.verifyOtp.mockResolvedValue(true);
+      prisma.user.findUnique.mockResolvedValue(null);
+      const createdUser = { id: "u_1", email: guardedEmail, role: "MERCHANT", status: "PENDING_VERIFICATION" };
+      prisma.user.upsert.mockResolvedValue(createdUser);
+      jwtService.generateToken.mockReturnValue("token_123");
+
+      await service.verifyMerchantOtp(guardedEmail, code);
+
+      expect(prisma.merchantProfile.upsert).toHaveBeenCalledWith({
+        where: { userId: "u_1" },
+        update: {
+          businessName: validMerchantData.businessName,
+          businessAddress: validMerchantData.businessAddress,
+          cashoutBankName: validMerchantData.cashoutBankName,
+          cashoutBankCode: validMerchantData.cashoutBankCode,
+          cashoutAccountNumber: validMerchantData.cashoutAccountNumber,
+          cashoutAccountName: validMerchantData.cashoutAccountName,
+        },
+        create: {
+          userId: "u_1",
+          businessName: validMerchantData.businessName,
+          businessAddress: validMerchantData.businessAddress,
           cashoutBankName: validMerchantData.cashoutBankName,
           cashoutBankCode: validMerchantData.cashoutBankCode,
           cashoutAccountNumber: validMerchantData.cashoutAccountNumber,

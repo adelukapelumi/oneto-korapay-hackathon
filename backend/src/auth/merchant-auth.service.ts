@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, ForbiddenException, UnauthorizedException, Inject, ServiceUnavailableException } from "@nestjs/common";
+import { Injectable, BadRequestException, ForbiddenException, UnauthorizedException, Inject, ServiceUnavailableException, ConflictException } from "@nestjs/common";
 import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { OtpStoreService, OtpRateLimitExceededError } from "./otp-store.service";
@@ -75,6 +75,8 @@ export class MerchantAuthService {
       // Prevent enumeration and spam to admin emails
       return;
     }
+
+    this.assertNoActivePendingMerchantProfile(email);
 
     try {
       this.otpStore.checkAndRecordRequest(email as unknown as E164);
@@ -203,15 +205,21 @@ export class MerchantAuthService {
 
   private assertMerchantProfileStashHasCapacity(email: string): void {
     this.cleanupExpiredPendingMerchantProfiles();
-
-    if (this.stash.has(email)) {
-      return;
-    }
-
     if (this.stash.size >= MAX_MERCHANT_AUTH_STASH_ENTRIES) {
       throw new ServiceUnavailableException({
         code: "merchant_signup_queue_full",
         message: "Merchant signup is temporarily busy. Please try again shortly.",
+      });
+    }
+  }
+
+  private assertNoActivePendingMerchantProfile(email: string): void {
+    this.cleanupExpiredPendingMerchantProfiles();
+
+    if (this.stash.has(email)) {
+      throw new ConflictException({
+        code: "merchant_signup_pending",
+        message: "Merchant signup is already in progress. Please complete verification or try again shortly.",
       });
     }
   }
