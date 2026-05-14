@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   MAX_OFFLINE_TRANSACTION_KOBO,
   CLOCK_SKEW_TOLERANCE_SECONDS,
+  ENVELOPE_TTL_SECONDS,
 } from "./limits";
 
 /**
@@ -27,6 +28,20 @@ const ISO_DATE = z
   .refine((s) => !Number.isNaN(Date.parse(s)), {
     message: "must be ISO 8601 date string",
   });
+
+const MAX_ENVELOPE_TTL_MS = ENVELOPE_TTL_SECONDS * 1000;
+
+function getEnvelopeTtlMs(timestamp: string, expiresAt: string): number {
+  return new Date(expiresAt).getTime() - new Date(timestamp).getTime();
+}
+
+function hasPositiveTtlWithinLimit(d: {
+  timestamp: string;
+  expiresAt: string;
+}): boolean {
+  const ttlMs = getEnvelopeTtlMs(d.timestamp, d.expiresAt);
+  return ttlMs > 0 && ttlMs <= MAX_ENVELOPE_TTL_MS;
+}
 
 // The "draft" is an envelope before it has a signature.
 // This is what gets hashed to produce the transactionId, and what
@@ -63,8 +78,8 @@ export const EnvelopeDraftSchema = z
     message: "sender and recipient cannot be the same user",
     path: ["recipientUserId"],
   })
-  .refine((d) => new Date(d.expiresAt).getTime() > new Date(d.timestamp).getTime(), {
-    message: "expiresAt must be after timestamp",
+  .refine(hasPositiveTtlWithinLimit, {
+    message: `expiresAt must be after timestamp and within ${MAX_ENVELOPE_TTL_MS}ms`,
     path: ["expiresAt"],
   });
 
@@ -99,6 +114,10 @@ export const TransactionEnvelopeSchema = z
   .refine((d) => d.senderUserId !== d.recipientUserId, {
     message: "sender and recipient cannot be same user",
     path: ["recipientUserId"],
+  })
+  .refine(hasPositiveTtlWithinLimit, {
+    message: `expiresAt must be after timestamp and within ${MAX_ENVELOPE_TTL_MS}ms`,
+    path: ["expiresAt"],
   });
 
 export type TransactionEnvelope = z.infer<typeof TransactionEnvelopeSchema>;

@@ -26,7 +26,7 @@ describe("verifyEnvelopeLocally", () => {
     senderBalanceBeforeKobo: 50000,
     senderBalanceAfterKobo: 40000,
     timestamp: "2023-11-14T21:20:00.000Z",
-    expiresAt: "2023-11-14T21:30:00.000Z",
+    expiresAt: "2023-11-14T21:21:00.000Z",
     requestNonce: "0123456789abcdef0123456789abcdef",
     signature: "ed25519:" + "a".repeat(128),
   };

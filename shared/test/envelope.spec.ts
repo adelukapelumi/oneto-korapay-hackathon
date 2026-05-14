@@ -4,7 +4,9 @@ import {
   signEnvelope,
   verifyEnvelope,
   EnvelopeDraft,
+  EnvelopeDraftSchema,
   TransactionEnvelope,
+  TransactionEnvelopeSchema,
   MAX_OFFLINE_TRANSACTION_KOBO,
   PublicKeyString,
   toPublicKeyString,
@@ -57,6 +59,111 @@ describe("envelope: happy path", () => {
     expect(env1.transactionId).toBe(env2.transactionId);
     // Note: signatures themselves are deterministic with Ed25519.
     expect(env1.signature).toBe(env2.signature);
+  });
+});
+
+describe("envelope: ttl schema bounds", () => {
+  let kp: ReturnType<typeof generateKeypair>;
+
+  beforeAll(() => {
+    kp = generateKeypair();
+  });
+
+  it("draft with expiresAt exactly timestamp + 60s passes", () => {
+    const now = Date.now();
+    const draft = makeDraft({
+      timestamp: new Date(now).toISOString(),
+      expiresAt: new Date(now + 60_000).toISOString(),
+    });
+    const result = EnvelopeDraftSchema.safeParse(draft);
+    expect(result.success).toBe(true);
+  });
+
+  it("full TransactionEnvelope with expiresAt exactly timestamp + 60s passes", () => {
+    const now = Date.now();
+    const draft = makeDraft({
+      senderPublicKey: kp.publicKeyString,
+      timestamp: new Date(now).toISOString(),
+      expiresAt: new Date(now + 60_000).toISOString(),
+    });
+    const envelope = signEnvelope(draft, kp.privateKey);
+    const result = TransactionEnvelopeSchema.safeParse(envelope);
+    expect(result.success).toBe(true);
+  });
+
+  it("draft with expiresAt timestamp + 60_001ms fails", () => {
+    const now = Date.now();
+    const draft = makeDraft({
+      timestamp: new Date(now).toISOString(),
+      expiresAt: new Date(now + 60_001).toISOString(),
+    });
+    const result = EnvelopeDraftSchema.safeParse(draft);
+    expect(result.success).toBe(false);
+  });
+
+  it("full TransactionEnvelope with expiresAt timestamp + 60_001ms fails", () => {
+    const now = Date.now();
+    const draft = makeDraft({
+      senderPublicKey: kp.publicKeyString,
+      timestamp: new Date(now).toISOString(),
+      expiresAt: new Date(now + 60_000).toISOString(),
+    });
+    const envelope = signEnvelope(draft, kp.privateKey);
+    const mutatedTtlEnvelope: TransactionEnvelope = {
+      ...envelope,
+      expiresAt: new Date(now + 60_001).toISOString(),
+    };
+    const result = TransactionEnvelopeSchema.safeParse(mutatedTtlEnvelope);
+    expect(result.success).toBe(false);
+  });
+
+  it("expiresAt equal to timestamp fails for draft and full envelope", () => {
+    const now = Date.now();
+    const ts = new Date(now).toISOString();
+    const draft = makeDraft({
+      senderPublicKey: kp.publicKeyString,
+      timestamp: ts,
+      expiresAt: ts,
+    });
+    const draftResult = EnvelopeDraftSchema.safeParse(draft);
+    expect(draftResult.success).toBe(false);
+
+    const baseDraft = makeDraft({
+      senderPublicKey: kp.publicKeyString,
+      timestamp: ts,
+      expiresAt: new Date(now + 60_000).toISOString(),
+    });
+    const envelope = signEnvelope(baseDraft, kp.privateKey);
+    const equalExpiryEnvelope: TransactionEnvelope = {
+      ...envelope,
+      expiresAt: ts,
+    };
+    const envelopeResult = TransactionEnvelopeSchema.safeParse(equalExpiryEnvelope);
+    expect(envelopeResult.success).toBe(false);
+  });
+
+  it("expiresAt before timestamp fails for draft and full envelope", () => {
+    const now = Date.now();
+    const draft = makeDraft({
+      senderPublicKey: kp.publicKeyString,
+      timestamp: new Date(now).toISOString(),
+      expiresAt: new Date(now - 1).toISOString(),
+    });
+    const draftResult = EnvelopeDraftSchema.safeParse(draft);
+    expect(draftResult.success).toBe(false);
+
+    const baseDraft = makeDraft({
+      senderPublicKey: kp.publicKeyString,
+      timestamp: new Date(now).toISOString(),
+      expiresAt: new Date(now + 60_000).toISOString(),
+    });
+    const envelope = signEnvelope(baseDraft, kp.privateKey);
+    const beforeExpiryEnvelope: TransactionEnvelope = {
+      ...envelope,
+      expiresAt: new Date(now - 1).toISOString(),
+    };
+    const envelopeResult = TransactionEnvelopeSchema.safeParse(beforeExpiryEnvelope);
+    expect(envelopeResult.success).toBe(false);
   });
 });
 
