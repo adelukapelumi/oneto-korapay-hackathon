@@ -144,12 +144,14 @@ function createMockDb() {
   function getFirstSync<T>(source: string, ...params: (string | number | null)[]): T | null {
     const s = source.trim().toUpperCase();
 
-    // SUM pending outgoing
+    // SUM pending outgoing/incoming
     if (s.includes("COALESCE(SUM(AMOUNT_KOBO)") && s.includes("PENDING_TRANSACTIONS")) {
       ensureTable("pending_transactions");
       const rows = tables.get("pending_transactions")!;
+      const direction: "incoming" | "outgoing" =
+        s.includes("DIRECTION = 'INCOMING'") ? "incoming" : "outgoing";
       const total = rows
-        .filter((r) => r["direction"] === "outgoing" && r["status"] === "pending_reconciliation")
+        .filter((r) => r["direction"] === direction && r["status"] === "pending_reconciliation")
         .reduce((sum, r) => sum + (r["amount_kobo"] as number), 0);
       return { total } as unknown as T;
     }
@@ -265,6 +267,7 @@ import {
   initDb,
   insertPendingTransaction,
   sumPendingOutgoingKobo,
+  sumPendingIncomingKobo,
   getNextSequenceNumber,
   listPendingTransactions,
   getLocalState,
@@ -382,6 +385,77 @@ describe("sumPendingOutgoingKobo", () => {
       createdAt: now,
     });
     expect(sumPendingOutgoingKobo()).toBe(50_000);
+  });
+});
+
+describe("sumPendingIncomingKobo", () => {
+  beforeEach(() => resetDb());
+
+  it("returns 0 when there are no incoming transactions", () => {
+    expect(sumPendingIncomingKobo()).toBe(0);
+  });
+
+  it("sums only incoming pending transactions", () => {
+    const now = new Date().toISOString();
+    insertPendingTransaction({
+      id: "tx_0000000000000101",
+      envelopeJson: makeEnvelopeJson(),
+      recipientId: "u_merchant000000001",
+      recipientLabel: undefined,
+      amountKobo: 30_000,
+      sequenceNumber: 1,
+      direction: "incoming",
+      createdAt: now,
+    });
+    insertPendingTransaction({
+      id: "tx_0000000000000102",
+      envelopeJson: makeEnvelopeJson(),
+      recipientId: "u_merchant000000001",
+      recipientLabel: undefined,
+      amountKobo: 20_000,
+      sequenceNumber: 2,
+      direction: "incoming",
+      createdAt: now,
+    });
+    insertPendingTransaction({
+      id: "tx_0000000000000103",
+      envelopeJson: makeEnvelopeJson(),
+      recipientId: "u_student0000000001",
+      recipientLabel: undefined,
+      amountKobo: 99_000,
+      sequenceNumber: 3,
+      direction: "outgoing",
+      createdAt: now,
+    });
+
+    expect(sumPendingIncomingKobo()).toBe(50_000);
+  });
+
+  it("does not count already reconciled incoming transactions", () => {
+    insertPendingTransaction({
+      id: "tx_0000000000000104",
+      envelopeJson: makeEnvelopeJson(),
+      recipientId: "u_merchant000000001",
+      recipientLabel: undefined,
+      amountKobo: 40_000,
+      sequenceNumber: 1,
+      direction: "incoming",
+      createdAt: "2026-05-01T10:00:00.000Z",
+    });
+    insertPendingTransaction({
+      id: "tx_0000000000000105",
+      envelopeJson: makeEnvelopeJson(),
+      recipientId: "u_merchant000000001",
+      recipientLabel: undefined,
+      amountKobo: 10_000,
+      sequenceNumber: 2,
+      direction: "incoming",
+      createdAt: "2026-05-01T11:00:00.000Z",
+    });
+
+    updateTransactionStatus("tx_0000000000000104", "reconciled");
+
+    expect(sumPendingIncomingKobo()).toBe(10_000);
   });
 });
 

@@ -159,6 +159,22 @@ export function sumPendingOutgoingKobo(): number {
 }
 
 /**
+ * Sum of all pending incoming transactions that have not yet been reconciled.
+ * Used by merchant receive flow to estimate projected balance before accepting
+ * another offline incoming envelope.
+ *
+ * Returns 0 if there are no pending incoming transactions.
+ */
+export function sumPendingIncomingKobo(): number {
+  const row = getDb().getFirstSync<{ total: number | null }>(
+    `SELECT COALESCE(SUM(amount_kobo), 0) AS total
+     FROM pending_transactions
+     WHERE direction = 'incoming' AND status = 'pending_reconciliation'`,
+  );
+  return row?.total ?? 0;
+}
+
+/**
  * Get the next sequence number for a new outgoing envelope.
  *
  * Sequence = MAX(existing outgoing sequence numbers) + 1, or 1 if none.

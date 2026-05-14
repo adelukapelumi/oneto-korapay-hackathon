@@ -6,6 +6,11 @@ import { useRouter } from "expo-router";
 import { verifyEnvelopeLocally } from "../../../src/payment/verify-local";
 import { insertPendingTransaction } from "../../../src/ledger/db";
 import { useAuth } from "../../../src/auth/auth-state";
+import {
+  assertIncomingWithinRegulatoryHeadroom,
+  MerchantBalanceCapExceededError,
+  parseVerifiedBalanceKoboOrThrow,
+} from "../../../src/payment/incoming-headroom";
 import { useThemeMode } from "../../../src/theme/theme-provider";
 import {
   getTheme,
@@ -138,6 +143,30 @@ export default function ScanEnvelopeScreen() {
     if (envelope.recipientUserId !== state.user.id) {
       Alert.alert("Invalid Payment", "This payment is not addressed to this merchant.", [
         { text: "Try Again", onPress: () => setScanned(false) }
+      ]);
+      return;
+    }
+
+    try {
+      const verifiedBalanceKobo = parseVerifiedBalanceKoboOrThrow(
+        state.user.verifiedBalanceKobo,
+      );
+      assertIncomingWithinRegulatoryHeadroom(
+        verifiedBalanceKobo,
+        envelope.amountKobo,
+      );
+    } catch (error) {
+      if (error instanceof MerchantBalanceCapExceededError) {
+        Alert.alert(
+          "Cannot Accept Payment",
+          "This payment would push your merchant balance above the allowed limit. Reconcile or cash out first, then try again.",
+          [{ text: "Try Again", onPress: () => setScanned(false) }],
+        );
+        return;
+      }
+
+      Alert.alert("Balance Check Failed", "Could not validate balance headroom.", [
+        { text: "Try Again", onPress: () => setScanned(false) },
       ]);
       return;
     }
