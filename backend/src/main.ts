@@ -13,6 +13,9 @@ async function bootstrap() {
     bufferLogs: true,
   });
 
+  // Required behind Railway/reverse proxies so throttling keys on real client IP.
+  app.getHttpAdapter().getInstance().set('trust proxy', 1);
+
   app.useLogger(app.get(Logger));
   app.use(helmet());
 
