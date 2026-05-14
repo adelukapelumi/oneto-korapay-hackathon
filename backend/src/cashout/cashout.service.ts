@@ -19,7 +19,93 @@ export class CashoutService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly korapayService: KorapayService,
-  ) {}
+  ) {
+    // Periodically recover stuck cashouts that never reached terminal state
+    setInterval(() => this.recoverStuckCashouts(), 5 * 60 * 1000).unref();
+  }
+
+  async recoverStuckCashouts() {
+    try {
+      const fiveMinsAgo = new Date(Date.now() - 5 * 60 * 1000);
+      const stuckCashouts = await this.prisma.cashout.findMany({
+        where: {
+          status: CashoutStatus.PROCESSING,
+          approvedAt: { lt: fiveMinsAgo },
+        },
+      });
+
+      for (const cashout of stuckCashouts) {
+        if (!cashout.korapayReference) continue;
+
+        try {
+          const { status } = await this.korapayService.verifyTransaction(cashout.korapayReference);
+          
+          if (status === 'success') {
+            await this.prisma.cashout.updateMany({
+              where: { id: cashout.id, status: CashoutStatus.PROCESSING },
+              data: { status: CashoutStatus.COMPLETED, completedAt: new Date() },
+            });
+          } else if (status === 'failed' || status === 'not_found') {
+            await this.prisma.$transaction(
+              async (tx) => {
+                const transition = await tx.cashout.updateMany({
+                  where: { id: cashout.id, status: CashoutStatus.PROCESSING },
+                  data: {
+                    status: CashoutStatus.FAILED,
+                    failureReason: status === 'not_found' ? 'payout_initiation_failed_never_reached_gateway' : 'payout_failed_at_gateway_recovered',
+                  },
+                });
+
+                if (transition.count === 0) return;
+
+                const merchant = await tx.user.findUnique({ where: { id: cashout.merchantUserId } });
+                const operating = await tx.user.findUnique({ where: { id: this.OPERATING_USER_ID } });
+
+                if (merchant && operating) {
+                  const reverseRef = `${cashout.korapayReference}_recovery_fail`;
+
+                  await tx.ledgerEntry.create({
+                    data: {
+                      transactionId: reverseRef,
+                      userId: merchant.id,
+                      type: LedgerEntryType.CREDIT,
+                      amountKobo: cashout.amountKobo,
+                      balanceAfterKobo: merchant.verifiedBalanceKobo + cashout.amountKobo,
+                      description: `Cashout recovery refund ${cashout.korapayReference}`,
+                    },
+                  });
+                  await tx.user.update({
+                    where: { id: merchant.id },
+                    data: { verifiedBalanceKobo: { increment: cashout.amountKobo } },
+                  });
+
+                  await tx.ledgerEntry.create({
+                    data: {
+                      transactionId: reverseRef,
+                      userId: operating.id,
+                      type: LedgerEntryType.DEBIT,
+                      amountKobo: cashout.amountKobo,
+                      balanceAfterKobo: operating.verifiedBalanceKobo - cashout.amountKobo,
+                      description: `Cashout recovery reversal from merchant ${merchant.id}`,
+                    },
+                  });
+                  await tx.user.update({
+                    where: { id: operating.id },
+                    data: { verifiedBalanceKobo: { decrement: cashout.amountKobo } },
+                  });
+                }
+              },
+              { isolationLevel: 'Serializable' },
+            );
+          }
+        } catch (err) {
+          this.logger.error(`Failed to recover stuck cashout ${cashout.id}:`, err);
+        }
+      }
+    } catch (err) {
+      this.logger.error('Error in recoverStuckCashouts sweep:', err);
+    }
+  }
 
   async requestCashout(merchantUserId: string) {
     const user = await this.prisma.user.findUnique({
@@ -278,18 +364,32 @@ export class CashoutService {
       return { success: true };
     }
 
-    if (cashout.status === CashoutStatus.COMPLETED || cashout.status === CashoutStatus.FAILED) {
-      return { success: true };
-    }
-
     if (event === 'transfer.success') {
-      await this.prisma.cashout.update({
-        where: { id: cashout.id },
+      // Atomic state transition: PROCESSING -> COMPLETED.
+      // If count is 0, webhook is duplicate/out-of-order and becomes a no-op.
+      await this.prisma.cashout.updateMany({
+        where: { id: cashout.id, status: CashoutStatus.PROCESSING },
         data: { status: CashoutStatus.COMPLETED, completedAt: new Date(), korapayResponse: payload },
       });
     } else if (event === 'transfer.failed') {
       await this.prisma.$transaction(
         async (tx) => {
+          // Atomic state transition: PROCESSING -> FAILED.
+          // Only the first matching webhook is allowed to run refund side-effects.
+          const transition = await tx.cashout.updateMany({
+            where: { id: cashout.id, status: CashoutStatus.PROCESSING },
+            data: {
+              status: CashoutStatus.FAILED,
+              failureReason: payload.data.reason || 'payout_failed_at_gateway',
+              korapayResponse: payload,
+            },
+          });
+
+          // Duplicate or already-terminal webhook: idempotent no-op.
+          if (transition.count === 0) {
+            return;
+          }
+
           const merchant = await tx.user.findUnique({ where: { id: cashout.merchantUserId } });
           const operating = await tx.user.findUnique({ where: { id: this.OPERATING_USER_ID } });
 
@@ -326,15 +426,6 @@ export class CashoutService {
               data: { verifiedBalanceKobo: { decrement: cashout.amountKobo } },
             });
           }
-
-          await tx.cashout.update({
-            where: { id: cashout.id },
-            data: {
-              status: CashoutStatus.FAILED,
-              failureReason: payload.data.reason || 'payout_failed_at_gateway',
-              korapayResponse: payload,
-            },
-          });
         },
         { isolationLevel: 'Serializable' },
       );

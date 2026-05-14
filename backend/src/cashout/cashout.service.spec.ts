@@ -22,6 +22,7 @@ describe('CashoutService', () => {
       findMany: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
     },
     ledgerEntry: {
       create: jest.fn(),
@@ -46,6 +47,7 @@ describe('CashoutService', () => {
     prisma = module.get<PrismaService>(PrismaService);
     korapay = module.get<KorapayService>(KorapayService);
     jest.clearAllMocks();
+    mockPrisma.cashout.updateMany.mockResolvedValue({ count: 1 });
   });
 
   const merchantId = 'u_merchant';
@@ -301,6 +303,28 @@ describe('CashoutService', () => {
         data: { status: CashoutStatus.FAILED, failureReason: 'payout_initiation_failed' },
       });
     });
+
+    it('Korapay timeout error: compensating entries and FAILED status (no false success)', async () => {
+      mockKorapay.initiatePayout.mockRejectedValue(
+        new Error('Korapay request timed out after 10000ms'),
+      );
+
+      const cashoutServiceWithPrivateMethod = service as unknown as {
+        initiateKorapayPayout: (cashoutId: string, korapayRef: string) => Promise<void>;
+      };
+      await cashoutServiceWithPrivateMethod.initiateKorapayPayout(cashoutId, korapayRef);
+
+      expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ type: LedgerEntryType.CREDIT, userId: merchantId })
+      }));
+      expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ type: LedgerEntryType.DEBIT, userId: operatingId })
+      }));
+      expect(mockPrisma.cashout.update).toHaveBeenCalledWith({
+        where: { id: cashoutId },
+        data: { status: CashoutStatus.FAILED, failureReason: 'payout_initiation_failed' },
+      });
+    });
   });
 
   describe('handlePayoutWebhook', () => {
@@ -324,8 +348,8 @@ describe('CashoutService', () => {
 
       const result = await service.handlePayoutWebhook(payload, signature);
       expect(result.success).toBe(true);
-      expect(mockPrisma.cashout.update).toHaveBeenCalledWith({
-        where: { id: 'c_123' },
+      expect(mockPrisma.cashout.updateMany).toHaveBeenCalledWith({
+        where: { id: 'c_123', status: CashoutStatus.PROCESSING },
         data: expect.objectContaining({ status: CashoutStatus.COMPLETED }),
       });
     });
@@ -347,13 +371,13 @@ describe('CashoutService', () => {
 
       await service.handlePayoutWebhook(failPayload, signature);
 
+      expect(mockPrisma.cashout.updateMany).toHaveBeenCalledWith({
+        where: { id: 'c_123', status: CashoutStatus.PROCESSING },
+        data: expect.objectContaining({ status: CashoutStatus.FAILED, failureReason: 'Declined' }),
+      });
       expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledWith(expect.objectContaining({
         data: expect.objectContaining({ type: LedgerEntryType.CREDIT, userId: merchantId })
       }));
-      expect(mockPrisma.cashout.update).toHaveBeenCalledWith({
-        where: { id: 'c_123' },
-        data: expect.objectContaining({ status: CashoutStatus.FAILED, failureReason: 'Declined' }),
-      });
     });
 
     it('21. handlePayoutWebhook: unknown korapayReference -> no-op', async () => {
@@ -368,10 +392,13 @@ describe('CashoutService', () => {
     it('22. handlePayoutWebhook: duplicate webhook (already COMPLETED) -> no-op', async () => {
       mockKorapay.verifyWebhookSignature.mockReturnValue(true);
       mockPrisma.cashout.findUnique.mockResolvedValue({ id: 'c_123', status: CashoutStatus.COMPLETED });
+      mockPrisma.cashout.updateMany.mockResolvedValue({ count: 0 });
 
       const result = await service.handlePayoutWebhook(payload, signature);
       expect(result.success).toBe(true);
       expect(mockPrisma.cashout.update).not.toHaveBeenCalled();
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
+      expect(mockPrisma.ledgerEntry.create).not.toHaveBeenCalled();
     });
 
     it('23. handlePayoutWebhook: unknown event type -> no-op', async () => {
@@ -396,6 +423,112 @@ describe('CashoutService', () => {
       const result = await service.handlePayoutWebhook(spoofPayload, signature);
       expect(result.success).toBe(true);
       expect(mockPrisma.cashout.update).not.toHaveBeenCalled();
+    });
+
+    it('duplicate transfer.failed webhook refunds merchant only once', async () => {
+      const failPayload = {
+        ...payload,
+        event: 'transfer.failed',
+        data: { reference: 'ref_123', status: 'failed', reason: 'Declined' },
+      };
+      mockKorapay.verifyWebhookSignature.mockReturnValue(true);
+      mockPrisma.cashout.findUnique.mockResolvedValue({
+        id: 'c_123',
+        merchantUserId: merchantId,
+        amountKobo: BigInt(5000),
+        status: CashoutStatus.PROCESSING,
+      });
+      mockPrisma.cashout.updateMany
+        .mockResolvedValueOnce({ count: 1 })
+        .mockResolvedValueOnce({ count: 0 });
+      mockPrisma.user.findUnique.mockImplementation((args: any) => {
+        if (args.where.id === merchantId) return Promise.resolve({ ...mockMerchant, verifiedBalanceKobo: BigInt(0) });
+        if (args.where.id === operatingId) return Promise.resolve({ id: operatingId, verifiedBalanceKobo: BigInt(5000) });
+        return Promise.resolve(null);
+      });
+
+      const first = await service.handlePayoutWebhook(failPayload, signature);
+      const second = await service.handlePayoutWebhook(failPayload, signature);
+
+      expect(first.success).toBe(true);
+      expect(second.success).toBe(true);
+      expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledTimes(2);
+      expect(mockPrisma.user.update).toHaveBeenCalledTimes(2);
+    });
+
+    it('concurrent transfer.failed webhook simulation refunds only once', async () => {
+      const failPayload = {
+        ...payload,
+        event: 'transfer.failed',
+        data: { reference: 'ref_123', status: 'failed', reason: 'Declined' },
+      };
+      mockKorapay.verifyWebhookSignature.mockReturnValue(true);
+      mockPrisma.cashout.findUnique.mockResolvedValue({
+        id: 'c_123',
+        merchantUserId: merchantId,
+        amountKobo: BigInt(5000),
+        status: CashoutStatus.PROCESSING,
+      });
+      mockPrisma.cashout.updateMany
+        .mockImplementationOnce(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          return { count: 1 };
+        })
+        .mockResolvedValueOnce({ count: 0 });
+      mockPrisma.user.findUnique.mockImplementation((args: any) => {
+        if (args.where.id === merchantId) return Promise.resolve({ ...mockMerchant, verifiedBalanceKobo: BigInt(0) });
+        if (args.where.id === operatingId) return Promise.resolve({ id: operatingId, verifiedBalanceKobo: BigInt(5000) });
+        return Promise.resolve(null);
+      });
+
+      const [r1, r2] = await Promise.all([
+        service.handlePayoutWebhook(failPayload, signature),
+        service.handlePayoutWebhook(failPayload, signature),
+      ]);
+
+      expect(r1.success).toBe(true);
+      expect(r2.success).toBe(true);
+      expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledTimes(2);
+      expect(mockPrisma.user.update).toHaveBeenCalledTimes(2);
+    });
+
+    it('transfer.failed after terminal status is idempotent no-op', async () => {
+      const failPayload = {
+        ...payload,
+        event: 'transfer.failed',
+        data: { reference: 'ref_123', status: 'failed', reason: 'Declined' },
+      };
+      mockKorapay.verifyWebhookSignature.mockReturnValue(true);
+      mockPrisma.cashout.findUnique.mockResolvedValue({
+        id: 'c_123',
+        merchantUserId: merchantId,
+        amountKobo: BigInt(5000),
+        status: CashoutStatus.FAILED,
+      });
+      mockPrisma.cashout.updateMany.mockResolvedValue({ count: 0 });
+
+      const result = await service.handlePayoutWebhook(failPayload, signature);
+      expect(result.success).toBe(true);
+      expect(mockPrisma.ledgerEntry.create).not.toHaveBeenCalled();
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('transfer.success after terminal status does not mutate again', async () => {
+      mockKorapay.verifyWebhookSignature.mockReturnValue(true);
+      mockPrisma.cashout.findUnique.mockResolvedValue({
+        id: 'c_123',
+        status: CashoutStatus.COMPLETED,
+      });
+      mockPrisma.cashout.updateMany.mockResolvedValue({ count: 0 });
+
+      const result = await service.handlePayoutWebhook(payload, signature);
+      expect(result.success).toBe(true);
+      expect(mockPrisma.cashout.updateMany).toHaveBeenCalledWith({
+        where: { id: 'c_123', status: CashoutStatus.PROCESSING },
+        data: expect.objectContaining({ status: CashoutStatus.COMPLETED }),
+      });
+      expect(mockPrisma.cashout.update).not.toHaveBeenCalled();
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
     });
   });
 });

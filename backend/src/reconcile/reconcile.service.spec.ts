@@ -26,9 +26,11 @@ describe('ReconcileService', () => {
     },
     processedSequence: {
       create: jest.fn(),
+      findUnique: jest.fn(),
     },
     ledgerEntry: {
       create: jest.fn(),
+      findMany: jest.fn(),
     },
   };
 
@@ -174,8 +176,8 @@ describe('ReconcileService', () => {
 
   it('7. Expired: expiresAt in the past', async () => {
     const draft = createValidEnvelopeDraft(senderId, recipientId, senderKey.publicKeyString);
-    draft.timestamp = new Date(Date.now() - 100000).toISOString();
-    draft.expiresAt = new Date(Date.now() - 10000).toISOString(); // expired 10s ago
+    draft.timestamp = new Date(Date.now() - 20000).toISOString();
+    draft.expiresAt = new Date(Date.now() - 10000).toISOString(); // expired 10s ago, TTL 10s
     const envelope = signEnvelope(draft, senderKey.privateKey);
 
     mockPrisma.user.findUnique.mockResolvedValue(createTestUser(senderId, senderKey.publicKeyString));
@@ -315,7 +317,30 @@ describe('ReconcileService', () => {
     // Simulate P2002 error on second call
     mockPrisma.processedSequence.create
       .mockResolvedValueOnce({}) // first call succeeds
-      .mockRejectedValueOnce(new Prisma.PrismaClientKnownRequestError('Duplicate', { code: 'P2002', clientVersion: '5.x' }));
+      .mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError('Duplicate', {
+          code: 'P2002',
+          clientVersion: '5.x',
+          meta: { target: ['userId', 'sequenceNumber'] },
+        }),
+      );
+    mockPrisma.processedSequence.findUnique.mockResolvedValue({
+      transactionId: envelope.transactionId,
+    });
+    mockPrisma.ledgerEntry.findMany.mockResolvedValue([
+      {
+        userId: senderId,
+        type: 'DEBIT',
+        amountKobo: BigInt(envelope.amountKobo),
+        envelopeJson: envelope,
+      },
+      {
+        userId: recipientId,
+        type: 'CREDIT',
+        amountKobo: BigInt(envelope.amountKobo),
+        envelopeJson: envelope,
+      },
+    ]);
 
     const res1 = await service.reconcile(recipientId, [envelope]);
     const res2 = await service.reconcile(recipientId, [envelope]);
@@ -344,13 +369,24 @@ describe('ReconcileService', () => {
     
     mockPrisma.processedSequence.create
       .mockResolvedValueOnce({})
-      .mockRejectedValueOnce(new Prisma.PrismaClientKnownRequestError('Duplicate', { code: 'P2002', clientVersion: '5.x' }));
+      .mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError('Duplicate', {
+          code: 'P2002',
+          clientVersion: '5.x',
+          meta: { target: ['userId', 'sequenceNumber'] },
+        }),
+      );
+    mockPrisma.processedSequence.findUnique.mockResolvedValue({
+      transactionId: env1.transactionId,
+    });
 
     const res1 = await service.reconcile(recipientId, [env1]);
-    const res2 = await service.reconcile(recipientId, [env2]);
+    const res2 = await service.reconcileOneInternal(recipientId, env2);
 
     expect(res1[0]?.status).toBe('success');
-    expect(res2[0]?.status).toBe('success'); // Idempotent success (sequence already consumed)
+    expect(res2).toMatchObject({ status: 'rejected', reason: 'sequence_collision' });
+    // First reconcile writes sender+recipient updates once; replay collision must not add more credits.
+    expect(mockPrisma.user.update).toHaveBeenCalledTimes(2);
   });
 
   it('17. Out-of-order sequence: 10 before 9', async () => {
@@ -420,6 +456,29 @@ describe('ReconcileService', () => {
       return Promise.resolve(null);
     });
     mockPrisma.processedSequence.create.mockRejectedValue(new Error('DB crash'));
+
+    const result = await service.reconcileOneInternal(recipientId, envelope);
+    expect(result).toMatchObject({ status: 'rejected', reason: 'internal_error' });
+  });
+
+  it('fails closed for ambiguous P2002 target (no idempotent success)', async () => {
+    const draft = createValidEnvelopeDraft(senderId, recipientId, senderKey.publicKeyString);
+    const envelope = signEnvelope(draft, senderKey.privateKey);
+
+    mockPrisma.user.findUnique.mockImplementation((args: any) => {
+      const where = args?.where;
+      if (where?.id === senderId) return Promise.resolve(createTestUser(senderId, senderKey.publicKeyString));
+      if (where?.id === recipientId) return Promise.resolve(createTestUser(recipientId, 'dummy'));
+      return Promise.resolve(null);
+    });
+
+    // No target metadata -> ambiguous uniqueness source.
+    mockPrisma.processedSequence.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('Duplicate', {
+        code: 'P2002',
+        clientVersion: '5.x',
+      }),
+    );
 
     const result = await service.reconcileOneInternal(recipientId, envelope);
     expect(result).toMatchObject({ status: 'rejected', reason: 'internal_error' });
@@ -567,5 +626,38 @@ describe('ReconcileService', () => {
 
     const result = await service.reconcileOneInternal(recipientId, envelope);
     expect(result).toEqual({ transactionId: envelope.transactionId, status: 'success' });
+  });
+
+  it('20. Retries on P2034 serialization anomaly and succeeds if subsequent attempt works', async () => {
+    const draft = createValidEnvelopeDraft(senderId, recipientId, senderKey.publicKeyString);
+    const envelope = signEnvelope(draft, senderKey.privateKey);
+
+    mockPrisma.user.findUnique.mockImplementation((args: any) => {
+      const where = args?.where;
+      if (where?.id === senderId) return Promise.resolve(createTestUser(senderId, senderKey.publicKeyString));
+      if (where?.id === recipientId) return Promise.resolve(createTestUser(recipientId, 'dummy'));
+      return Promise.resolve(null);
+    });
+
+    let attempt = 0;
+    // Temporarily override $transaction to throw P2034 twice, then succeed
+    mockPrisma.$transaction.mockImplementation(async (callback: any) => {
+      attempt++;
+      if (attempt < 3) {
+        throw new Prisma.PrismaClientKnownRequestError('Serialization anomaly', {
+          code: 'P2034',
+          clientVersion: '5.x',
+        });
+      }
+      return callback(mockPrisma); // success on 3rd attempt
+    });
+
+    const result = await service.reconcileOneInternal(recipientId, envelope);
+
+    expect(result).toEqual({ transactionId: envelope.transactionId, status: 'success' });
+    expect(attempt).toBe(3);
+
+    // Restore the original mock implementation
+    mockPrisma.$transaction.mockImplementation((callback: any) => callback(mockPrisma));
   });
 });
