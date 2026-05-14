@@ -36,6 +36,8 @@ export interface KorapayPayoutResponse {
   };
 }
 
+const KORAPAY_FETCH_TIMEOUT_MS = 10_000;
+
 @Injectable()
 export class KorapayService {
   private readonly logger = new Logger(KorapayService.name);
@@ -92,7 +94,7 @@ export class KorapayService {
     };
 
     try {
-      const response = await fetch(`${this.baseUrl}/charges/initialize`, {
+      const response = await this.fetchWithTimeout(`${this.baseUrl}/charges/initialize`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -141,7 +143,7 @@ export class KorapayService {
     };
 
     try {
-      const response = await fetch(`${this.baseUrl}/transactions/disburse`, {
+      const response = await this.fetchWithTimeout(`${this.baseUrl}/transactions/disburse`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -172,6 +174,77 @@ export class KorapayService {
       }
       this.logger.error(`Failed to reach Korapay Payout API: ${error}`);
       throw new InternalServerErrorException('Failed to communicate with payment gateway');
+    }
+  }
+
+  async verifyTransaction(reference: string): Promise<{ status: string }> {
+    try {
+      const response = await this.fetchWithTimeout(`${this.baseUrl}/transactions/${reference}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${this.secretKey}`,
+        },
+      });
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          return { status: 'not_found' };
+        }
+        const errorText = await response.text();
+        this.logger.error(`Korapay verify transaction failed: ${response.status} ${errorText}`);
+        throw new InternalServerErrorException('Verify transaction failed');
+      }
+
+      const json = await response.json() as { status: boolean, data?: { status: string } };
+      if (!json.status || !json.data) {
+        throw new InternalServerErrorException('Invalid verification response');
+      }
+
+      return { status: json.data.status };
+    } catch (error) {
+      if (error instanceof InternalServerErrorException) {
+        throw error;
+      }
+      this.logger.error(`Failed to verify Korapay transaction ${reference}: ${error}`);
+      throw new InternalServerErrorException('Failed to verify transaction');
+    }
+  }
+
+  private async fetchWithTimeout(
+    url: string,
+    init: RequestInit,
+    timeoutMs: number = KORAPAY_FETCH_TIMEOUT_MS,
+  ): Promise<Response> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    // Preserve upstream cancellation if a signal is already provided.
+    let removeExternalAbortListener: (() => void) | undefined;
+    if (init.signal) {
+      if (init.signal.aborted) {
+        controller.abort();
+      } else {
+        const onAbort = () => controller.abort();
+        init.signal.addEventListener('abort', onAbort, { once: true });
+        removeExternalAbortListener = () => {
+          init.signal?.removeEventListener('abort', onAbort);
+        };
+      }
+    }
+
+    try {
+      return await fetch(url, {
+        ...init,
+        signal: controller.signal,
+      });
+    } catch (error: unknown) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error(`Korapay request timed out after ${timeoutMs}ms`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+      removeExternalAbortListener?.();
     }
   }
 

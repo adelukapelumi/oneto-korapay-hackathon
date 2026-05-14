@@ -401,5 +401,23 @@ describe('TopupService', () => {
       const result = await service.handleWebhook(extraFieldsPayload, 'good-sig');
       expect(result).toEqual({ success: true });
     });
+
+    it('charge.success: rejects invalid amount strings (NaN)', async () => {
+      mockKorapay.verifyWebhookSignature.mockReturnValue(true);
+      const payload = {
+        event: 'charge.success',
+        data: { reference: 'top_123', amount: "invalid_amount", status: 'success', customer: { email: 'test@cu.edu.ng' } },
+      };
+      await expect(service.handleWebhook(payload, 'good-sig')).rejects.toThrow(BadRequestException);
+    });
+
+    it('charge.success: rejects negative amounts', async () => {
+      mockKorapay.verifyWebhookSignature.mockReturnValue(true);
+      const payload = {
+        event: 'charge.success',
+        data: { reference: 'top_123', amount: -500, status: 'success', customer: { email: 'test@cu.edu.ng' } },
+      };
+      await expect(service.handleWebhook(payload, 'good-sig')).rejects.toThrow(BadRequestException);
+    });
   });
 });

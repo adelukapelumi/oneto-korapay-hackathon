@@ -89,10 +89,15 @@ export class TopupService {
     }
 
     const reference = data.reference;
-    const amountNgn = data.amount;
     const customerEmail = data.customer?.email;
 
-    const amountKobo = Math.round(Number(amountNgn || 0) * 100);
+    const amountNgn = Number(data.amount);
+    if (isNaN(amountNgn) || !isFinite(amountNgn) || amountNgn <= 0) {
+      this.logger.error(`Invalid amount in webhook payload: ${data.amount}`);
+      throw new BadRequestException('Invalid amount in webhook payload');
+    }
+
+    const amountKobo = Math.round(amountNgn * 100);
 
     // Primary: look up user via the PENDING PaymentTopup created during initiation.
     // Fallback: customer email from webhook payload (may be missing in sandbox).

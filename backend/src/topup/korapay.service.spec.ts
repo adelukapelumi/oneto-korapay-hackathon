@@ -6,7 +6,6 @@ import { InternalServerErrorException } from '@nestjs/common';
 
 describe('KorapayService', () => {
   let service: KorapayService;
-  let configService: ConfigService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -26,10 +25,10 @@ describe('KorapayService', () => {
     }).compile();
 
     service = module.get<KorapayService>(KorapayService);
-    configService = module.get<ConfigService>(ConfigService);
   });
 
   afterEach(() => {
+    jest.useRealTimers();
     jest.restoreAllMocks();
   });
 
@@ -116,6 +115,62 @@ describe('KorapayService', () => {
         reference: 'top_123',
         customerEmail: 'test@cu.edu.ng',
       })).rejects.toThrow(InternalServerErrorException);
+    });
+  });
+
+  describe('fetchWithTimeout', () => {
+    it('aborts hanging fetch and rejects with controlled timeout error', async () => {
+      jest.useFakeTimers();
+      jest.spyOn(globalThis, 'fetch').mockImplementation((_url, init) => {
+        return new Promise<Response>((_resolve, reject) => {
+          const abortError = new Error('aborted');
+          abortError.name = 'AbortError';
+          init?.signal?.addEventListener(
+            'abort',
+            () => {
+              reject(abortError);
+            },
+            { once: true },
+          );
+        });
+      });
+
+      const fetchWithTimeout = (service as unknown as Record<string, unknown>)['fetchWithTimeout'] as (
+        url: string,
+        init: RequestInit,
+        timeoutMs?: number,
+      ) => Promise<Response>;
+      const promise = fetchWithTimeout(
+        'https://api.korapay.com/test',
+        { method: 'GET' },
+        50,
+      );
+      const assertion = expect(promise).rejects.toThrow('Korapay request timed out after 50ms');
+
+      await jest.advanceTimersByTimeAsync(50);
+      await assertion;
+    });
+
+    it('clears timeout timer on successful response', async () => {
+      jest.useFakeTimers();
+      jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+        ok: true,
+        json: async () => ({ status: true }),
+      } as Response);
+      const clearTimeoutSpy = jest.spyOn(globalThis, 'clearTimeout');
+      const fetchWithTimeout = (service as unknown as Record<string, unknown>)['fetchWithTimeout'] as (
+        url: string,
+        init: RequestInit,
+        timeoutMs?: number,
+      ) => Promise<Response>;
+
+      await fetchWithTimeout(
+        'https://api.korapay.com/test',
+        { method: 'GET' },
+        1000,
+      );
+
+      expect(clearTimeoutSpy).toHaveBeenCalledTimes(1);
     });
   });
 });
