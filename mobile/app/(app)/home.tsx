@@ -13,9 +13,10 @@ import { useRouter, useFocusEffect } from "expo-router";
 import { MAX_USER_BALANCE_KOBO } from "@oneto/shared";
 import { useAuth } from "../../src/auth/auth-state";
 import { fetchMe } from "../../src/api/auth";
-import { apiClient } from "../../src/api/client";
+import { fetchLedger as fetchServerLedger } from "../../src/api/ledger";
 import { listPendingByStatus, setLocalState } from "../../src/ledger/db";
 import { syncPendingEnvelopes } from "../../src/api/reconcile";
+import { syncOutgoingPendingFromServerLedger } from "../../src/payment/sync-outgoing";
 import { logger } from "../../src/lib/logger";
 import { useThemeMode } from "../../src/theme/theme-provider";
 import {
@@ -157,13 +158,6 @@ function timeAgo(iso: string): string {
   return `${days} day${days > 1 ? "s" : ""} ago`;
 }
 
-async function fetchLedger(limit: number): Promise<RawLedgerEntry[]> {
-  const response = await apiClient.get<{ entries: RawLedgerEntry[] }>(
-    `/me/ledger?limit=${limit}`,
-  );
-  return response.data.entries ?? [];
-}
-
 /** Mask an email for display: "pelumi@stu.cu.edu.ng" → "pel***@stu.cu.edu.ng" */
 function maskEmail(email: string): string {
   const [local, domain] = email.split("@");
@@ -237,8 +231,9 @@ export default function HomeScreen(): React.ReactElement {
       logger.info("Balance refresh failed (offline?)", err);
     }
     try {
-      const res = await fetchLedger(10);
-      setLedgerEntries(res.map(mapLedgerEntry));
+      await syncOutgoingPendingFromServerLedger();
+      const res = await fetchServerLedger(undefined, 10);
+      setLedgerEntries(res.entries.map(mapLedgerEntry));
     } catch (err) {
       logger.info("Ledger fetch failed", err);
     }
