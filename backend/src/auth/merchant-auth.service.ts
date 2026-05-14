@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, ForbiddenException, UnauthorizedException, Inject } from "@nestjs/common";
+import { Injectable, BadRequestException, ForbiddenException, UnauthorizedException, Inject, ServiceUnavailableException } from "@nestjs/common";
 import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { OtpStoreService, OtpRateLimitExceededError } from "./otp-store.service";
@@ -21,6 +21,8 @@ interface StashedData {
   merchantData: MerchantSignupData;
   expiresAt: number;
 }
+
+const MAX_MERCHANT_AUTH_STASH_ENTRIES = 1_000;
 
 @Injectable()
 export class MerchantAuthService {
@@ -64,6 +66,16 @@ export class MerchantAuthService {
       phoneToStash = undefined;
     }
 
+    const existingUser = await this.prisma.user.findUnique({
+      where: { email },
+      select: { role: true },
+    });
+
+    if (existingUser?.role === 'ADMIN') {
+      // Prevent enumeration and spam to admin emails
+      return;
+    }
+
     try {
       this.otpStore.checkAndRecordRequest(email as unknown as E164);
     } catch (err) {
@@ -76,6 +88,8 @@ export class MerchantAuthService {
     const otp = crypto.randomInt(100000, 1000000).toString();
     await this.otpStore.saveOtp(email as unknown as E164, otp);
     await this.otpProvider.sendOtp(email, otp);
+
+    this.assertMerchantProfileStashHasCapacity(email);
 
     // Stash the merchant data keyed by normalized email
     this.stash.set(email, {
@@ -114,6 +128,9 @@ export class MerchantAuthService {
       const existingUser = await tx.user.findUnique({ where: { email } });
       if (existingUser && existingUser.role === "STUDENT") {
         throw new BadRequestException("email_already_registered_as_student");
+      }
+      if (existingUser && existingUser.role === "ADMIN") {
+        throw new ForbiddenException("admin_cannot_register_as_merchant");
       }
 
       const user = await tx.user.upsert({
@@ -173,11 +190,29 @@ export class MerchantAuthService {
   }
 
   sweepExpired() {
-    const now = Date.now();
+    this.cleanupExpiredPendingMerchantProfiles();
+  }
+
+  private cleanupExpiredPendingMerchantProfiles(nowMs = Date.now()): void {
     for (const [email, data] of this.stash.entries()) {
-      if (data.expiresAt < now) {
+      if (data.expiresAt <= nowMs) {
         this.stash.delete(email);
       }
+    }
+  }
+
+  private assertMerchantProfileStashHasCapacity(email: string): void {
+    this.cleanupExpiredPendingMerchantProfiles();
+
+    if (this.stash.has(email)) {
+      return;
+    }
+
+    if (this.stash.size >= MAX_MERCHANT_AUTH_STASH_ENTRIES) {
+      throw new ServiceUnavailableException({
+        code: "merchant_signup_queue_full",
+        message: "Merchant signup is temporarily busy. Please try again shortly.",
+      });
     }
   }
 }

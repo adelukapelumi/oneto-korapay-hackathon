@@ -5,6 +5,7 @@ import {
   type PublicKeyString,
   type SignatureString,
   toSignatureString,
+  buildKeyRotationMessage,
 } from "@oneto/shared";
 import { apiClient } from "./client";
 import { ApiError, toTypedError } from "./errors";
@@ -40,7 +41,7 @@ export class RotationSignatureRequiredError extends Error {
  * Important: the message is the RAW public key STRING (e.g.
  * "ed25519:abc..."), encoded as UTF-8 bytes. Not canonical JSON.
  * This matches backend/src/auth/keys.controller.ts which does
- * `new TextEncoder().encode(newPublicKey)` before verification.
+ * `new TextEncoder().encode(buildKeyRotationMessage(newPublicKey))` before verification.
  *
  * Do NOT use signEnvelope from @oneto/shared here — that produces a
  * canonical-JSON signature meant for transaction envelopes, a different
@@ -53,7 +54,8 @@ export function signRotation(
   if (oldPrivateKey.length !== 32) {
     throw new Error("Old Ed25519 private key must be 32 bytes");
   }
-  const messageBytes = new TextEncoder().encode(newPublicKey);
+  const message = buildKeyRotationMessage(newPublicKey);
+  const messageBytes = new TextEncoder().encode(message);
   const sig = ed.sign(messageBytes, oldPrivateKey);
   return toSignatureString("ed25519:" + bytesToHex(sig));
 }

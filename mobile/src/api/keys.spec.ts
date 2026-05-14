@@ -37,6 +37,7 @@ jest.mock("@noble/ed25519", () => ({
 jest.mock("@oneto/shared", () => ({
   toPublicKeyString: (s: string) => s,
   toSignatureString: (s: string) => s,
+  buildKeyRotationMessage: (s: string) => `oneto:key-rotation:v1:${s}`,
 }));
 
 import type { AxiosInstance } from "axios";
@@ -115,7 +116,7 @@ describe("registerPublicKey", () => {
 describe("signRotation", () => {
   beforeEach(() => sign.mockClear());
 
-  it("signs raw UTF-8 bytes of the new public key string with the OLD private key", () => {
+  it("signs domain-separated UTF-8 bytes of the new public key string with the OLD private key", () => {
     const oldPriv = new Uint8Array(32).fill(0x11);
     const newPub = "ed25519:" + "f".repeat(64);
 
@@ -124,10 +125,10 @@ describe("signRotation", () => {
     expect(sign).toHaveBeenCalledTimes(1);
     const [msgArg, keyArg] = sign.mock.calls[0]!;
     expect(keyArg).toEqual(oldPriv);
-    // Message must be the raw UTF-8 bytes of the public key STRING, not
+    // Message must be the domain-separated UTF-8 bytes, not
     // canonical JSON. Anything else and the backend's verification fails.
     expect(Array.from(msgArg)).toEqual(
-      Array.from(new TextEncoder().encode(newPub)),
+      Array.from(new TextEncoder().encode(`oneto:key-rotation:v1:${newPub}`)),
     );
   });
 

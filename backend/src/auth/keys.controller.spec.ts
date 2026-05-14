@@ -6,7 +6,7 @@ import { JwtAuthGuard } from './jwt-auth.guard';
 import { ExecutionContext } from '@nestjs/common';
 import * as ed from '@noble/ed25519';
 import { sha512 } from '@noble/hashes/sha512';
-import { generateKeypair } from '@oneto/shared';
+import { generateKeypair, buildKeyRotationMessage } from '@oneto/shared';
 
 // @noble/ed25519 v2 requires this shim so it can compute SHA-512
 // synchronously where needed. One-time setup for tests.
@@ -96,7 +96,8 @@ describe('KeysController', () => {
     const newKey = generateKeypair().publicKeyString;
 
     // Sign with wrong key
-    const messageBytes = new TextEncoder().encode(newKey);
+    const message = buildKeyRotationMessage(newKey);
+    const messageBytes = new TextEncoder().encode(message);
     const sigBytes = await ed.sign(messageBytes, wrongKeypair.privateKey);
     const rotationSignature = `ed25519:${Buffer.from(sigBytes).toString('hex')}`;
 
@@ -111,7 +112,8 @@ describe('KeysController', () => {
     const newKey = generateKeypair().publicKeyString;
 
     // Sign with old key
-    const messageBytes = new TextEncoder().encode(newKey);
+    const message = buildKeyRotationMessage(newKey);
+    const messageBytes = new TextEncoder().encode(message);
     const sigBytes = await ed.sign(messageBytes, oldKeypair.privateKey);
     const rotationSignature = `ed25519:${Buffer.from(sigBytes).toString('hex')}`;
 

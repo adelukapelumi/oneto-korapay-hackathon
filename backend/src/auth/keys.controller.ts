@@ -11,7 +11,7 @@ import { JwtAuthGuard } from './jwt-auth.guard';
 import { PrismaService } from '../prisma/prisma.service';
 import { RegisterKeySchema } from './schemas';
 import * as ed from '@noble/ed25519';
-import { fromHex, publicKeyFromString, toPublicKeyString } from '@oneto/shared';
+import { fromHex, publicKeyFromString, toPublicKeyString, buildKeyRotationMessage } from '@oneto/shared';
 
 // Shape of the request after JwtAuthGuard has attached the verified payload.
 // Defined locally to avoid widening the Express Request type globally.
@@ -59,7 +59,8 @@ export class KeysController {
       const oldPubBytes = publicKeyFromString(toPublicKeyString(user.publicKey));
       const sigHex = rotationSignature.slice('ed25519:'.length);
       const sigBytes = fromHex(sigHex);
-      const messageBytes = new TextEncoder().encode(newPublicKey);
+      const message = buildKeyRotationMessage(newPublicKey);
+      const messageBytes = new TextEncoder().encode(message);
 
       let sigOk = false;
       try {

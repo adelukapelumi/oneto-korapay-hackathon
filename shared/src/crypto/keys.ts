@@ -42,6 +42,13 @@ export function publicKeyToString(bytes: Uint8Array): PublicKeyString {
   return toPublicKeyString("ed25519:" + toHex(bytes));
 }
 
+
+export const KEY_ROTATION_DOMAIN = "oneto:key-rotation:v1:";
+
+export function buildKeyRotationMessage(newPublicKey: string): string {
+  return `${KEY_ROTATION_DOMAIN}${newPublicKey}`;
+}
+
 // ---------- hex utilities (small, self-contained) ----------
 
 export function toHex(bytes: Uint8Array): string {
