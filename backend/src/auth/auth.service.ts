@@ -92,6 +92,55 @@ export class AuthService {
   }
 
   /**
+   * Dedicated admin OTP request path.
+   *
+   * Security goals:
+   * - Never create or mutate users.
+   * - Prevent account enumeration by returning generic success for all inputs.
+   * - Send OTP only to existing ACTIVE ADMIN users.
+   */
+  async requestAdminOtp(rawEmail: string): Promise<void> {
+    let email: string;
+    try {
+      email = normalizeEmail(rawEmail);
+    } catch (err) {
+      if (err instanceof InvalidEmailError) {
+        return;
+      }
+      throw err;
+    }
+
+    const existingUser = await this.prisma.user.findUnique({
+      where: { email },
+      select: { role: true, status: true },
+    });
+
+    if (
+      !existingUser ||
+      existingUser.role !== Role.ADMIN ||
+      existingUser.status !== "ACTIVE"
+    ) {
+      return;
+    }
+
+    const adminOtpKey = `admin:${email}` as unknown as E164;
+
+    try {
+      this.otpStore.checkAndRecordRequest(adminOtpKey);
+    } catch (err) {
+      if (err instanceof OtpRateLimitExceededError) {
+        // Keep response enumeration-safe by behaving like a no-op.
+        return;
+      }
+      throw err;
+    }
+
+    const otp = crypto.randomInt(100000, 1000000).toString();
+    await this.otpStore.saveOtp(adminOtpKey, otp);
+    await this.otpProvider.sendOtp(email, otp);
+  }
+
+  /**
    * Verify an OTP and issue an access token.
    *
    * Steps:
@@ -159,6 +208,54 @@ export class AuthService {
       email: user.email,
       role: user.role,
       pubKeyRegistered: user.publicKey !== null,
+    });
+
+    return { accessToken };
+  }
+
+  /**
+   * Dedicated admin OTP verification path.
+   *
+   * Security goals:
+   * - Only existing ACTIVE ADMIN users can authenticate.
+   * - No user creation/upsert or role mutation.
+   * - Generic auth failure for unknown/non-admin/inactive/invalid-OTP cases.
+   */
+  async verifyAdminOtp(rawEmail: string, code: string): Promise<{ accessToken: string }> {
+    let email: string;
+    try {
+      email = normalizeEmail(rawEmail);
+    } catch (err) {
+      if (err instanceof InvalidEmailError) {
+        throw new UnauthorizedException("Invalid or expired code");
+      }
+      throw err;
+    }
+
+    const existingUser = await this.prisma.user.findUnique({
+      where: { email },
+      select: { id: true, email: true, role: true, status: true, publicKey: true },
+    });
+
+    if (
+      !existingUser ||
+      existingUser.role !== Role.ADMIN ||
+      existingUser.status !== "ACTIVE"
+    ) {
+      throw new UnauthorizedException("Invalid or expired code");
+    }
+
+    const adminOtpKey = `admin:${email}` as unknown as E164;
+    const isValid = await this.otpStore.verifyOtp(adminOtpKey, code);
+    if (!isValid) {
+      throw new UnauthorizedException("Invalid or expired code");
+    }
+
+    const accessToken = this.jwtService.generateToken({
+      sub: existingUser.id,
+      email: existingUser.email,
+      role: existingUser.role,
+      pubKeyRegistered: existingUser.publicKey !== null,
     });
 
     return { accessToken };

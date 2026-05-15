@@ -364,6 +364,9 @@ describe("AuthService", () => {
       await authService.requestOtp("alice@stu.cu.edu.ng");
 
       expect(mockOtpProvider.sendOtp).toHaveBeenCalledTimes(1);
+      expect(mockOtpStore.checkAndRecordRequest).toHaveBeenCalledWith(
+        "alice@stu.cu.edu.ng" as unknown as E164,
+      );
     });
 
     it("requestOtp for a non-existent email still works normally", async () => {
@@ -372,6 +375,195 @@ describe("AuthService", () => {
       await authService.requestOtp("nobody@stu.cu.edu.ng");
 
       expect(mockOtpProvider.sendOtp).toHaveBeenCalledTimes(1);
+    });
+
+    it("public auth still blocks ADMIN and does not use OTP store namespace for admin users", async () => {
+      mockPrisma.user.findUnique.mockResolvedValue(makeUser({ role: "ADMIN" }));
+
+      await expect(authService.requestOtp("admin@getoneto.internal")).resolves.toBeUndefined();
+      await expect(authService.verifyOtp("admin@getoneto.internal", "123456")).rejects.toThrow(
+        UnauthorizedException,
+      );
+
+      expect(mockOtpStore.checkAndRecordRequest).not.toHaveBeenCalled();
+      expect(mockOtpStore.verifyOtp).not.toHaveBeenCalled();
+    });
+  });
+
+  // ------- Group 8: dedicated admin OTP auth -------
+
+  describe("dedicated admin OTP auth", () => {
+    beforeEach(() => resetMocks());
+
+    it("admin OTP request with malformed email returns generic success and sends no OTP", async () => {
+      await expect(authService.requestAdminOtp("not-an-email")).resolves.toBeUndefined();
+
+      expect(mockPrisma.user.findUnique).not.toHaveBeenCalled();
+      expect(mockOtpStore.checkAndRecordRequest).not.toHaveBeenCalled();
+      expect(mockOtpStore.saveOtp).not.toHaveBeenCalled();
+      expect(mockOtpProvider.sendOtp).not.toHaveBeenCalled();
+    });
+
+    it("admin OTP request for unknown email returns generic success and sends no OTP", async () => {
+      mockPrisma.user.findUnique.mockResolvedValue(null);
+
+      await expect(authService.requestAdminOtp("unknown@getoneto.com")).resolves.toBeUndefined();
+      expect(mockOtpProvider.sendOtp).not.toHaveBeenCalled();
+    });
+
+    it("admin OTP request for STUDENT returns generic success and sends no OTP", async () => {
+      mockPrisma.user.findUnique.mockResolvedValue(makeUser({ role: "STUDENT", status: "ACTIVE" }));
+
+      await expect(authService.requestAdminOtp("student@getoneto.com")).resolves.toBeUndefined();
+      expect(mockOtpProvider.sendOtp).not.toHaveBeenCalled();
+    });
+
+    it("admin OTP request for MERCHANT returns generic success and sends no OTP", async () => {
+      mockPrisma.user.findUnique.mockResolvedValue(makeUser({ role: "MERCHANT", status: "ACTIVE" }));
+
+      await expect(authService.requestAdminOtp("merchant@getoneto.com")).resolves.toBeUndefined();
+      expect(mockOtpProvider.sendOtp).not.toHaveBeenCalled();
+    });
+
+    it("admin OTP request for FROZEN/FLAGGED ADMIN returns generic success and sends no OTP", async () => {
+      mockPrisma.user.findUnique.mockResolvedValueOnce(
+        makeUser({ role: "ADMIN", status: "FROZEN" }),
+      );
+      await expect(authService.requestAdminOtp("frozen-admin@getoneto.com")).resolves.toBeUndefined();
+
+      mockPrisma.user.findUnique.mockResolvedValueOnce(
+        makeUser({ role: "ADMIN", status: "FLAGGED" }),
+      );
+      await expect(authService.requestAdminOtp("flagged-admin@getoneto.com")).resolves.toBeUndefined();
+
+      expect(mockOtpProvider.sendOtp).not.toHaveBeenCalled();
+    });
+
+    it("admin OTP request for ACTIVE ADMIN sends OTP and returns generic success", async () => {
+      mockPrisma.user.findUnique.mockResolvedValue(makeUser({ role: "ADMIN", status: "ACTIVE" }));
+
+      await expect(authService.requestAdminOtp("active-admin@getoneto.com")).resolves.toBeUndefined();
+      expect(mockOtpStore.checkAndRecordRequest).toHaveBeenCalledWith(
+        "admin:active-admin@getoneto.com" as unknown as E164,
+      );
+      expect(mockOtpStore.saveOtp).toHaveBeenCalledTimes(1);
+      expect(mockOtpStore.saveOtp).toHaveBeenCalledWith(
+        "admin:active-admin@getoneto.com" as unknown as E164,
+        expect.any(String),
+      );
+      expect(mockOtpProvider.sendOtp).toHaveBeenCalledTimes(1);
+    });
+
+    it("admin OTP request stores OTP under admin:email namespace", async () => {
+      mockPrisma.user.findUnique.mockResolvedValue(makeUser({ role: "ADMIN", status: "ACTIVE" }));
+
+      await authService.requestAdminOtp("ADMIN@GETONETO.COM");
+
+      expect(mockOtpStore.checkAndRecordRequest).toHaveBeenCalledWith(
+        "admin:admin@getoneto.com" as unknown as E164,
+      );
+      expect(mockOtpStore.saveOtp).toHaveBeenCalledWith(
+        "admin:admin@getoneto.com" as unknown as E164,
+        expect.any(String),
+      );
+    });
+
+    it("admin OTP verify rejects unknown email generically", async () => {
+      mockPrisma.user.findUnique.mockResolvedValue(null);
+
+      await expect(authService.verifyAdminOtp("unknown@getoneto.com", "123456")).rejects.toThrow(
+        UnauthorizedException,
+      );
+      await expect(authService.verifyAdminOtp("unknown@getoneto.com", "123456")).rejects.toThrow(
+        "Invalid or expired code",
+      );
+    });
+
+    it("admin OTP verify with malformed email returns generic unauthorized", async () => {
+      await expect(authService.verifyAdminOtp("not-an-email", "123456")).rejects.toThrow(
+        UnauthorizedException,
+      );
+      await expect(authService.verifyAdminOtp("not-an-email", "123456")).rejects.toThrow(
+        "Invalid or expired code",
+      );
+      expect(mockPrisma.user.findUnique).not.toHaveBeenCalled();
+      expect(mockOtpStore.verifyOtp).not.toHaveBeenCalled();
+    });
+
+    it("admin OTP verify rejects non-admin generically", async () => {
+      mockPrisma.user.findUnique.mockResolvedValue(makeUser({ role: "STUDENT", status: "ACTIVE" }));
+
+      await expect(authService.verifyAdminOtp("student@getoneto.com", "123456")).rejects.toThrow(
+        UnauthorizedException,
+      );
+      expect(mockOtpStore.verifyOtp).not.toHaveBeenCalled();
+    });
+
+    it("admin OTP verify rejects inactive admin generically", async () => {
+      mockPrisma.user.findUnique.mockResolvedValue(makeUser({ role: "ADMIN", status: "FROZEN" }));
+
+      await expect(authService.verifyAdminOtp("frozen-admin@getoneto.com", "123456")).rejects.toThrow(
+        UnauthorizedException,
+      );
+      expect(mockOtpStore.verifyOtp).not.toHaveBeenCalled();
+    });
+
+    it("admin OTP verify rejects wrong/expired OTP generically", async () => {
+      mockPrisma.user.findUnique.mockResolvedValue(makeUser({ role: "ADMIN", status: "ACTIVE" }));
+      mockOtpStore.verifyOtp.mockResolvedValue(false);
+
+      await expect(authService.verifyAdminOtp("active-admin@getoneto.com", "123456")).rejects.toThrow(
+        UnauthorizedException,
+      );
+      await expect(authService.verifyAdminOtp("active-admin@getoneto.com", "123456")).rejects.toThrow(
+        "Invalid or expired code",
+      );
+    });
+
+    it("admin OTP verify succeeds for ACTIVE ADMIN with valid OTP and returns ADMIN JWT", async () => {
+      mockPrisma.user.findUnique.mockResolvedValue(
+        makeUser({
+          id: "u_admin0000000001",
+          email: "active-admin@getoneto.com",
+          role: "ADMIN",
+          status: "ACTIVE",
+          publicKey: "ed25519:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        }),
+      );
+      mockOtpStore.verifyOtp.mockResolvedValue(true);
+      mockJwt.generateToken.mockReturnValue("admin.token");
+
+      const result = await authService.verifyAdminOtp("active-admin@getoneto.com", "123456");
+
+      expect(result).toEqual({ accessToken: "admin.token" });
+      expect(mockJwt.generateToken).toHaveBeenCalledWith({
+        sub: "u_admin0000000001",
+        email: "active-admin@getoneto.com",
+        role: "ADMIN",
+        pubKeyRegistered: true,
+      });
+      expect(mockPrisma.user.upsert).not.toHaveBeenCalled();
+    });
+
+    it("admin OTP verify checks OTP under admin:email namespace", async () => {
+      mockPrisma.user.findUnique.mockResolvedValue(
+        makeUser({
+          id: "u_admin0000000002",
+          email: "admin-two@getoneto.com",
+          role: "ADMIN",
+          status: "ACTIVE",
+          publicKey: null,
+        }),
+      );
+      mockOtpStore.verifyOtp.mockResolvedValue(true);
+      mockJwt.generateToken.mockReturnValue("admin.two.token");
+
+      await authService.verifyAdminOtp("ADMIN-TWO@GETONETO.COM", "123456");
+
+      expect(mockOtpStore.verifyOtp).toHaveBeenCalledWith(
+        "admin:admin-two@getoneto.com" as unknown as E164,
+        "123456",
+      );
     });
   });
 });

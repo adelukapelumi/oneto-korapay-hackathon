@@ -9,8 +9,21 @@ export const VerifyOtpSchema = z.object({
   code: z.string().length(6, 'OTP must be exactly 6 digits').regex(/^\d+$/, 'OTP must be numeric'),
 });
 
+// Admin auth endpoints intentionally accept non-email strings at the schema
+// boundary so the service can respond with generic, enumeration-safe behavior.
+export const RequestAdminOtpSchema = z.object({
+  email: z.string(),
+});
+
+export const VerifyAdminOtpSchema = z.object({
+  email: z.string(),
+  code: z.string().length(6, 'OTP must be exactly 6 digits').regex(/^\d+$/, 'OTP must be numeric'),
+});
+
 export type RequestOtpDtoType = z.infer<typeof RequestOtpSchema>;
 export type VerifyOtpDtoType = z.infer<typeof VerifyOtpSchema>;
+export type RequestAdminOtpDtoType = z.infer<typeof RequestAdminOtpSchema>;
+export type VerifyAdminOtpDtoType = z.infer<typeof VerifyAdminOtpSchema>;
 
 export const RequestMerchantOtpSchema = z.object({
   email: z.string().email('Invalid email address'),
@@ -34,4 +47,3 @@ export const RegisterKeySchema = z.object({
 });
 
 export type RegisterKeyDtoType = z.infer<typeof RegisterKeySchema>;
-

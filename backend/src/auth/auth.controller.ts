@@ -6,12 +6,17 @@ import {
   HttpStatus,
   UsePipes,
 } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
 import { AuthService } from "./auth.service";
 import {
   RequestOtpSchema,
   VerifyOtpSchema,
+  RequestAdminOtpSchema,
+  VerifyAdminOtpSchema,
   RequestOtpDtoType,
   VerifyOtpDtoType,
+  RequestAdminOtpDtoType,
+  VerifyAdminOtpDtoType,
 } from "./schemas";
 import { ZodValidationPipe } from "../common/validation/zod-validation.pipe";
 
@@ -44,6 +49,36 @@ export class AuthController {
   @UsePipes(new ZodValidationPipe(VerifyOtpSchema))
   async verifyOtp(@Body() body: VerifyOtpDtoType) {
     const result = await this.authService.verifyOtp(body.email, body.code);
+    return { success: true, accessToken: result.accessToken };
+  }
+
+  /**
+   * POST /auth/admin/otp/request
+   *
+   * Dedicated admin login OTP request. Always returns { ok: true } to avoid
+   * account enumeration. OTP is only sent for existing ACTIVE ADMIN users.
+   */
+  @Post("admin/otp/request")
+  @HttpCode(HttpStatus.OK)
+  @UsePipes(new ZodValidationPipe(RequestAdminOtpSchema))
+  @Throttle({ default: { limit: 3, ttl: 60000 } })
+  async requestAdminOtp(@Body() body: RequestAdminOtpDtoType) {
+    await this.authService.requestAdminOtp(body.email);
+    return { ok: true };
+  }
+
+  /**
+   * POST /auth/admin/otp/verify
+   *
+   * Dedicated admin OTP verification. Fails with generic auth error for
+   * unknown/non-admin/inactive users and invalid OTP attempts.
+   */
+  @Post("admin/otp/verify")
+  @HttpCode(HttpStatus.OK)
+  @UsePipes(new ZodValidationPipe(VerifyAdminOtpSchema))
+  @Throttle({ default: { limit: 6, ttl: 60000 } })
+  async verifyAdminOtp(@Body() body: VerifyAdminOtpDtoType) {
+    const result = await this.authService.verifyAdminOtp(body.email, body.code);
     return { success: true, accessToken: result.accessToken };
   }
 }
