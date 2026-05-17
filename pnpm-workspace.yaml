@@ -2,4 +2,5 @@ packages:
   - 'shared'
   - 'backend'
   - 'mobile'
+  - 'admin-web'
 nodeLinker: hoisted
