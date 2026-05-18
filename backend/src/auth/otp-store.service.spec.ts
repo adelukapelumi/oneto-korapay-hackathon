@@ -1,7 +1,7 @@
 import {
-  OtpStoreService,
   OtpRateLimitExceededError,
 } from "./otp-store.service";
+import { InMemoryOtpStoreService } from "./in-memory-otp-store.service";
 import { E164 } from "../common/phone";
 
 // Helper: create a branded E164 value for use as an OTP target key.
@@ -11,13 +11,13 @@ import { E164 } from "../common/phone";
 // generic target type in a future session.
 const target = (s: string): E164 => s as unknown as E164;
 
-describe("OtpStoreService", () => {
-  let store: OtpStoreService;
+describe("InMemoryOtpStoreService", () => {
+  let store: InMemoryOtpStoreService;
   const ALICE = target("alice@stu.cu.edu.ng");
   const BOB = target("bob@stu.cu.edu.ng");
 
   beforeEach(() => {
-    store = new OtpStoreService();
+    store = new InMemoryOtpStoreService();
   });
 
   // ------- happy path -------
@@ -97,7 +97,7 @@ describe("OtpStoreService", () => {
     });
 
     it("respects a custom maxFailedAttempts configuration", async () => {
-      const strict = new OtpStoreService({ maxFailedAttempts: 2 });
+      const strict = new InMemoryOtpStoreService({ maxFailedAttempts: 2 });
       await strict.saveOtp(ALICE, "123456");
 
       await strict.verifyOtp(ALICE, "000000");
@@ -142,7 +142,7 @@ describe("OtpStoreService", () => {
     });
 
     it("respects a custom ttlMs configuration", async () => {
-      const shortLived = new OtpStoreService({ ttlMs: 1000 }); // 1 second
+      const shortLived = new InMemoryOtpStoreService({ ttlMs: 1000 }); // 1 second
       const t0 = 1_000_000;
       await shortLived.saveOtp(ALICE, "123456", t0);
 
@@ -242,7 +242,7 @@ describe("OtpStoreService", () => {
     });
 
     it("respects custom maxRequestsPerWindow", () => {
-      const strict = new OtpStoreService({ maxRequestsPerWindow: 2 });
+      const strict = new InMemoryOtpStoreService({ maxRequestsPerWindow: 2 });
       const t0 = 1_000_000;
 
       strict.checkAndRecordRequest(ALICE, t0);

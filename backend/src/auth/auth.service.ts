@@ -9,11 +9,16 @@ import {
 import { Role } from "@prisma/client";
 import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
-import { OtpStoreService, OtpRateLimitExceededError } from "./otp-store.service";
+import {
+  OTP_STORE,
+  OtpStoreService,
+  OtpRateLimitExceededError,
+} from "./otp-store.service";
 import { JwtWrapperService } from "./jwt.service";
 import { IOtpProvider } from "../otp-channel/otp-provider.interface";
 import { E164 } from "../common/phone";
 import { normalizeEmail, InvalidEmailError } from "../common/email";
+import { ADMIN_SESSION_MAX_AGE_SECONDS } from "./admin-session.constants";
 
 @Injectable()
 export class AuthService {
@@ -21,7 +26,7 @@ export class AuthService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly otpStore: OtpStoreService,
+    @Inject(OTP_STORE) private readonly otpStore: OtpStoreService,
     private readonly jwtService: JwtWrapperService,
     @Inject("OTP_PROVIDER") private readonly otpProvider: IOtpProvider,
   ) { }
@@ -73,7 +78,7 @@ export class AuthService {
       // Intentional cast: OtpStoreService uses E164 branded type as its key,
       // but it is channel-agnostic. We pass the normalized email through the
       // same API. The branded type will be generalized in a future session.
-      this.otpStore.checkAndRecordRequest(email as unknown as E164);
+      await this.otpStore.checkAndRecordRequest(email as unknown as E164);
     } catch (err) {
       if (err instanceof OtpRateLimitExceededError) {
         // 429 Too Many Requests
@@ -126,7 +131,7 @@ export class AuthService {
     const adminOtpKey = `admin:${email}` as unknown as E164;
 
     try {
-      this.otpStore.checkAndRecordRequest(adminOtpKey);
+      await this.otpStore.checkAndRecordRequest(adminOtpKey);
     } catch (err) {
       if (err instanceof OtpRateLimitExceededError) {
         // Keep response enumeration-safe by behaving like a no-op.
@@ -256,6 +261,8 @@ export class AuthService {
       email: existingUser.email,
       role: existingUser.role,
       pubKeyRegistered: existingUser.publicKey !== null,
+    }, {
+      expiresIn: ADMIN_SESSION_MAX_AGE_SECONDS,
     });
 
     return { accessToken };

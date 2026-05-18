@@ -1,36 +1,62 @@
-import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
+import { getAdminSession, logoutAdmin } from "./api";
+
+export type AuthStatus = "checking" | "authenticated" | "anonymous";
 
 type AuthContextValue = {
-  token: string | null;
-  setToken: (token: string) => void;
-  clearToken: () => void;
+  status: AuthStatus;
+  refreshSession: () => Promise<void>;
+  logout: () => Promise<void>;
+  markAnonymous: () => void;
 };
-
-const SESSION_STORAGE_KEY = "oneto_admin_access_token";
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
-function readTokenFromSession(): string | null {
-  const token = sessionStorage.getItem(SESSION_STORAGE_KEY);
-  return token && token.length > 0 ? token : null;
-}
-
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [token, setTokenState] = useState<string | null>(() => readTokenFromSession());
+  const [status, setStatus] = useState<AuthStatus>("checking");
 
-  const setToken = (nextToken: string) => {
-    sessionStorage.setItem(SESSION_STORAGE_KEY, nextToken);
-    setTokenState(nextToken);
-  };
+  const markAnonymous = useCallback(() => {
+    setStatus("anonymous");
+  }, []);
 
-  const clearToken = () => {
-    sessionStorage.removeItem(SESSION_STORAGE_KEY);
-    setTokenState(null);
-  };
+  const refreshSession = useCallback(async () => {
+    setStatus("checking");
+    try {
+      await getAdminSession(markAnonymous);
+      setStatus("authenticated");
+    } catch {
+      setStatus("anonymous");
+    }
+  }, [markAnonymous]);
+
+  const logout = useCallback(async () => {
+    try {
+      await logoutAdmin();
+    } finally {
+      setStatus("anonymous");
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshSession();
+  }, [refreshSession]);
 
   const value = useMemo(
-    () => ({ token, setToken, clearToken }),
-    [token],
+    () => ({
+      status,
+      refreshSession,
+      logout,
+      markAnonymous,
+    }),
+    [status, refreshSession, logout, markAnonymous],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -41,11 +67,5 @@ export function useAuth() {
   if (!ctx) {
     throw new Error("useAuth must be used within AuthProvider");
   }
-
-  return {
-    token: ctx.token,
-    setToken: ctx.setToken,
-    clearToken: ctx.clearToken,
-    logout: ctx.clearToken,
-  };
+  return ctx;
 }

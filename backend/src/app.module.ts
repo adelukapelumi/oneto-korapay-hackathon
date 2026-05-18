@@ -3,6 +3,9 @@ import { CashoutModule } from "./cashout/cashout.module";
 import { Module } from "@nestjs/common";
 import { APP_GUARD } from "@nestjs/core";
 import { ThrottlerModule, ThrottlerGuard } from "@nestjs/throttler";
+import { ThrottlerStorageRedisService } from "@nest-lab/throttler-storage-redis";
+import { ConfigService } from "@nestjs/config";
+import type Redis from "ioredis";
 import { ConfigModule } from "./config/config.module";
 import { LoggerModule } from "./logger/logger.module";
 import { PrismaModule } from "./prisma/prisma.module";
@@ -14,6 +17,8 @@ import { SentryModule, SentryGlobalFilter } from '@sentry/nestjs/setup';
 import { APP_FILTER } from '@nestjs/core';
 import { MerchantsModule } from "./merchants/merchants.module";
 import { AdminModule } from "./admin/admin.module";
+import { RedisModule } from "./redis/redis.module";
+import { REDIS_CLIENT } from "./redis/redis.tokens";
 
 @Module({
   imports: [
@@ -24,13 +29,32 @@ import { AdminModule } from "./admin/admin.module";
     // Config: 100 requests per minute per IP. Tune down before pilot launch
     // based on expected legitimate traffic patterns.
     SentryModule.forRoot(),
-    ThrottlerModule.forRoot([
-      {
-        ttl: 60_000,
-        limit: 100,
-      },
-    ]),
     ConfigModule,
+    RedisModule,
+    ThrottlerModule.forRootAsync({
+      imports: [RedisModule],
+      inject: [ConfigService, REDIS_CLIENT],
+      useFactory: (config: ConfigService, redisClient: Redis | null) => {
+        const throttlerBackend = config.get<string>("THROTTLER_STORE_BACKEND") ?? "memory";
+
+        if (throttlerBackend === "redis" && redisClient === null) {
+          throw new Error("Redis throttler storage is enabled without an initialized Redis client");
+        }
+
+        return {
+          throttlers: [
+            {
+              ttl: 60_000,
+              limit: 100,
+            },
+          ],
+          storage:
+            throttlerBackend === "redis" && redisClient !== null
+              ? new ThrottlerStorageRedisService(redisClient)
+              : undefined,
+        };
+      },
+    }),
     LoggerModule,
     PrismaModule,
     AuthModule,

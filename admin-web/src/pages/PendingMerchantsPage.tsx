@@ -5,7 +5,7 @@ import { ConfirmModal } from "../components/ConfirmModal";
 import type { PendingMerchant } from "../types";
 
 export function PendingMerchantsPage() {
-  const { token, clearToken } = useAuth();
+  const { markAnonymous } = useAuth();
   const [merchants, setMerchants] = useState<PendingMerchant[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isApproving, setIsApproving] = useState(false);
@@ -13,29 +13,25 @@ export function PendingMerchantsPage() {
   const [error, setError] = useState<string | null>(null);
 
   const loadPendingMerchants = useCallback(async () => {
-    if (!token) {
-      return;
-    }
-
     setIsLoading(true);
     setError(null);
 
     try {
-      const data = await getPendingMerchants(token, clearToken);
+      const data = await getPendingMerchants(markAnonymous);
       setMerchants(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load pending merchants.");
     } finally {
       setIsLoading(false);
     }
-  }, [token, clearToken]);
+  }, [markAnonymous]);
 
   useEffect(() => {
     void loadPendingMerchants();
   }, [loadPendingMerchants]);
 
   const handleApprove = async () => {
-    if (!token || !selectedMerchant) {
+    if (!selectedMerchant) {
       return;
     }
 
@@ -43,7 +39,7 @@ export function PendingMerchantsPage() {
     setError(null);
 
     try {
-      await approveMerchant(selectedMerchant.userId, token, clearToken);
+      await approveMerchant(selectedMerchant.userId, markAnonymous);
       setSelectedMerchant(null);
       await loadPendingMerchants();
     } catch (err) {

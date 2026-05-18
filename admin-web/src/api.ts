@@ -5,9 +5,24 @@ import type {
   ReconciliationReport,
 } from "./types";
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() ?? "";
+const configuredApiBaseUrl =
+  (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() ?? "";
+const API_BASE_URL = configuredApiBaseUrl.replace(/\/+$/, "");
 
 type OnAuthFailure = () => void;
+
+type RequestOptions = RequestInit & {
+  requiresCsrf?: boolean;
+};
+
+type AdminSessionResponse = {
+  authenticated: true;
+  admin: {
+    id: string;
+    email: string;
+    role: string;
+  };
+};
 
 async function parseJson(response: Response): Promise<unknown> {
   try {
@@ -19,15 +34,21 @@ async function parseJson(response: Response): Promise<unknown> {
 
 async function request<T>(
   path: string,
-  options: RequestInit = {},
+  options: RequestOptions = {},
   onAuthFailure?: OnAuthFailure,
 ): Promise<T> {
+  const headers = new Headers(options.headers ?? undefined);
+  if (options.requiresCsrf) {
+    headers.set("X-Oneto-Admin-CSRF", "1");
+  }
+  if (options.body !== undefined && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers ?? {}),
-    },
+    credentials: "include",
+    headers,
   });
 
   if (response.status === 401 || response.status === 403) {
@@ -52,12 +73,6 @@ async function request<T>(
   return payload as T;
 }
 
-function authHeaders(token: string): HeadersInit {
-  return {
-    Authorization: `Bearer ${token}`,
-  };
-}
-
 export function requestAdminOtp(email: string) {
   return request<{ ok: boolean }>("/auth/admin/otp/request", {
     method: "POST",
@@ -65,57 +80,75 @@ export function requestAdminOtp(email: string) {
   });
 }
 
-export async function verifyAdminOtp(email: string, code: string): Promise<string> {
-  const result = await request<{ success: boolean; accessToken: string }>("/auth/admin/otp/verify", {
+export function verifyAdminOtp(email: string, code: string) {
+  return request<{ success: true }>("/auth/admin/otp/verify", {
     method: "POST",
     body: JSON.stringify({ email, code }),
   });
-
-  return result.accessToken;
 }
 
-export function getOverview(token: string, onAuthFailure: OnAuthFailure) {
+export function logoutAdmin() {
+  return request<{ success: true }>("/auth/admin/logout", {
+    method: "POST",
+  });
+}
+
+export function getAdminSession(onAuthFailure?: OnAuthFailure) {
+  return request<AdminSessionResponse>("/auth/admin/session", {
+    method: "GET",
+  }, onAuthFailure);
+}
+
+export function getOverview(onAuthFailure: OnAuthFailure) {
   return request<AdminOverview>("/admin/overview", {
     method: "GET",
-    headers: authHeaders(token),
   }, onAuthFailure);
 }
 
-export function getReconciliationReport(token: string, onAuthFailure: OnAuthFailure) {
+export function getReconciliationReport(onAuthFailure: OnAuthFailure) {
   return request<ReconciliationReport>("/admin/reconciliation-report", {
     method: "GET",
-    headers: authHeaders(token),
   }, onAuthFailure);
 }
 
-export async function getPendingMerchants(token: string, onAuthFailure: OnAuthFailure) {
-  const result = await request<{ merchants: PendingMerchant[] }>("/admin/merchants/pending", {
-    method: "GET",
-    headers: authHeaders(token),
-  }, onAuthFailure);
+export async function getPendingMerchants(onAuthFailure: OnAuthFailure) {
+  const result = await request<{ merchants: PendingMerchant[] }>(
+    "/admin/merchants/pending",
+    {
+      method: "GET",
+    },
+    onAuthFailure,
+  );
 
   return result.merchants;
 }
 
-export function approveMerchant(userId: string, token: string, onAuthFailure: OnAuthFailure) {
-  return request<{ userId: string; status: string; verifiedAt: string }>(`/admin/merchants/${userId}/approve`, {
-    method: "POST",
-    headers: authHeaders(token),
-  }, onAuthFailure);
+export function approveMerchant(userId: string, onAuthFailure: OnAuthFailure) {
+  return request<{ userId: string; status: string; verifiedAt: string }>(
+    `/admin/merchants/${userId}/approve`,
+    {
+      method: "POST",
+      requiresCsrf: true,
+    },
+    onAuthFailure,
+  );
 }
 
-export async function getPendingCashouts(token: string, onAuthFailure: OnAuthFailure) {
-  const result = await request<{ cashouts: PendingCashout[] }>("/admin/cashouts/pending", {
-    method: "GET",
-    headers: authHeaders(token),
-  }, onAuthFailure);
+export async function getPendingCashouts(onAuthFailure: OnAuthFailure) {
+  const result = await request<{ cashouts: PendingCashout[] }>(
+    "/admin/cashouts/pending",
+    {
+      method: "GET",
+    },
+    onAuthFailure,
+  );
 
   return result.cashouts;
 }
 
-export function approveCashout(id: string, token: string, onAuthFailure: OnAuthFailure) {
+export function approveCashout(id: string, onAuthFailure: OnAuthFailure) {
   return request<{ success: boolean }>(`/admin/cashouts/${id}/approve`, {
     method: "POST",
-    headers: authHeaders(token),
+    requiresCsrf: true,
   }, onAuthFailure);
 }

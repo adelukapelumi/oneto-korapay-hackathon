@@ -13,7 +13,7 @@ function AdminLayout() {
     <div className="app-shell">
       <header className="topbar">
         <h1>oneto Admin</h1>
-        <button type="button" onClick={logout}>
+        <button type="button" onClick={() => void logout()}>
           Logout
         </button>
       </header>

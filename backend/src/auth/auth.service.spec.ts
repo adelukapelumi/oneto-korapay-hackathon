@@ -5,6 +5,7 @@ import { JwtWrapperService } from "./jwt.service";
 import { IOtpProvider } from "../otp-channel/otp-provider.interface";
 import { BadRequestException, ForbiddenException, UnauthorizedException } from "@nestjs/common";
 import { E164 } from "../common/phone";
+import { ADMIN_SESSION_MAX_AGE_SECONDS } from "./admin-session.constants";
 
 // -- FIXTURES & HELPERS --
 
@@ -541,6 +542,8 @@ describe("AuthService", () => {
         email: "active-admin@getoneto.com",
         role: "ADMIN",
         pubKeyRegistered: true,
+      }, {
+        expiresIn: ADMIN_SESSION_MAX_AGE_SECONDS,
       });
       expect(mockPrisma.user.upsert).not.toHaveBeenCalled();
     });

@@ -1,10 +1,14 @@
 import { Test, TestingModule } from "@nestjs/testing";
+import { ConfigService } from "@nestjs/config";
 import { AdminController } from "./admin.controller";
 import { AdminService } from "./admin.service";
 import { CashoutService } from "../cashout/cashout.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { JwtWrapperService } from "../auth/jwt.service";
 import { RolesGuard } from "../auth/role.guard";
+import { AdminCookieSessionGuard } from "../auth/admin-cookie-session.guard";
+import { AdminCsrfGuard } from "../auth/admin-csrf.guard";
+import { AuthenticatedRequest } from "../auth/jwt-auth.guard";
 
 describe("AdminController", () => {
   let controller: AdminController;
@@ -27,6 +31,14 @@ describe("AdminController", () => {
         { provide: AdminService, useValue: mockAdminService },
         { provide: CashoutService, useValue: mockCashoutService },
         { provide: JwtWrapperService, useValue: { verifyToken: jest.fn() } },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: jest.fn((key: string) =>
+              key === "ADMIN_WEB_ORIGINS" ? undefined : "test",
+            ),
+          },
+        },
       ],
     }).compile();
 
@@ -34,11 +46,13 @@ describe("AdminController", () => {
     jest.clearAllMocks();
   });
 
-  it("uses JwtAuthGuard and role guard on admin routes", () => {
+  it("uses JwtAuthGuard, role guard, cookie guard and csrf guard on admin routes", () => {
     const classGuards = Reflect.getMetadata("__guards__", AdminController);
     expect(classGuards).toBeDefined();
     expect(classGuards).toContain(JwtAuthGuard);
-    expect(classGuards.length).toBe(2);
+    expect(classGuards).toContain(AdminCookieSessionGuard);
+    expect(classGuards).toContain(AdminCsrfGuard);
+    expect(classGuards.length).toBe(4);
   });
 
   it("non-admin role guard denies access", () => {
@@ -56,9 +70,22 @@ describe("AdminController", () => {
     );
   });
 
+  it("admin role guard allows access", () => {
+    const RoleGuardCtor = RolesGuard(["ADMIN"]);
+    const roleGuard = new RoleGuardCtor();
+
+    const fakeContext = {
+      switchToHttp: () => ({
+        getRequest: () => ({ user: { role: "ADMIN" } }),
+      }),
+    } as any;
+
+    expect(roleGuard.canActivate(fakeContext)).toBe(true);
+  });
+
   it("delegates /admin/cashouts/:id/approve to CashoutService.approveCashout", async () => {
     mockCashoutService.approveCashout.mockResolvedValue({ success: true });
-    const req = { user: { sub: "u_admin" } };
+    const req = { user: { sub: "u_admin" } } as unknown as AuthenticatedRequest;
 
     const result = await controller.approveCashout("cashout_1", req);
 
@@ -75,7 +102,7 @@ describe("AdminController", () => {
       status: "ACTIVE",
       verifiedAt: "2026-05-14T00:00:00.000Z",
     });
-    const req = { user: { sub: "u_admin" } };
+    const req = { user: { sub: "u_admin" } } as unknown as AuthenticatedRequest;
 
     const result = await controller.approveMerchant("u_merchant", req);
 

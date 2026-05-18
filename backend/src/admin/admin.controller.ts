@@ -1,15 +1,26 @@
-import { Controller, Get, Param, Post, Req, UseGuards } from "@nestjs/common";
+import {
+  Controller,
+  Get,
+  Param,
+  Post,
+  Req,
+  UnauthorizedException,
+  UseGuards,
+} from "@nestjs/common";
 import { AdminService } from "./admin.service";
 import { CashoutService } from "../cashout/cashout.service";
-import { JwtAuthGuard } from "../auth/jwt-auth.guard";
+import { JwtAuthGuard, type AuthenticatedRequest } from "../auth/jwt-auth.guard";
 import { RolesGuard } from "../auth/role.guard";
-
-interface AuthedRequest {
-  user: { sub: string };
-}
+import { AdminCookieSessionGuard } from "../auth/admin-cookie-session.guard";
+import { AdminCsrfGuard } from "../auth/admin-csrf.guard";
 
 @Controller("admin")
-@UseGuards(JwtAuthGuard, RolesGuard(["ADMIN"]))
+@UseGuards(
+  JwtAuthGuard,
+  RolesGuard(["ADMIN"]),
+  AdminCookieSessionGuard,
+  AdminCsrfGuard,
+)
 export class AdminController {
   constructor(
     private readonly adminService: AdminService,
@@ -29,9 +40,13 @@ export class AdminController {
   @Post("merchants/:userId/approve")
   async approveMerchant(
     @Param("userId") userId: string,
-    @Req() req: AuthedRequest,
+    @Req() req: AuthenticatedRequest,
   ) {
-    return this.adminService.approveMerchant(userId, req.user.sub);
+    const adminUserId = req.user?.sub;
+    if (!adminUserId) {
+      throw new UnauthorizedException("Missing authenticated admin context");
+    }
+    return this.adminService.approveMerchant(userId, adminUserId);
   }
 
   @Get("cashouts/pending")
@@ -40,8 +55,12 @@ export class AdminController {
   }
 
   @Post("cashouts/:id/approve")
-  async approveCashout(@Param("id") id: string, @Req() req: AuthedRequest) {
-    return this.cashoutService.approveCashout(id, req.user.sub);
+  async approveCashout(@Param("id") id: string, @Req() req: AuthenticatedRequest) {
+    const adminUserId = req.user?.sub;
+    if (!adminUserId) {
+      throw new UnauthorizedException("Missing authenticated admin context");
+    }
+    return this.cashoutService.approveCashout(id, adminUserId);
   }
 
   @Get("reconciliation-report")
@@ -49,4 +68,3 @@ export class AdminController {
     return this.adminService.getReconciliationReport();
   }
 }
-

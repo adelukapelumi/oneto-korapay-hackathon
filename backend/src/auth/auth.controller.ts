@@ -1,12 +1,18 @@
 import {
+  Get,
   Controller,
   Post,
   Body,
   HttpCode,
   HttpStatus,
+  Req,
+  Res,
+  UseGuards,
   UsePipes,
 } from "@nestjs/common";
+import type { Response } from "express";
 import { Throttle } from "@nestjs/throttler";
+import { ConfigService } from "@nestjs/config";
 import { AuthService } from "./auth.service";
 import {
   RequestOtpSchema,
@@ -19,10 +25,21 @@ import {
   VerifyAdminOtpDtoType,
 } from "./schemas";
 import { ZodValidationPipe } from "../common/validation/zod-validation.pipe";
+import {
+  ADMIN_SESSION_COOKIE_NAME,
+  buildAdminSessionClearCookieOptions,
+  buildAdminSessionCookieOptions,
+} from "./admin-session.constants";
+import { AdminCookieSessionGuard } from "./admin-cookie-session.guard";
+import { JwtAuthGuard, type AuthenticatedRequest } from "./jwt-auth.guard";
+import { RolesGuard } from "./role.guard";
 
 @Controller("auth")
 export class AuthController {
-  constructor(private readonly authService: AuthService) { }
+  constructor(
+    private readonly authService: AuthService,
+    private readonly configService: ConfigService,
+  ) { }
 
   /**
    * POST /auth/otp/request
@@ -77,8 +94,42 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @UsePipes(new ZodValidationPipe(VerifyAdminOtpSchema))
   @Throttle({ default: { limit: 6, ttl: 60000 } })
-  async verifyAdminOtp(@Body() body: VerifyAdminOtpDtoType) {
+  async verifyAdminOtp(
+    @Body() body: VerifyAdminOtpDtoType,
+    @Res({ passthrough: true }) response: Response,
+  ) {
     const result = await this.authService.verifyAdminOtp(body.email, body.code);
-    return { success: true, accessToken: result.accessToken };
+    const nodeEnv = this.configService.get<string>("NODE_ENV") ?? "development";
+    response.cookie(
+      ADMIN_SESSION_COOKIE_NAME,
+      result.accessToken,
+      buildAdminSessionCookieOptions(nodeEnv),
+    );
+
+    return { success: true };
+  }
+
+  @Post("admin/logout")
+  @HttpCode(HttpStatus.OK)
+  async adminLogout(@Res({ passthrough: true }) response: Response) {
+    const nodeEnv = this.configService.get<string>("NODE_ENV") ?? "development";
+    response.clearCookie(
+      ADMIN_SESSION_COOKIE_NAME,
+      buildAdminSessionClearCookieOptions(nodeEnv),
+    );
+    return { success: true };
+  }
+
+  @Get("admin/session")
+  @UseGuards(JwtAuthGuard, RolesGuard(["ADMIN"]), AdminCookieSessionGuard)
+  async getAdminSession(@Req() req: AuthenticatedRequest) {
+    return {
+      authenticated: true,
+      admin: {
+        id: req.user?.sub,
+        email: req.user?.email,
+        role: req.user?.role,
+      },
+    };
   }
 }

@@ -1,0 +1,146 @@
+import { envSchema } from "./env.schema";
+
+const makeBaseEnv = (overrides: Record<string, string | undefined> = {}) => ({
+  PORT: "3000",
+  DATABASE_URL: "https://example.com/db",
+  JWT_SECRET: "12345678901234567890123456789012",
+  RESEND_API_KEY: "re_test_key",
+  RESEND_FROM_ADDRESS: "noreply@getoneto.com",
+  KORAPAY_PUBLIC_KEY: "pk_test_key",
+  KORAPAY_SECRET_KEY: "sk_test_key",
+  ...overrides,
+});
+
+describe("envSchema", () => {
+  it("fails in production without Redis storage selection", () => {
+    const result = envSchema.safeParse(
+      makeBaseEnv({
+        NODE_ENV: "production",
+        OTP_STORE_BACKEND: "memory",
+        THROTTLER_STORE_BACKEND: "memory",
+      }),
+    );
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ path: ["OTP_STORE_BACKEND"] }),
+          expect.objectContaining({ path: ["THROTTLER_STORE_BACKEND"] }),
+        ]),
+      );
+    }
+  });
+
+  it("fails in production without REDIS_URL when Redis storage is required", () => {
+    const result = envSchema.safeParse(
+      makeBaseEnv({
+        NODE_ENV: "production",
+        OTP_STORE_BACKEND: "redis",
+        THROTTLER_STORE_BACKEND: "redis",
+        REDIS_URL: undefined,
+        REDIS_KEY_PREFIX: "oneto:prod",
+      }),
+    );
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ path: ["REDIS_URL"] }),
+        ]),
+      );
+    }
+  });
+
+  it("fails in production when REDIS_KEY_PREFIX is omitted", () => {
+    const result = envSchema.safeParse(
+      makeBaseEnv({
+        NODE_ENV: "production",
+        OTP_STORE_BACKEND: "redis",
+        THROTTLER_STORE_BACKEND: "redis",
+        REDIS_URL: "redis://127.0.0.1:6379",
+        REDIS_KEY_PREFIX: undefined,
+      }),
+    );
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ path: ["REDIS_KEY_PREFIX"] }),
+        ]),
+      );
+    }
+  });
+
+  it('fails in production when REDIS_KEY_PREFIX is "oneto:dev"', () => {
+    const result = envSchema.safeParse(
+      makeBaseEnv({
+        NODE_ENV: "production",
+        OTP_STORE_BACKEND: "redis",
+        THROTTLER_STORE_BACKEND: "redis",
+        REDIS_URL: "redis://127.0.0.1:6379",
+        REDIS_KEY_PREFIX: "oneto:dev",
+      }),
+    );
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ path: ["REDIS_KEY_PREFIX"] }),
+        ]),
+      );
+    }
+  });
+
+  it("allows development memory fallback", () => {
+    const result = envSchema.safeParse(
+      makeBaseEnv({
+        NODE_ENV: "development",
+        OTP_STORE_BACKEND: "memory",
+        THROTTLER_STORE_BACKEND: "memory",
+      }),
+    );
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.OTP_STORE_BACKEND).toBe("memory");
+      expect(result.data.THROTTLER_STORE_BACKEND).toBe("memory");
+      expect(result.data.REDIS_KEY_PREFIX).toBe("oneto:dev");
+    }
+  });
+
+  it("allows test memory fallback", () => {
+    const result = envSchema.safeParse(
+      makeBaseEnv({
+        NODE_ENV: "test",
+        OTP_STORE_BACKEND: "memory",
+        THROTTLER_STORE_BACKEND: "memory",
+      }),
+    );
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.REDIS_KEY_PREFIX).toBe("oneto:dev");
+    }
+  });
+
+  it("accepts Redis-backed production config with explicit prefix", () => {
+    const result = envSchema.safeParse(
+      makeBaseEnv({
+        NODE_ENV: "production",
+        OTP_STORE_BACKEND: "redis",
+        THROTTLER_STORE_BACKEND: "redis",
+        REDIS_URL: "redis://127.0.0.1:6379",
+        REDIS_KEY_PREFIX: "oneto:prod",
+      }),
+    );
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.REDIS_KEY_PREFIX).toBe("oneto:prod");
+    }
+  });
+});

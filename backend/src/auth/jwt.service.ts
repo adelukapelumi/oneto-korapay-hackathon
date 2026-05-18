@@ -1,5 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import { JwtService as NestJwtService } from '@nestjs/jwt';
+import {
+  JwtService as NestJwtService,
+  type JwtSignOptions,
+} from '@nestjs/jwt';
 
 export interface JwtPayload {
   sub: string;
@@ -12,8 +15,8 @@ export interface JwtPayload {
 export class JwtWrapperService {
   constructor(private readonly jwtService: NestJwtService) { }
 
-  generateToken(payload: JwtPayload): string {
-    return this.jwtService.sign(payload);
+  generateToken(payload: JwtPayload, options?: JwtSignOptions): string {
+    return this.jwtService.sign(payload, options);
   }
 
   verifyToken(token: string): JwtPayload {

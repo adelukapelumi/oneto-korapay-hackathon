@@ -5,7 +5,7 @@ import { ConfirmModal } from "../components/ConfirmModal";
 import type { PendingCashout } from "../types";
 
 export function PendingCashoutsPage() {
-  const { token, clearToken } = useAuth();
+  const { markAnonymous } = useAuth();
   const [cashouts, setCashouts] = useState<PendingCashout[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isApproving, setIsApproving] = useState(false);
@@ -13,29 +13,25 @@ export function PendingCashoutsPage() {
   const [error, setError] = useState<string | null>(null);
 
   const loadPendingCashouts = useCallback(async () => {
-    if (!token) {
-      return;
-    }
-
     setIsLoading(true);
     setError(null);
 
     try {
-      const data = await getPendingCashouts(token, clearToken);
+      const data = await getPendingCashouts(markAnonymous);
       setCashouts(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load pending cashouts.");
     } finally {
       setIsLoading(false);
     }
-  }, [token, clearToken]);
+  }, [markAnonymous]);
 
   useEffect(() => {
     void loadPendingCashouts();
   }, [loadPendingCashouts]);
 
   const handleApprove = async () => {
-    if (!token || !selectedCashout) {
+    if (!selectedCashout) {
       return;
     }
 
@@ -43,7 +39,7 @@ export function PendingCashoutsPage() {
     setError(null);
 
     try {
-      await approveCashout(selectedCashout.id, token, clearToken);
+      await approveCashout(selectedCashout.id, markAnonymous);
       setSelectedCashout(null);
       await loadPendingCashouts();
     } catch (err) {

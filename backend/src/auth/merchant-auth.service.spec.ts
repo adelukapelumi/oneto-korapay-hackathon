@@ -1,7 +1,7 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { MerchantAuthService, MerchantSignupData } from "./merchant-auth.service";
 import { PrismaService } from "../prisma/prisma.service";
-import { OtpStoreService, OtpRateLimitExceededError } from "./otp-store.service";
+import { OTP_STORE, OtpRateLimitExceededError } from "./otp-store.service";
 import { JwtWrapperService } from "./jwt.service";
 import { IOtpProvider } from "../otp-channel/otp-provider.interface";
 import { BadRequestException, ConflictException, ForbiddenException, ServiceUnavailableException, UnauthorizedException } from "@nestjs/common";
@@ -43,7 +43,7 @@ describe("MerchantAuthService", () => {
       providers: [
         MerchantAuthService,
         { provide: PrismaService, useValue: prisma },
-        { provide: OtpStoreService, useValue: otpStore },
+        { provide: OTP_STORE, useValue: otpStore },
         { provide: JwtWrapperService, useValue: jwtService },
         { provide: "OTP_PROVIDER", useValue: otpProvider },
       ],

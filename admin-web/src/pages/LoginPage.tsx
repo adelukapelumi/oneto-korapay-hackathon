@@ -1,11 +1,11 @@
 import { FormEvent, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Navigate, useNavigate } from "react-router-dom";
 import { requestAdminOtp, verifyAdminOtp } from "../api";
 import { useAuth } from "../auth";
 
 export function LoginPage() {
   const navigate = useNavigate();
-  const { setToken, token } = useAuth();
+  const { status, refreshSession } = useAuth();
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [otpRequested, setOtpRequested] = useState(false);
@@ -13,8 +13,12 @@ export function LoginPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  if (token) {
-    navigate("/overview", { replace: true });
+  if (status === "authenticated") {
+    return <Navigate to="/overview" replace />;
+  }
+
+  if (status === "checking") {
+    return <p>Checking admin session...</p>;
   }
 
   const handleRequestOtp = async (event: FormEvent) => {
@@ -51,8 +55,8 @@ export function LoginPage() {
 
     setIsLoading(true);
     try {
-      const accessToken = await verifyAdminOtp(email.trim(), code.trim());
-      setToken(accessToken);
+      await verifyAdminOtp(email.trim(), code.trim());
+      await refreshSession();
       navigate("/overview", { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to verify OTP.");
@@ -124,4 +128,3 @@ export function LoginPage() {
     </div>
   );
 }
-

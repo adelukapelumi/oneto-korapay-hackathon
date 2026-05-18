@@ -4,17 +4,13 @@ import { useAuth } from "../auth";
 import type { AdminOverview, ReconciliationReport } from "../types";
 
 export function OverviewPage() {
-  const { token, clearToken } = useAuth();
+  const { markAnonymous } = useAuth();
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [report, setReport] = useState<ReconciliationReport | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!token) {
-      return;
-    }
-
     let cancelled = false;
 
     const load = async () => {
@@ -23,8 +19,8 @@ export function OverviewPage() {
 
       try {
         const [overviewData, reportData] = await Promise.all([
-          getOverview(token, clearToken),
-          getReconciliationReport(token, clearToken),
+          getOverview(markAnonymous),
+          getReconciliationReport(markAnonymous),
         ]);
 
         if (!cancelled) {
@@ -47,7 +43,7 @@ export function OverviewPage() {
     return () => {
       cancelled = true;
     };
-  }, [token, clearToken]);
+  }, [markAnonymous]);
 
   if (isLoading) {
     return <p>Loading overview...</p>;

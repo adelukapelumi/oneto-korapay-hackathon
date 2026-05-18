@@ -3,10 +3,14 @@ import { useAuth } from "../auth";
 import type { ReactNode } from "react";
 
 export function ProtectedRoute({ children }: { children: ReactNode }) {
-  const { token } = useAuth();
+  const { status } = useAuth();
   const location = useLocation();
 
-  if (!token) {
+  if (status === "checking") {
+    return <p>Checking admin session...</p>;
+  }
+
+  if (status !== "authenticated") {
     return <Navigate to="/login" replace state={{ from: location }} />;
   }
 

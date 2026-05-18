@@ -1,7 +1,7 @@
 import { Injectable, BadRequestException, ForbiddenException, UnauthorizedException, Inject, ServiceUnavailableException, ConflictException } from "@nestjs/common";
 import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
-import { OtpStoreService, OtpRateLimitExceededError } from "./otp-store.service";
+import { OTP_STORE, OtpStoreService, OtpRateLimitExceededError } from "./otp-store.service";
 import { JwtWrapperService } from "./jwt.service";
 import { IOtpProvider } from "../otp-channel/otp-provider.interface";
 import { E164, normalizePhone, InvalidPhoneError } from "../common/phone";
@@ -31,7 +31,7 @@ export class MerchantAuthService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly otpStore: OtpStoreService,
+    @Inject(OTP_STORE) private readonly otpStore: OtpStoreService,
     private readonly jwtService: JwtWrapperService,
     @Inject("OTP_PROVIDER") private readonly otpProvider: IOtpProvider,
   ) {
@@ -79,7 +79,7 @@ export class MerchantAuthService {
     this.assertNoActivePendingMerchantProfile(email);
 
     try {
-      this.otpStore.checkAndRecordRequest(email as unknown as E164);
+      await this.otpStore.checkAndRecordRequest(email as unknown as E164);
     } catch (err) {
       if (err instanceof OtpRateLimitExceededError) {
         throw new ForbiddenException("Too many OTP requests. Please wait a moment.");
