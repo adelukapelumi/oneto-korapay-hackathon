@@ -16,4 +16,11 @@ export default defineConfig({
       },
     },
   },
+  preview: {
+    host: "0.0.0.0",
+    allowedHosts: [
+      "admin-web-production-0199.up.railway.app",
+      "admin.getoneto.com",
+    ],
+  },
 });
