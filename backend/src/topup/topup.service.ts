@@ -1,10 +1,21 @@
-import { Injectable, Logger, UnauthorizedException, BadRequestException, InternalServerErrorException } from '@nestjs/common';
+import { Injectable, Logger, UnauthorizedException, BadRequestException, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { KorapayService } from './korapay.service';
+import { KorapayService, type KorapayTransactionVerification } from './korapay.service';
 import { Prisma, LedgerEntryType } from '@prisma/client';
 import { MAX_USER_BALANCE_KOBO } from '@oneto/shared';
 import * as crypto from 'crypto';
-import { KorapayWebhookSchema } from './korapay-webhook.schema';
+import { KorapayWebhookSchema, type KorapayWebhookPayload } from './korapay-webhook.schema';
+
+export type TopupStatus = 'PENDING' | 'SUCCESS' | 'FAILED' | 'EXPIRED';
+
+export interface TopupStatusResponse {
+  reference: string;
+  status: TopupStatus;
+  amountKobo: string;
+}
+
+const SUCCESSFUL_KORAPAY_STATUSES = new Set(['success', 'successful']);
+const FAILED_KORAPAY_STATUSES = new Set(['failed', 'failure']);
 
 @Injectable()
 export class TopupService {
@@ -14,6 +25,30 @@ export class TopupService {
     private readonly prisma: PrismaService,
     private readonly korapayService: KorapayService,
   ) { }
+
+  async getStatusForUser(userId: string, reference: string): Promise<TopupStatusResponse> {
+    const topup = await this.prisma.paymentTopup.findFirst({
+      where: {
+        reference,
+        userId,
+      },
+      select: {
+        reference: true,
+        status: true,
+        amountKobo: true,
+      },
+    });
+
+    if (!topup) {
+      throw new NotFoundException('topup_not_found');
+    }
+
+    return {
+      reference: topup.reference,
+      status: this.normalizeStoredTopupStatus(topup.status),
+      amountKobo: topup.amountKobo.toString(),
+    };
+  }
 
   async initiate(userId: string, amountKobo: number): Promise<{ reference: string, paymentUrl: string }> {
     if (amountKobo < 10000 || amountKobo > 100000000) {
@@ -57,7 +92,10 @@ export class TopupService {
 
   async handleWebhook(payload: unknown, signatureHeader: string | undefined): Promise<{ success: true }> {
     // 1. Verify signature on RAW payload.data
-    const rawData = (payload as any)?.data;
+    const rawData =
+      typeof payload === 'object' && payload !== null && 'data' in payload
+        ? (payload as { data?: unknown }).data
+        : undefined;
     if (!payload || !this.korapayService.verifyWebhookSignature(rawData, signatureHeader)) {
       throw new UnauthorizedException('Invalid webhook signature');
     }
@@ -73,12 +111,11 @@ export class TopupService {
     const { event, data } = validated;
 
     // Fix 3: Webhook event spoofing protection
-    const eventStatusMap: Record<string, string> = {
-      'charge.success': 'success',
-      'charge.failed': 'failed',
-    };
-    const expectedDataStatus = eventStatusMap[event];
-    if (expectedDataStatus && data.status !== expectedDataStatus) {
+    const normalizedWebhookStatus = this.normalizeKorapayStatus(data.status);
+    if (
+      (event === 'charge.success' && !this.isSuccessfulKorapayStatus(normalizedWebhookStatus)) ||
+      (event === 'charge.failed' && !this.isFailedKorapayStatus(normalizedWebhookStatus))
+    ) {
       this.logger.warn({ event, dataStatus: data.status }, 'Webhook event/status mismatch');
       return { success: true }; // return 200 to stop Korapay retries, but don't process
     }
@@ -90,31 +127,18 @@ export class TopupService {
 
     const reference = data.reference;
     const customerEmail = data.customer?.email;
-
-    const amountNgn = Number(data.amount);
-    if (isNaN(amountNgn) || !isFinite(amountNgn) || amountNgn <= 0) {
-      this.logger.error(`Invalid amount in webhook payload: ${data.amount}`);
-      throw new BadRequestException('Invalid amount in webhook payload');
-    }
-
-    const amountKobo = Math.round(amountNgn * 100);
+    const amountKobo = this.parseMajorAmountToKobo(data.amount, 'webhook');
 
     // Primary: look up user via the PENDING PaymentTopup created during initiation.
     // Fallback: customer email from webhook payload (may be missing in sandbox).
     const pendingTopup = await this.prisma.paymentTopup.findUnique({
       where: { reference },
-      select: { userId: true, status: true },
+      select: { userId: true, status: true, amountKobo: true },
     });
     if (pendingTopup && pendingTopup.status !== 'PENDING') {
       this.logger.log(`Idempotent webhook: reference ${reference} already ${pendingTopup.status}`);
       return { success: true };
     }
-    const resolvedUserId = pendingTopup?.userId ?? null;
-    const user = resolvedUserId
-      ? await this.prisma.user.findUnique({ where: { id: resolvedUserId } })
-      : customerEmail
-        ? await this.prisma.user.findUnique({ where: { email: customerEmail } })
-        : null;
 
     if (event === 'charge.failed') {
       try {
@@ -126,8 +150,8 @@ export class TopupService {
           },
           create: {
             reference,
-            userId: resolvedUserId || user?.id || 'UNKNOWN',
-            amountKobo: BigInt(amountKobo),
+            userId: pendingTopup?.userId ?? 'UNKNOWN',
+            amountKobo,
             status: 'FAILED',
             korapayResponse: validated as unknown as Prisma.InputJsonValue,
           },
@@ -141,29 +165,103 @@ export class TopupService {
       return { success: true };
     }
 
-
-    if (!user) {
-      this.logger.warn(`Webhook received for unknown user email: ${customerEmail}`);
+    if (!pendingTopup) {
+      this.logger.warn(
+        { reference, customerEmail },
+        'Received top-up success webhook for unknown reference; refusing to credit without a pending top-up record',
+      );
       return { success: true };
+    }
+
+    const verification = await this.korapayService.verifyTransaction(reference);
+    const normalizedVerificationStatus = this.normalizeKorapayStatus(verification.status);
+
+    if (!this.isSuccessfulKorapayStatus(normalizedVerificationStatus)) {
+      if (this.isFailedKorapayStatus(normalizedVerificationStatus)) {
+        await this.prisma.paymentTopup.update({
+          where: { reference },
+          data: {
+            status: 'FAILED',
+            korapayResponse: this.buildTopupAuditPayload(validated, verification) as Prisma.InputJsonValue,
+          },
+        });
+      } else {
+        await this.prisma.paymentTopup.update({
+          where: { reference },
+          data: {
+            korapayResponse: this.buildTopupAuditPayload(validated, verification) as Prisma.InputJsonValue,
+          },
+        });
+      }
+
+      return { success: true };
+    }
+
+    const verifiedAmountKobo = this.extractVerifiedAmountKobo(verification);
+    if (pendingTopup.amountKobo !== verifiedAmountKobo) {
+      this.logger.error(
+        {
+          reference,
+          expectedAmountKobo: pendingTopup.amountKobo.toString(),
+          receivedAmountKobo: verifiedAmountKobo.toString(),
+        },
+        'Top-up verification amount mismatch; refusing to credit balance',
+      );
+
+      await this.prisma.paymentTopup.update({
+        where: { reference },
+        data: {
+          status: 'FAILED',
+          korapayResponse: {
+            ...this.buildTopupAuditPayload(validated, verification),
+            internal_failure: 'amount_mismatch',
+          } as Prisma.InputJsonValue,
+        },
+      });
+
+      return { success: true };
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: pendingTopup.userId },
+    });
+    if (!user) {
+      this.logger.error({ reference, userId: pendingTopup.userId }, 'Pending top-up user missing');
+      throw new InternalServerErrorException('Webhook processing failed');
     }
 
     try {
       await this.prisma.$transaction(
         async (tx) => {
-          await tx.paymentTopup.upsert({
+          const latestTopup = await tx.paymentTopup.findUnique({
             where: { reference },
-            update: {
-              status: 'SUCCESS',
-              korapayResponse: validated as unknown as Prisma.InputJsonValue,
-            },
-            create: {
-              reference,
-              userId: user.id,
-              amountKobo: BigInt(amountKobo),
-              status: 'SUCCESS',
-              korapayResponse: validated as unknown as Prisma.InputJsonValue,
+            select: {
+              status: true,
+              amountKobo: true,
             },
           });
+
+          if (!latestTopup) {
+            throw new Error('Pending top-up missing during transaction');
+          }
+
+          if (latestTopup.status !== 'PENDING') {
+            return;
+          }
+
+          if (latestTopup.amountKobo !== verifiedAmountKobo) {
+            await tx.paymentTopup.update({
+              where: { reference },
+              data: {
+                status: 'FAILED',
+                korapayResponse: {
+                  ...this.buildTopupAuditPayload(validated, verification),
+                  internal_failure: 'amount_mismatch',
+                } as Prisma.InputJsonValue,
+              },
+            });
+            return;
+          }
 
           const freshUser = await tx.user.findUnique({
             where: { id: user.id },
@@ -174,27 +272,24 @@ export class TopupService {
             throw new Error('User missing during transaction');
           }
 
-          if (freshUser.verifiedBalanceKobo + BigInt(amountKobo) > BigInt(MAX_USER_BALANCE_KOBO)) {
+          if (freshUser.verifiedBalanceKobo + verifiedAmountKobo > BigInt(MAX_USER_BALANCE_KOBO)) {
             this.logger.warn(
               {
                 reference,
                 userId: user.id,
-                attemptedAmountKobo: amountKobo,
+                attemptedAmountKobo: verifiedAmountKobo.toString(),
                 currentBalanceKobo: freshUser.verifiedBalanceKobo.toString(),
               },
               'Top-up failed: balance cap exceeded',
             );
-            // We already created the PaymentTopup record above with status SUCCESS.
-            // We need to update it to FAILED because we are not going to credit the user.
-            // Alternatively, we could have created it with FAILED if we knew.
-            // Let's change the flow to create it AFTER the check, or update it.
-            // Actually, the constraint says "The transaction commits (the FAILED PaymentTopup is the only effect)".
-            // So I should create it with FAILED status here and return.
             await tx.paymentTopup.update({
               where: { reference },
               data: {
                 status: 'FAILED',
-                korapayResponse: { ...validated, internal_failure: 'balance_cap_exceeded' } as unknown as Prisma.InputJsonValue,
+                korapayResponse: {
+                  ...this.buildTopupAuditPayload(validated, verification),
+                  internal_failure: 'balance_cap_exceeded',
+                } as Prisma.InputJsonValue,
               },
             });
             return;
@@ -212,7 +307,7 @@ export class TopupService {
             where: { id: user.id },
             data: {
               verifiedBalanceKobo: {
-                increment: BigInt(amountKobo),
+                increment: verifiedAmountKobo,
               },
             },
           });
@@ -221,8 +316,16 @@ export class TopupService {
             where: { id: 'u_operating' },
             data: {
               verifiedBalanceKobo: {
-                decrement: BigInt(amountKobo),
+                decrement: verifiedAmountKobo,
               },
+            },
+          });
+
+          await tx.paymentTopup.update({
+            where: { reference },
+            data: {
+              status: 'SUCCESS',
+              korapayResponse: this.buildTopupAuditPayload(validated, verification) as Prisma.InputJsonValue,
             },
           });
 
@@ -231,7 +334,7 @@ export class TopupService {
               transactionId: reference,
               userId: user.id,
               type: LedgerEntryType.CREDIT,
-              amountKobo: BigInt(amountKobo),
+              amountKobo: verifiedAmountKobo,
               balanceAfterKobo: updatedUser.verifiedBalanceKobo,
               description: `Top-up via Korapay ${reference}`,
             },
@@ -242,7 +345,7 @@ export class TopupService {
               transactionId: reference,
               userId: 'u_operating',
               type: LedgerEntryType.DEBIT,
-              amountKobo: BigInt(amountKobo),
+              amountKobo: verifiedAmountKobo,
               balanceAfterKobo: updatedOperating.verifiedBalanceKobo,
               description: `Top-up credit to user ${user.id} ${reference}`,
             },
@@ -260,5 +363,91 @@ export class TopupService {
     }
 
     return { success: true };
+  }
+
+  private normalizeKorapayStatus(status: string | undefined): string {
+    return status?.trim().toLowerCase() ?? '';
+  }
+
+  private isSuccessfulKorapayStatus(status: string): boolean {
+    return SUCCESSFUL_KORAPAY_STATUSES.has(status);
+  }
+
+  private isFailedKorapayStatus(status: string): boolean {
+    return FAILED_KORAPAY_STATUSES.has(status);
+  }
+
+  private normalizeStoredTopupStatus(status: string): TopupStatus {
+    const normalized = status.trim().toUpperCase();
+    if (
+      normalized === 'PENDING' ||
+      normalized === 'SUCCESS' ||
+      normalized === 'FAILED' ||
+      normalized === 'EXPIRED'
+    ) {
+      return normalized;
+    }
+
+    return 'PENDING';
+  }
+
+  private parseMajorAmountToKobo(amount: string | number, source: 'webhook' | 'verification'): bigint {
+    const raw = typeof amount === 'number' ? amount.toString() : amount.trim();
+
+    if (!/^\d+(\.\d{1,2})?$/.test(raw)) {
+      this.logger.error(`Invalid ${source} amount payload: ${amount}`);
+      throw new BadRequestException(`Invalid amount in ${source} payload`);
+    }
+
+    const [wholePart, decimalPart = ''] = raw.split('.');
+    const paddedDecimalPart = decimalPart.padEnd(2, '0');
+    const koboText = `${wholePart}${paddedDecimalPart}`;
+    const parsed = BigInt(koboText);
+
+    if (parsed <= BigInt(0)) {
+      this.logger.error(`Non-positive ${source} amount payload: ${amount}`);
+      throw new BadRequestException(`Invalid amount in ${source} payload`);
+    }
+
+    return parsed;
+  }
+
+  private extractVerifiedAmountKobo(verification: KorapayTransactionVerification): bigint {
+    const candidates = [verification.amountPaid, verification.amount];
+
+    for (const candidate of candidates) {
+      if (candidate === undefined || candidate === null) {
+        continue;
+      }
+
+      const raw = typeof candidate === 'number' ? candidate.toString() : candidate.trim();
+      if (!/^\d+(\.\d{1,2})?$/.test(raw)) {
+        continue;
+      }
+
+      const [wholePart, decimalPart = ''] = raw.split('.');
+      const parsed = BigInt(`${wholePart}${decimalPart.padEnd(2, '0')}`);
+      if (parsed > BigInt(0)) {
+        return parsed;
+      }
+    }
+
+    throw new BadRequestException('Missing amount in verification payload');
+  }
+
+  private buildTopupAuditPayload(
+    webhookPayload: KorapayWebhookPayload,
+    verification: KorapayTransactionVerification,
+  ): Record<string, unknown> {
+    return {
+      webhook: webhookPayload,
+      verification: {
+        status: verification.status,
+        reference: verification.reference ?? null,
+        amount: verification.amount ?? null,
+        amountPaid: verification.amountPaid ?? null,
+        currency: verification.currency ?? null,
+      },
+    };
   }
 }
