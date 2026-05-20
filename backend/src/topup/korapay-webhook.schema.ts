@@ -7,7 +7,7 @@ export const KorapayWebhookSchema = z.object({
   event: z.string(),
   data: z.object({
     reference: z.string().min(1),
-    amount: z.number().nonnegative(),
+    amount: z.union([z.number().nonnegative(), z.string().min(1)]),
     status: z.string().optional(),
     customer: z.object({
       email: z.string().email(),

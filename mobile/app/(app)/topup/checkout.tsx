@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
+  BackHandler,
   Modal,
   Pressable,
   StyleSheet,
@@ -11,6 +13,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { WebView } from "react-native-webview";
 import { fetchMe } from "../../../src/api/auth";
+import { fetchTopupStatus, type TopupStatusResponse } from "../../../src/api/topup";
 import { setLocalState } from "../../../src/ledger/db";
 import { logger } from "../../../src/lib/logger";
 import { BackButton } from "../../../components/BackButton";
@@ -27,8 +30,7 @@ import {
   dimensions,
 } from "../../../src/theme/tokens";
 
-type PaymentStatus = "idle" | "success" | "failed";
-
+type PaymentStatus = "idle" | "pending" | "success" | "failed";
 
 export default function CheckoutScreen(): React.ReactElement {
   const router = useRouter();
@@ -40,46 +42,83 @@ export default function CheckoutScreen(): React.ReactElement {
   const t = getTheme(mode);
 
   const [isLoading, setIsLoading] = useState(true);
+  const [isCheckingStatus, setIsCheckingStatus] = useState(false);
   const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>("idle");
-  const balanceBeforeRef = useRef<number | null>(null);
+  const [statusMessage, setStatusMessage] = useState(
+    "Payment was not confirmed. No balance was added.",
+  );
 
-  useEffect(() => {
-    fetchMe()
-      .then((user) => {
-        balanceBeforeRef.current = Number(user.verifiedBalanceKobo);
-      })
-      .catch((err) => {
-        logger.warn("Failed to fetch initial balance for topup", err);
-      });
-  }, []);
-
-  async function checkBalance(): Promise<void> {
-    if (paymentStatus !== "idle") return;
+  async function syncConfirmedBalance(): Promise<void> {
     try {
       const user = await fetchMe();
-      const newBalance = Number(user.verifiedBalanceKobo);
-      const prev = balanceBeforeRef.current;
-      if (prev !== null && newBalance > prev) {
-        setPaymentStatus("success");
-        setLocalState("verified_balance_kobo", user.verifiedBalanceKobo);
-        setLocalState("last_sync_at", new Date().toISOString());
-      } else {
-        router.back();
-      }
+      setLocalState("verified_balance_kobo", user.verifiedBalanceKobo);
+      setLocalState("last_sync_at", new Date().toISOString());
     } catch (err) {
-      logger.warn("Balance check after topup failed", err);
-      router.back();
+      logger.warn("Failed to refresh balance after confirmed top-up", err);
     }
   }
 
-  if (!paymentUrl) {
+  async function applyTopupStatus(topup: TopupStatusResponse): Promise<void> {
+    if (topup.status === "SUCCESS") {
+      setStatusMessage("Your balance has been updated after payment confirmation.");
+      setPaymentStatus("success");
+      await syncConfirmedBalance();
+      return;
+    }
+
+    if (topup.status === "FAILED" || topup.status === "EXPIRED") {
+      setStatusMessage(
+        topup.status === "EXPIRED"
+          ? "This payment session expired before confirmation. No balance was added."
+          : "Payment was not confirmed. No balance was added.",
+      );
+      setPaymentStatus("failed");
+      return;
+    }
+
+    setStatusMessage(
+      "Waiting for bank transfer confirmation. If you have made the transfer, your Oneto balance will update once payment is confirmed.",
+    );
+    setPaymentStatus("pending");
+  }
+
+  async function checkTopupStatus(): Promise<void> {
+    if (!reference || paymentStatus === "success" || isCheckingStatus) {
+      return;
+    }
+
+    setIsCheckingStatus(true);
+    try {
+      const topup = await fetchTopupStatus(reference);
+      await applyTopupStatus(topup);
+    } catch (err) {
+      logger.warn("Failed to fetch top-up status", err);
+      Alert.alert(
+        "Unable to Check Status",
+        "We could not confirm this payment right now. Please try again in a moment.",
+      );
+    } finally {
+      setIsCheckingStatus(false);
+    }
+  }
+
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      void checkTopupStatus();
+      return true;
+    });
+
+    return () => subscription.remove();
+  }, [isCheckingStatus, paymentStatus, reference]);
+
+  if (!paymentUrl || !reference) {
     return (
       <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top", "bottom"]}>
         <View style={styles.errorContainer}>
           <Text style={styles.errorIcon}>⚠️</Text>
-          <Text style={[styles.errorTitle, { color: t.text }]}>Missing Payment URL</Text>
+          <Text style={[styles.errorTitle, { color: t.text }]}>Missing Checkout Details</Text>
           <Text style={[styles.errorText, { color: t.textSec }]}>
-            Could not load the payment page. Please try again.
+            Could not load the payment session safely. Please start the top-up again.
           </Text>
           <Pressable
             style={({ pressed }) => [
@@ -99,22 +138,16 @@ export default function CheckoutScreen(): React.ReactElement {
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top"]}>
-
-      {/* Header */}
       <View style={[styles.header, { backgroundColor: t.bg }]}>
-        <BackButton onPress={checkBalance} />
+        <BackButton onPress={() => void checkTopupStatus()} />
         <Text style={[styles.headerTitle, { color: t.text }]}>Complete Top Up</Text>
         <View style={styles.headerSpacer} />
       </View>
 
-      {/* Reference badge */}
-      {reference ? (
-        <View style={[styles.referenceBadge, { backgroundColor: t.cardAlt }]}>
-          <Text style={[styles.referenceText, { color: t.textMut }]}>Ref: {reference}</Text>
-        </View>
-      ) : null}
+      <View style={[styles.referenceBadge, { backgroundColor: t.cardAlt }]}>
+        <Text style={[styles.referenceText, { color: t.textMut }]}>Ref: {reference}</Text>
+      </View>
 
-      {/* WebView */}
       <View style={[styles.webviewContainer, { borderColor: t.border }]}>
         <WebView
           source={{ uri: paymentUrl }}
@@ -126,24 +159,39 @@ export default function CheckoutScreen(): React.ReactElement {
           domStorageEnabled
           sharedCookiesEnabled
         />
-        {isLoading && (
+        {isLoading ? (
           <View style={[styles.loadingOverlay, { backgroundColor: t.bg }]}>
             <View style={styles.loadingCard}>
               <ActivityIndicator size="large" color={colors.primary} />
               <Text style={[styles.loadingText, { color: t.textSec }]}>Loading payment...</Text>
             </View>
           </View>
-        )}
+        ) : null}
       </View>
 
-      {/* Footer */}
       <View style={styles.footer}>
         <Text style={[styles.footerText, { color: t.textMut }]}>
           Complete your payment securely via Korapay
         </Text>
+        <Pressable
+          style={({ pressed }) => [
+            styles.statusButton,
+            { backgroundColor: t.card, borderColor: t.border },
+            t.shadow,
+            pressed && styles.buttonPressed,
+            isCheckingStatus && styles.buttonDisabled,
+          ]}
+          onPress={() => void checkTopupStatus()}
+          disabled={isCheckingStatus}
+        >
+          {isCheckingStatus ? (
+            <ActivityIndicator color={colors.primary} />
+          ) : (
+            <Text style={[styles.statusButtonText, { color: t.text }]}>I&apos;ve paid — check status</Text>
+          )}
+        </Pressable>
       </View>
 
-      {/* Success Modal */}
       <Modal visible={paymentStatus === "success"} transparent animationType="fade" statusBarTranslucent>
         <View style={[styles.modalOverlay, { backgroundColor: t.overlay }]}>
           <View style={[styles.modalCard, { backgroundColor: t.card, borderColor: t.border }, t.shadow]}>
@@ -156,12 +204,10 @@ export default function CheckoutScreen(): React.ReactElement {
               <Text style={styles.modalIconText}>✓</Text>
             </View>
             <Text style={styles.modalLabel}>TOP UP SUCCESSFUL</Text>
-            <Text style={[styles.modalBody, { color: t.textSec }]}>Your balance has been updated</Text>
-            {reference ? (
-              <View style={[styles.refBadge, { backgroundColor: t.cardAlt }]}>
-                <Text style={[styles.refText, { color: t.textMut }]}>Ref: {reference}</Text>
-              </View>
-            ) : null}
+            <Text style={[styles.modalBody, { color: t.textSec }]}>{statusMessage}</Text>
+            <View style={[styles.refBadge, { backgroundColor: t.cardAlt }]}>
+              <Text style={[styles.refText, { color: t.textMut }]}>Ref: {reference}</Text>
+            </View>
             <Pressable
               style={({ pressed }) => [styles.modalButton, t.shadow, pressed && styles.buttonPressed]}
               onPress={() => router.replace("/(app)/home")}
@@ -173,7 +219,50 @@ export default function CheckoutScreen(): React.ReactElement {
         </View>
       </Modal>
 
-      {/* Failed Modal */}
+      <Modal visible={paymentStatus === "pending"} transparent animationType="fade" statusBarTranslucent>
+        <View style={[styles.modalOverlay, { backgroundColor: t.overlay }]}>
+          <View style={[styles.modalCard, { backgroundColor: t.card, borderColor: t.border }, t.shadow]}>
+            <View style={[styles.pendingIconWrap, t.shadow]}>
+              <ActivityIndicator size="large" color={colors.primaryText} />
+            </View>
+            <Text style={styles.modalLabel}>PAYMENT PENDING</Text>
+            <Text style={[styles.modalBody, { color: t.textSec }]}>{statusMessage}</Text>
+            <View style={[styles.refBadge, { backgroundColor: t.cardAlt }]}>
+              <Text style={[styles.refText, { color: t.textMut }]}>Ref: {reference}</Text>
+            </View>
+            <Pressable
+              style={({ pressed }) => [
+                styles.modalButton,
+                t.shadow,
+                pressed && styles.buttonPressed,
+                isCheckingStatus && styles.buttonDisabled,
+              ]}
+              onPress={() => void checkTopupStatus()}
+              disabled={isCheckingStatus}
+              accessibilityRole="button"
+            >
+              {isCheckingStatus ? (
+                <ActivityIndicator color={colors.primaryText} />
+              ) : (
+                <Text style={styles.modalButtonText}>I&apos;ve Paid — Check Status</Text>
+              )}
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [
+                styles.secondaryModalButton,
+                { backgroundColor: t.card, borderColor: t.border },
+                t.shadow,
+                pressed && styles.buttonPressed,
+              ]}
+              onPress={() => router.replace("/(app)/home")}
+              accessibilityRole="button"
+            >
+              <Text style={[styles.secondaryModalButtonText, { color: t.text }]}>Back to Dashboard</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
       <Modal visible={paymentStatus === "failed"} transparent animationType="fade" statusBarTranslucent>
         <View style={[styles.modalOverlay, { backgroundColor: t.overlay }]}>
           <View style={[styles.modalCard, { backgroundColor: t.card, borderColor: t.border }, t.shadow]}>
@@ -181,9 +270,17 @@ export default function CheckoutScreen(): React.ReactElement {
               <Text style={styles.modalIconText}>✕</Text>
             </View>
             <Text style={[styles.modalLabel, styles.failedLabel]}>PAYMENT FAILED</Text>
-            <Text style={[styles.modalBody, { color: t.textSec }]}>Something went wrong. Please try again.</Text>
+            <Text style={[styles.modalBody, { color: t.textSec }]}>{statusMessage}</Text>
+            <View style={[styles.refBadge, { backgroundColor: t.cardAlt }]}>
+              <Text style={[styles.refText, { color: t.textMut }]}>Ref: {reference}</Text>
+            </View>
             <Pressable
-              style={({ pressed }) => [styles.modalButton, { backgroundColor: t.card, borderColor: t.border }, t.shadow, pressed && styles.buttonPressed]}
+              style={({ pressed }) => [
+                styles.modalButton,
+                { backgroundColor: t.card, borderColor: t.border },
+                t.shadow,
+                pressed && styles.buttonPressed,
+              ]}
               onPress={() => router.back()}
               accessibilityRole="button"
             >
@@ -198,38 +295,144 @@ export default function CheckoutScreen(): React.ReactElement {
 
 const styles = StyleSheet.create({
   safe: { flex: 1 },
-  header: { flexDirection: "row", alignItems: "center", paddingHorizontal: spacing.xl, paddingVertical: spacing.md, minHeight: dimensions.headerMinHeight, gap: spacing.md },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    minHeight: dimensions.headerMinHeight,
+    gap: spacing.md,
+  },
   headerTitle: { flex: 1, fontFamily: fonts.bold, fontSize: fontSizes.headerTitle },
   headerSpacer: { width: dimensions.headerBackButton.size },
-  referenceBadge: { marginHorizontal: spacing.xl, marginBottom: spacing.sm, alignSelf: "flex-start", borderRadius: radii.sm, paddingVertical: spacing.xs, paddingHorizontal: spacing.sm },
+  referenceBadge: {
+    marginHorizontal: spacing.xl,
+    marginBottom: spacing.sm,
+    alignSelf: "flex-start",
+    borderRadius: radii.sm,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+  },
   referenceText: { fontFamily: fonts.medium, fontSize: fontSizes.xs },
-  webviewContainer: { flex: 1, marginHorizontal: spacing.md, marginBottom: spacing.md, borderRadius: radii.lg, borderWidth: borders.medium, overflow: "hidden", backgroundColor: "#fff" },
+  webviewContainer: {
+    flex: 1,
+    marginHorizontal: spacing.md,
+    marginBottom: spacing.md,
+    borderRadius: radii.lg,
+    borderWidth: borders.medium,
+    overflow: "hidden",
+    backgroundColor: "#fff",
+  },
   webview: { flex: 1, backgroundColor: "#fff" },
   loadingOverlay: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center" },
   loadingCard: { alignItems: "center", gap: spacing.lg },
   loadingText: { fontFamily: fonts.medium, fontSize: fontSizes.body },
-  footer: { paddingHorizontal: spacing.xl, paddingVertical: spacing.md, alignItems: "center" },
+  footer: { paddingHorizontal: spacing.xl, paddingVertical: spacing.md, alignItems: "center", gap: spacing.md },
   footerText: { fontFamily: fonts.regular, fontSize: fontSizes.sm },
-  errorContainer: { flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: spacing.screenHorizontal },
+  statusButton: {
+    minHeight: 48,
+    minWidth: 220,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    borderRadius: radii.pill,
+    borderWidth: borders.standard,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  statusButtonText: { fontFamily: fonts.semibold, fontSize: fontSizes.body },
+  errorContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: spacing.screenHorizontal,
+  },
   errorIcon: { fontSize: 48, marginBottom: spacing.lg },
   errorTitle: { fontFamily: fonts.bold, fontSize: fontSizes.h3, marginBottom: spacing.sm },
-  errorText: { fontFamily: fonts.regular, fontSize: fontSizes.body, textAlign: "center", marginBottom: spacing["2xl"] },
-  errorButton: { paddingHorizontal: spacing["2xl"], paddingVertical: spacing.md, borderRadius: radii.pill, borderWidth: borders.standard },
+  errorText: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.body,
+    textAlign: "center",
+    marginBottom: spacing["2xl"],
+  },
+  errorButton: {
+    paddingHorizontal: spacing["2xl"],
+    paddingVertical: spacing.md,
+    borderRadius: radii.pill,
+    borderWidth: borders.standard,
+  },
   errorButtonText: { fontFamily: fonts.semibold, fontSize: fontSizes.button },
   modalOverlay: { flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: spacing.xl },
-  modalCard: { width: "100%", borderRadius: radii.xl, borderWidth: borders.standard, padding: spacing["2xl"], alignItems: "center", gap: spacing.md },
+  modalCard: {
+    width: "100%",
+    borderRadius: radii.xl,
+    borderWidth: borders.standard,
+    padding: spacing["2xl"],
+    alignItems: "center",
+    gap: spacing.md,
+  },
   pixelRow: { flexDirection: "row", gap: 4, marginBottom: spacing.xs },
   pixel: { width: 8, height: 8, backgroundColor: "transparent" },
   pixelFilled: { backgroundColor: colors.primary },
-  successIconWrap: { width: 72, height: 72, borderRadius: 36, backgroundColor: colors.primary, borderWidth: borders.medium, borderColor: colors.primaryText, alignItems: "center", justifyContent: "center" },
+  successIconWrap: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: colors.primary,
+    borderWidth: borders.medium,
+    borderColor: colors.primaryText,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  pendingIconWrap: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: colors.secondary,
+    borderWidth: borders.medium,
+    borderColor: colors.primaryText,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   failedIconWrap: { backgroundColor: colors.error, borderColor: colors.error },
-  modalIconText: { fontSize: 32, color: colors.primaryText, includeFontPadding: false, lineHeight: 32, textAlign: "center" },
-  modalLabel: { fontFamily: fonts.pixel, fontSize: pixelFontSizes.sm, color: colors.primary, letterSpacing: 1, textAlign: "center" },
+  modalIconText: {
+    fontSize: 32,
+    color: colors.primaryText,
+    includeFontPadding: false,
+    lineHeight: 32,
+    textAlign: "center",
+  },
+  modalLabel: {
+    fontFamily: fonts.pixel,
+    fontSize: pixelFontSizes.sm,
+    color: colors.primary,
+    letterSpacing: 1,
+    textAlign: "center",
+  },
   failedLabel: { color: colors.error },
   modalBody: { fontFamily: fonts.regular, fontSize: fontSizes.body, textAlign: "center" },
   refBadge: { borderRadius: radii.sm, paddingVertical: spacing.xs, paddingHorizontal: spacing.sm },
   refText: { fontFamily: fonts.medium, fontSize: fontSizes.xs },
-  modalButton: { width: "100%", height: 52, backgroundColor: colors.primary, borderRadius: radii.pill, borderWidth: borders.standard, borderColor: colors.primaryText, alignItems: "center", justifyContent: "center", marginTop: spacing.sm },
+  modalButton: {
+    width: "100%",
+    height: 52,
+    backgroundColor: colors.primary,
+    borderRadius: radii.pill,
+    borderWidth: borders.standard,
+    borderColor: colors.primaryText,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: spacing.sm,
+  },
   modalButtonText: { fontFamily: fonts.bold, fontSize: fontSizes.button, color: colors.primaryText },
+  secondaryModalButton: {
+    width: "100%",
+    height: 52,
+    borderRadius: radii.pill,
+    borderWidth: borders.standard,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  secondaryModalButtonText: { fontFamily: fonts.semibold, fontSize: fontSizes.button },
   buttonPressed: { transform: [{ translateX: 3 }, { translateY: 3 }], shadowOffset: { width: 0, height: 0 } },
+  buttonDisabled: { opacity: 0.6 },
 });

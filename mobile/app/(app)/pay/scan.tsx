@@ -44,7 +44,7 @@ function parseAmountInputToKobo(input: string): number | null {
   // Allow only digits with optional 1-2 decimal places.
   if (!/^\d+(\.\d{1,2})?$/.test(trimmed)) return null;
 
-  const [wholeRaw, fracRaw = ""] = trimmed.split(".");
+  const [wholeRaw = "0", fracRaw = ""] = trimmed.split(".");
   const whole = Number.parseInt(wholeRaw, 10);
   if (!Number.isFinite(whole) || whole < 0) return null;
 
@@ -397,4 +397,3 @@ const styles = StyleSheet.create({
     opacity: 0.75,
   },
 });
-
