@@ -27,8 +27,13 @@ describe("Admin HTTP boundary", () => {
 
   const mockAdminService = {
     getOverview: jest.fn(),
+    listMerchants: jest.fn(),
+    createMerchant: jest.fn(),
     getPendingMerchants: jest.fn(),
     approveMerchant: jest.fn(),
+    updateMerchant: jest.fn(),
+    deactivateMerchant: jest.fn(),
+    reactivateMerchant: jest.fn(),
     getPendingCashouts: jest.fn(),
     getReconciliationReport: jest.fn(),
   };
@@ -58,10 +63,17 @@ describe("Admin HTTP boundary", () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     mockAdminService.getOverview.mockResolvedValue({ totalUsers: 10 });
+    mockAdminService.listMerchants.mockResolvedValue([{ userId: "u_merchant" }]);
+    mockAdminService.createMerchant.mockResolvedValue({
+      merchant: { userId: "u_new_merchant", status: "ACTIVE" },
+    });
     mockAdminService.approveMerchant.mockResolvedValue({
       userId: "u_merchant",
       status: "ACTIVE",
       verifiedAt: "2026-05-18T00:00:00.000Z",
+    });
+    mockAdminService.updateMerchant.mockResolvedValue({
+      merchant: { userId: "u_merchant", businessName: "Updated Cafe" },
     });
 
     const moduleRef = await Test.createTestingModule({
@@ -104,6 +116,62 @@ describe("Admin HTTP boundary", () => {
     expect(mockAdminService.getOverview).toHaveBeenCalledTimes(1);
   });
 
+  it("accepts GET /admin/merchants with admin session cookie", async () => {
+    const response = await request(app.getHttpServer())
+      .get("/admin/merchants")
+      .set("Cookie", `${ADMIN_SESSION_COOKIE_NAME}=${COOKIE_ADMIN_TOKEN}`)
+      .expect(200);
+
+    expect(response.body).toEqual({ merchants: [{ userId: "u_merchant" }] });
+    expect(mockAdminService.listMerchants).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects POST /admin/merchants without admin CSRF header", async () => {
+    await request(app.getHttpServer())
+      .post("/admin/merchants")
+      .set("Cookie", `${ADMIN_SESSION_COOKIE_NAME}=${COOKIE_ADMIN_TOKEN}`)
+      .set("Origin", ALLOWED_ORIGIN)
+      .send({
+        email: "merchant@getoneto.com",
+        businessName: "Campus Cafe",
+        cashoutBankName: "Wema Bank",
+        cashoutBankCode: "035",
+        cashoutAccountNumber: "1234567890",
+        cashoutAccountName: "Campus Cafe Ltd",
+      })
+      .expect(403);
+
+    expect(mockAdminService.createMerchant).not.toHaveBeenCalled();
+  });
+
+  it("allows POST /admin/merchants with cookie auth, allowlisted Origin and CSRF header", async () => {
+    const response = await request(app.getHttpServer())
+      .post("/admin/merchants")
+      .set("Cookie", `${ADMIN_SESSION_COOKIE_NAME}=${COOKIE_ADMIN_TOKEN}`)
+      .set("Origin", ALLOWED_ORIGIN)
+      .set("X-Oneto-Admin-CSRF", "1")
+      .send({
+        email: "merchant@getoneto.com",
+        businessName: "Campus Cafe",
+        cashoutBankName: "Wema Bank",
+        cashoutBankCode: "035",
+        cashoutAccountNumber: "1234567890",
+        cashoutAccountName: "Campus Cafe Ltd",
+      })
+      .expect(201);
+
+    expect(response.body).toEqual({
+      merchant: { userId: "u_new_merchant", status: "ACTIVE" },
+    });
+    expect(mockAdminService.createMerchant).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: "merchant@getoneto.com",
+        businessName: "Campus Cafe",
+      }),
+      ADMIN_PAYLOAD.sub,
+    );
+  });
+
   it("rejects POST /admin/merchants/:userId/approve without admin CSRF header", async () => {
     await request(app.getHttpServer())
       .post("/admin/merchants/u_merchant/approve")
@@ -129,6 +197,25 @@ describe("Admin HTTP boundary", () => {
     });
     expect(mockAdminService.approveMerchant).toHaveBeenCalledWith(
       "u_merchant",
+      ADMIN_PAYLOAD.sub,
+    );
+  });
+
+  it("allows PATCH /admin/merchants/:userId with cookie auth, allowlisted Origin and CSRF header", async () => {
+    const response = await request(app.getHttpServer())
+      .patch("/admin/merchants/u_merchant")
+      .set("Cookie", `${ADMIN_SESSION_COOKIE_NAME}=${COOKIE_ADMIN_TOKEN}`)
+      .set("Origin", ALLOWED_ORIGIN)
+      .set("X-Oneto-Admin-CSRF", "1")
+      .send({ businessName: "Updated Cafe" })
+      .expect(200);
+
+    expect(response.body).toEqual({
+      merchant: { userId: "u_merchant", businessName: "Updated Cafe" },
+    });
+    expect(mockAdminService.updateMerchant).toHaveBeenCalledWith(
+      "u_merchant",
+      { businessName: "Updated Cafe" },
       ADMIN_PAYLOAD.sub,
     );
   });
