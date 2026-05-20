@@ -7,7 +7,17 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
   const location = useLocation();
 
   if (status === "checking") {
-    return <p>Checking admin session...</p>;
+    return (
+      <div className="auth-shell">
+        <div className="panel status-screen">
+          <p className="auth-eyebrow">Admin access only</p>
+          <h1 className="page-title">Checking admin session</h1>
+          <p className="supporting-text">
+            Confirming access before loading the production operations dashboard.
+          </p>
+        </div>
+      </div>
+    );
   }
 
   if (status !== "authenticated") {
