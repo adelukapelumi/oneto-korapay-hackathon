@@ -111,8 +111,6 @@ export default function TopupAmountScreen(): React.ReactElement {
     setLoading(true);
     try {
       const res = await requestTopup(amountKobo);
-      console.log("KORAPAY PAYMENT URL:", res.paymentUrl);
-console.log("KORAPAY HOST:", new URL(res.paymentUrl).hostname);
       router.push({
         pathname: "/(app)/topup/checkout",
         params: { paymentUrl: res.paymentUrl, reference: res.reference },
