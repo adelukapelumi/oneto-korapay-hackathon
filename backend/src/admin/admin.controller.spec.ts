@@ -14,8 +14,13 @@ describe("AdminController", () => {
   let controller: AdminController;
   const mockAdminService = {
     getOverview: jest.fn(),
+    listMerchants: jest.fn(),
+    createMerchant: jest.fn(),
     getPendingMerchants: jest.fn(),
     approveMerchant: jest.fn(),
+    updateMerchant: jest.fn(),
+    deactivateMerchant: jest.fn(),
+    reactivateMerchant: jest.fn(),
     getPendingCashouts: jest.fn(),
     getReconciliationReport: jest.fn(),
   };
@@ -104,10 +109,104 @@ describe("AdminController", () => {
     });
     const req = { user: { sub: "u_admin" } } as unknown as AuthenticatedRequest;
 
-    const result = await controller.approveMerchant("u_merchant", req);
+    const result = await controller.approveMerchant({ userId: "u_merchant" }, req);
 
     expect(result.userId).toBe("u_merchant");
     expect(mockAdminService.approveMerchant).toHaveBeenCalledWith(
+      "u_merchant",
+      "u_admin",
+    );
+  });
+
+  it("delegates GET /admin/merchants to AdminService.listMerchants", async () => {
+    mockAdminService.listMerchants.mockResolvedValue([{ userId: "u_merchant" }]);
+
+    const result = await controller.listMerchants();
+
+    expect(result).toEqual({ merchants: [{ userId: "u_merchant" }] });
+    expect(mockAdminService.listMerchants).toHaveBeenCalledTimes(1);
+  });
+
+  it("delegates POST /admin/merchants to AdminService.createMerchant", async () => {
+    mockAdminService.createMerchant.mockResolvedValue({
+      merchant: { userId: "u_merchant", status: "ACTIVE" },
+    });
+    const req = { user: { sub: "u_admin" } } as unknown as AuthenticatedRequest;
+    const body = {
+      email: "merchant@getoneto.com",
+      businessName: "Campus Cafe",
+      cashoutBankName: "Wema Bank",
+      cashoutBankCode: "035",
+      cashoutAccountNumber: "1234567890",
+      cashoutAccountName: "Campus Cafe Ltd",
+    };
+
+    const result = await controller.createMerchant(body, req);
+
+    expect(result).toEqual({
+      merchant: { userId: "u_merchant", status: "ACTIVE" },
+    });
+    expect(mockAdminService.createMerchant).toHaveBeenCalledWith(body, "u_admin");
+  });
+
+  it("delegates PATCH /admin/merchants/:userId to AdminService.updateMerchant", async () => {
+    mockAdminService.updateMerchant.mockResolvedValue({
+      merchant: { userId: "u_merchant", businessName: "Updated Name" },
+    });
+    const req = { user: { sub: "u_admin" } } as unknown as AuthenticatedRequest;
+    const params = { userId: "u_merchant" };
+    const body = { businessName: "Updated Name" };
+
+    const result = await controller.updateMerchant(params, body, req);
+
+    expect(result).toEqual({
+      merchant: { userId: "u_merchant", businessName: "Updated Name" },
+    });
+    expect(mockAdminService.updateMerchant).toHaveBeenCalledWith(
+      "u_merchant",
+      body,
+      "u_admin",
+    );
+  });
+
+  it("delegates POST /admin/merchants/:userId/deactivate to AdminService.deactivateMerchant", async () => {
+    mockAdminService.deactivateMerchant.mockResolvedValue({
+      userId: "u_merchant",
+      status: "FROZEN",
+    });
+    const req = { user: { sub: "u_admin" } } as unknown as AuthenticatedRequest;
+
+    const result = await controller.deactivateMerchant(
+      { userId: "u_merchant" },
+      req,
+    );
+
+    expect(result).toEqual({ userId: "u_merchant", status: "FROZEN" });
+    expect(mockAdminService.deactivateMerchant).toHaveBeenCalledWith(
+      "u_merchant",
+      "u_admin",
+    );
+  });
+
+  it("delegates POST /admin/merchants/:userId/reactivate to AdminService.reactivateMerchant", async () => {
+    mockAdminService.reactivateMerchant.mockResolvedValue({
+      userId: "u_merchant",
+      status: "ACTIVE",
+      verifiedAt: "2026-05-18T00:00:00.000Z",
+    });
+    const req = { user: { sub: "u_admin" } } as unknown as AuthenticatedRequest;
+
+    const result = await controller.reactivateMerchant(
+      { userId: "u_merchant" },
+      req,
+    );
+
+    expect(result).toEqual({
+      userId: "u_merchant",
+      status: "ACTIVE",
+      verifiedAt: "2026-05-18T00:00:00.000Z",
+    });
+    expect(mockAdminService.reactivateMerchant).toHaveBeenCalledWith(
       "u_merchant",
       "u_admin",
     );

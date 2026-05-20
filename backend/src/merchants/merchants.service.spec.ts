@@ -64,5 +64,26 @@ describe("MerchantsService", () => {
       { id: "u_bbbbbbbbbbbbbbbb", label: "Bookshop" },
     ]);
   });
-});
 
+  it("keeps deactivated merchants out of the student merchant list by requiring ACTIVE status", async () => {
+    prisma.user.findMany.mockResolvedValue([]);
+
+    await service.listActiveApprovedMerchants();
+
+    expect(prisma.user.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          role: "MERCHANT",
+          status: "ACTIVE",
+          merchantProfile: {
+            is: {
+              verifiedAt: {
+                not: null,
+              },
+            },
+          },
+        },
+      }),
+    );
+  });
+});
