@@ -1,9 +1,10 @@
 import { View, Text, StyleSheet, Pressable } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import QRCode from "react-native-qrcode-svg";
 import type { PaymentRequest } from "@oneto/shared";
 import { BackButton } from "../../../components/BackButton";
+import { Screen } from "../../../components/Screen";
+import { useCompactLayout } from "../../../src/ui/responsive";
 import { useThemeMode } from "../../../src/theme/theme-provider";
 import {
   getTheme,
@@ -22,6 +23,7 @@ export default function RequestQRScreen() {
   const router = useRouter();
   const { mode } = useThemeMode();
   const t = getTheme(mode);
+  const compact = useCompactLayout();
 
   if (!requestJson) return null;
 
@@ -29,7 +31,13 @@ export default function RequestQRScreen() {
   const naira = (request.amountKobo / 100).toFixed(2);
 
   return (
-    <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top", "bottom"]}>
+    <Screen
+      scroll
+      contentContainerStyle={{
+        paddingHorizontal: compact.horizontalPadding,
+        paddingBottom: spacing["2xl"],
+      }}
+    >
       {/* Header */}
       <View style={styles.header}>
         <BackButton />
@@ -41,11 +49,21 @@ export default function RequestQRScreen() {
         <Text style={styles.pixelLabel}>AWAITING PAYMENT</Text>
         <Text style={[styles.amount, { color: t.text }]}>₦{naira}</Text>
 
-        <View style={[styles.qrCard, { backgroundColor: t.card, borderColor: t.border }, t.shadow]}>
+        <View
+          style={[
+            styles.qrCard,
+            {
+              backgroundColor: t.card,
+              borderColor: t.border,
+              padding: compact.isVeryShort ? spacing.lg : spacing.cardPadLg,
+            },
+            t.shadow,
+          ]}
+        >
           <View style={styles.qrInner}>
             <QRCode
               value={requestJson}
-              size={240}
+              size={compact.qrSize}
               ecl="M"
               quietZone={8}
               color={colors.primaryText}
@@ -63,7 +81,7 @@ export default function RequestQRScreen() {
         <Pressable
           style={({ pressed }) => [
             styles.button,
-            { borderColor: t.border },
+            { height: compact.buttonHeight, borderColor: t.border },
             t.shadow,
             pressed && styles.buttonPressed,
           ]}
@@ -72,12 +90,11 @@ export default function RequestQRScreen() {
           <Text style={styles.buttonText}>Scan Response →</Text>
         </Pressable>
       </View>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1 },
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -93,8 +110,6 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    paddingHorizontal: spacing.screenHorizontal,
-    paddingBottom: spacing["2xl"],
     alignItems: "center",
   },
   pixelLabel: {
@@ -112,7 +127,6 @@ const styles = StyleSheet.create({
   qrCard: {
     borderWidth: borders.standard,
     borderRadius: radii.xl,
-    padding: spacing.cardPadLg,
   },
   qrInner: {
     borderRadius: radii.sm,
@@ -127,7 +141,6 @@ const styles = StyleSheet.create({
   spacer: { flex: 1 },
   button: {
     width: "100%",
-    height: 52,
     backgroundColor: colors.primary,
     borderRadius: radii.pill,
     borderWidth: borders.standard,

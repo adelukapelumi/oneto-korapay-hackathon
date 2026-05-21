@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { View, Text, StyleSheet, TextInput, Pressable, Alert } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { useAuth } from "../../../src/auth/auth-state";
 import { createPaymentRequest } from "../../../src/payment/create-request";
 import { MAX_OFFLINE_TRANSACTION_KOBO } from "@oneto/shared";
 import { BackButton } from "../../../components/BackButton";
+import { Screen } from "../../../components/Screen";
+import { useCompactLayout } from "../../../src/ui/responsive";
 import { useThemeMode } from "../../../src/theme/theme-provider";
 import {
   getTheme,
@@ -24,6 +25,7 @@ export default function ChargeScreen() {
   const router = useRouter();
   const { mode } = useThemeMode();
   const t = getTheme(mode);
+  const compact = useCompactLayout();
 
   if (state.status !== "authed") return null;
 
@@ -50,7 +52,11 @@ export default function ChargeScreen() {
   };
 
   return (
-    <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top", "bottom"]}>
+    <Screen
+      scroll
+      keyboard
+      contentContainerStyle={{ paddingBottom: spacing["2xl"] }}
+    >
       {/* Header */}
       <View style={styles.header}>
         <BackButton />
@@ -58,7 +64,16 @@ export default function ChargeScreen() {
         <View style={styles.headerSpacer} />
       </View>
 
-      <View style={styles.container}>
+      <View
+        style={[
+          styles.container,
+          {
+            paddingHorizontal: compact.horizontalPadding,
+            paddingTop: compact.topPadding,
+            justifyContent: compact.isVeryShort ? "flex-start" : "center",
+          },
+        ]}
+      >
         <Text style={[styles.label, { color: t.textSec }]}>Enter Amount (₦)</Text>
         <TextInput
           style={[styles.input, { color: t.text, borderBottomColor: t.border }]}
@@ -73,7 +88,7 @@ export default function ChargeScreen() {
         <Pressable
           style={({ pressed }) => [
             styles.button,
-            { borderColor: t.border },
+            { height: compact.buttonHeight, borderColor: t.border },
             t.shadow,
             pressed && styles.buttonPressed,
           ]}
@@ -82,12 +97,11 @@ export default function ChargeScreen() {
           <Text style={styles.buttonText}>Generate QR</Text>
         </Pressable>
       </View>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1 },
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -102,7 +116,7 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.headerTitle,
   },
   headerSpacer: { width: dimensions.headerBackButton.size },
-  container: { flex: 1, paddingHorizontal: spacing.screenHorizontal, justifyContent: "center" },
+  container: { flex: 1 },
   label: {
     fontFamily: fonts.regular,
     fontSize: fontSizes.body,
@@ -119,7 +133,6 @@ const styles = StyleSheet.create({
   },
   button: {
     backgroundColor: colors.primary,
-    height: 52,
     borderRadius: radii.pill,
     borderWidth: borders.standard,
     alignItems: "center",

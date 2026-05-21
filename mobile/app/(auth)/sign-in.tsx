@@ -1,22 +1,21 @@
 import { useRef, useState } from "react";
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { Screen } from "../../components/Screen";
 import { requestOtp } from "../../src/api/auth";
 import { NetworkError } from "../../src/api/errors";
 import { logger } from "../../src/lib/logger";
+import { useCompactLayout } from "../../src/ui/responsive";
 import { useThemeMode } from "../../src/theme/theme-provider";
 import {
   getTheme,
@@ -46,6 +45,7 @@ export default function SignInScreen(): React.ReactElement {
   const [networkError, setNetworkError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [focused, setFocused] = useState(false);
+  const compact = useCompactLayout();
 
   // Ref so the Pressable wrapper can programmatically focus the input
   // when the user taps anywhere in the input box, not just the text field itself.
@@ -78,17 +78,33 @@ export default function SignInScreen(): React.ReactElement {
   });
 
   return (
-    <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top", "bottom"]}>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-      >
-        <View style={styles.container}>
+    <Screen
+      scroll
+      keyboard
+      contentContainerStyle={[
+        styles.container,
+        {
+          paddingHorizontal: compact.horizontalPadding,
+          paddingTop: compact.topPadding,
+          paddingBottom: spacing["2xl"],
+        },
+      ]}
+    >
+      <View style={styles.container}>
           {/* Step indicator */}
           <Text style={styles.stepLabel}>STEP 1</Text>
 
           {/* Heading */}
-          <Text style={[styles.title, { color: t.text }]}>
+          <Text
+            style={[
+              styles.title,
+              {
+                color: t.text,
+                fontSize: compact.isVeryShort ? fontSizes.h2Lg : fontSizes.h1,
+                lineHeight: compact.isVeryShort ? 32 : 37,
+              },
+            ]}
+          >
             Get started{"\n"}with{" "}
             <Text style={styles.titleAccent}>oneto</Text>
           </Text>
@@ -153,46 +169,38 @@ export default function SignInScreen(): React.ReactElement {
             <Text style={styles.networkError}>{networkError}</Text>
           ) : null}
 
-          <View style={styles.flex} />
+          <View style={styles.footer}>
+            <Pressable
+              style={({ pressed }) => [
+                styles.button,
+                { height: compact.buttonHeight, borderColor: t.border },
+                t.shadow,
+                (submitting || !formState.isValid) && styles.buttonDisabled,
+                pressed && styles.buttonPressed,
+              ]}
+              onPress={onSubmit}
+              disabled={submitting}
+              accessibilityRole="button"
+            >
+              {submitting ? (
+                <ActivityIndicator color={colors.primaryText} />
+              ) : (
+                <Text style={styles.buttonText}>Continue</Text>
+              )}
+            </Pressable>
 
-          {/* Continue button */}
-          <Pressable
-            style={({ pressed }) => [
-              styles.button,
-              { borderColor: t.border },
-              t.shadow,
-              (submitting || !formState.isValid) && styles.buttonDisabled,
-              pressed && styles.buttonPressed,
-            ]}
-            onPress={onSubmit}
-            disabled={submitting}
-            accessibilityRole="button"
-          >
-            {submitting ? (
-              <ActivityIndicator color={colors.primaryText} />
-            ) : (
-              <Text style={styles.buttonText}>Continue</Text>
-            )}
-          </Pressable>
-
-          {/* Terms */}
-          <Text style={[styles.terms, { color: t.textMut }]}>
-            By continuing, you agree to our Terms of Service
-          </Text>
-        </View>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+            <Text style={[styles.terms, { color: t.textMut }]}>
+              By continuing, you agree to our Terms of Service
+            </Text>
+          </View>
+      </View>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1 },
-  flex: { flex: 1 },
   container: {
     flex: 1,
-    paddingHorizontal: spacing.screenHorizontal,
-    paddingTop: spacing["6xl"],
-    paddingBottom: spacing["2xl"],
   },
   stepLabel: {
     fontFamily: fonts.pixel,
@@ -264,8 +272,10 @@ const styles = StyleSheet.create({
     marginTop: spacing.md,
     fontSize: fontSizes.body,
   },
+  footer: {
+    marginTop: "auto",
+  },
   button: {
-    height: 52,
     backgroundColor: colors.primary,
     borderRadius: radii.pill,
     borderWidth: borders.standard,

@@ -8,7 +8,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { Screen } from "../../components/Screen";
 import {
   PinIncorrectError,
   PinLockedError,
@@ -19,6 +19,7 @@ import {
 import { describeAttemptState, formatMmSs } from "../../src/lib/pin-attempts";
 import { useAuth } from "../../src/auth/auth-state";
 import { logger } from "../../src/lib/logger";
+import { useCompactLayout } from "../../src/ui/responsive";
 import { useThemeMode } from "../../src/theme/theme-provider";
 import {
   getTheme,
@@ -51,6 +52,7 @@ export default function PinEntryScreen(): React.ReactElement {
   const [lockSecondsRemaining, setLockSecondsRemaining] = useState(0);
   const inputRef = useRef<TextInput>(null);
   const shakeAnim = useRef(new Animated.Value(0)).current;
+  const compact = useCompactLayout();
 
   useEffect(() => {
     let cancelled = false;
@@ -144,14 +146,31 @@ export default function PinEntryScreen(): React.ReactElement {
   const isLocked = lockSecondsRemaining > 0;
 
   return (
-    <SafeAreaView
-      style={[styles.safe, { backgroundColor: t.bg }]}
-      edges={["top", "bottom"]}
-    >
-      <View style={styles.container}>
+    <Screen scroll contentContainerStyle={{ paddingBottom: spacing["2xl"] }}>
+      <View
+        style={[
+          styles.container,
+          {
+            paddingHorizontal: compact.horizontalPadding,
+            paddingTop: compact.topPadding,
+          },
+        ]}
+      >
         {/* Brand */}
-        <View style={styles.brandSection}>
-          <Text style={[styles.logoText, { color: t.text }]}>oneto</Text>
+        <View
+          style={[
+            styles.brandSection,
+            { marginTop: compact.isVeryShort ? spacing.xl : spacing["4xl"] },
+          ]}
+        >
+          <Text
+            style={[
+              styles.logoText,
+              { color: t.text, fontSize: compact.isVeryShort ? 36 : 42 },
+            ]}
+          >
+            oneto
+          </Text>
           <View style={styles.pixelDots}>
             {[0, 1, 2, 3, 4].map((i) => (
               <View
@@ -166,7 +185,12 @@ export default function PinEntryScreen(): React.ReactElement {
         </View>
 
         {/* Welcome */}
-        <View style={styles.welcomeSection}>
+        <View
+          style={[
+            styles.welcomeSection,
+            { marginTop: compact.isVeryShort ? spacing["2xl"] : spacing["5xl"] },
+          ]}
+        >
           <Text style={[styles.welcomeTitle, { color: t.text }]}>
             Welcome back
           </Text>
@@ -177,14 +201,26 @@ export default function PinEntryScreen(): React.ReactElement {
 
         {/* PIN dots */}
         <Animated.View
-          style={[styles.dotsRow, { transform: [{ translateX: shakeAnim }] }]}
+          style={[
+            styles.dotsRow,
+            {
+              gap: compact.pinDotGap,
+              marginTop: compact.isVeryShort ? spacing["2xl"] : spacing["4xl"],
+            },
+            { transform: [{ translateX: shakeAnim }] },
+          ]}
         >
           {Array.from({ length: PIN_LENGTH }).map((_, i) => (
             <View
               key={i}
               style={[
                 styles.dot,
-                { borderColor: t.border },
+                {
+                  width: compact.isVeryShort ? 18 : dimensions.pinDot.size,
+                  height: compact.isVeryShort ? 18 : dimensions.pinDot.size,
+                  borderRadius: compact.isVeryShort ? 9 : dimensions.pinDot.size / 2,
+                  borderColor: t.border,
+                },
                 i < pin.length && styles.dotFilled,
               ]}
             />
@@ -212,12 +248,23 @@ export default function PinEntryScreen(): React.ReactElement {
 
         {/* Numpad */}
         {!submitting && (
-          <View style={styles.numPad}>
+          <View style={[styles.numPad, { gap: compact.numPadRowGap }]}>
             {NUM_ROWS.map((row, ri) => (
-              <View key={ri} style={styles.numRow}>
+              <View key={ri} style={[styles.numRow, { gap: compact.numPadColGap }]}>
                 {row.map((key, ki) => {
                   if (key === "") {
-                    return <View key={ki} style={styles.numKeyEmpty} />;
+                    return (
+                      <View
+                        key={ki}
+                        style={[
+                          styles.numKeyEmpty,
+                          {
+                            width: compact.numPadKeySize,
+                            height: compact.numPadKeySize,
+                          },
+                        ]}
+                      />
+                    );
                   }
                   const disabled = isLocked;
                   return (
@@ -226,6 +273,9 @@ export default function PinEntryScreen(): React.ReactElement {
                       style={({ pressed }) => [
                         styles.numKey,
                         {
+                          width: compact.numPadKeySize,
+                          height: compact.numPadKeySize,
+                          borderRadius: compact.numPadKeySize / 2,
                           borderColor: t.border,
                           backgroundColor: t.keyBg,
                         },
@@ -240,7 +290,10 @@ export default function PinEntryScreen(): React.ReactElement {
                       <Text
                         style={[
                           styles.numKeyText,
-                          { color: t.text },
+                          {
+                            color: t.text,
+                            fontSize: compact.isVeryShort ? 22 : fontSizes.numPad,
+                          },
                           disabled && { color: t.textMut },
                         ]}
                       >
@@ -281,26 +334,23 @@ export default function PinEntryScreen(): React.ReactElement {
           showSoftInputOnFocus={false}
         />
       </View>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 // Only static values live in StyleSheet. Theme-dependent colors are applied
 // inline above so they react to mode changes without a full remount.
 const styles = StyleSheet.create({
-  safe: { flex: 1 },
   container: {
-    flex: 1,
-    paddingHorizontal: spacing.screenHorizontal,
     alignItems: "center",
   },
 
-  brandSection: { alignItems: "center", marginTop: spacing["4xl"] },
+  brandSection: { alignItems: "center" },
   logoText: { fontFamily: fonts.bold, fontSize: 42, letterSpacing: -1 },
   pixelDots: { flexDirection: "row", gap: 4, marginTop: spacing.sm },
   pixelDot: { width: 6, height: 6 },
 
-  welcomeSection: { alignItems: "center", marginTop: spacing["5xl"] },
+  welcomeSection: { alignItems: "center" },
   welcomeTitle: { fontFamily: fonts.bold, fontSize: fontSizes.h1 },
   welcomeSubtitle: {
     fontFamily: fonts.regular,
@@ -310,14 +360,9 @@ const styles = StyleSheet.create({
 
   dotsRow: {
     flexDirection: "row",
-    gap: dimensions.pinDot.gap,
     justifyContent: "center",
-    marginTop: spacing["4xl"],
   },
   dot: {
-    width: dimensions.pinDot.size,
-    height: dimensions.pinDot.size,
-    borderRadius: dimensions.pinDot.size / 2,
     borderWidth: borders.standard,
     backgroundColor: "transparent",
   },
@@ -358,14 +403,10 @@ const styles = StyleSheet.create({
 
   numPad: {
     marginTop: spacing.xl,
-    gap: dimensions.numPadGap.row,
     alignItems: "center",
   },
-  numRow: { flexDirection: "row", gap: dimensions.numPadGap.col },
+  numRow: { flexDirection: "row" },
   numKey: {
-    width: dimensions.numPadKey.size,
-    height: dimensions.numPadKey.size,
-    borderRadius: dimensions.numPadKey.size / 2,
     borderWidth: borders.medium,
     alignItems: "center",
     justifyContent: "center",
@@ -377,10 +418,7 @@ const styles = StyleSheet.create({
   },
   numKeyPressed: { transform: [{ scale: 0.9 }] },
   numKeyDisabled: { opacity: 0.4 },
-  numKeyEmpty: {
-    width: dimensions.numPadKey.size,
-    height: dimensions.numPadKey.size,
-  },
+  numKeyEmpty: {},
   numKeyText: { fontFamily: fonts.semibold, fontSize: fontSizes.numPad },
 
   footer: { marginTop: "auto", paddingBottom: spacing["2xl"] },

@@ -7,9 +7,10 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import { Screen } from "../../components/Screen";
 import { useThemeMode } from "../../src/theme/theme-provider";
+import { useCompactLayout } from "../../src/ui/responsive";
 import {
   getTheme,
   colors,
@@ -40,6 +41,7 @@ export default function PinSetupScreen(): React.ReactElement {
   const router = useRouter();
   const { mode } = useThemeMode();
   const t = getTheme(mode);
+  const compact = useCompactLayout();
   const [step, setStep] = useState<Step>("enter");
   const [firstPin, setFirstPin] = useState("");
   const [pin, setPin] = useState("");
@@ -112,16 +114,21 @@ export default function PinSetupScreen(): React.ReactElement {
   }
 
   return (
-    <SafeAreaView
-      style={[styles.safe, { backgroundColor: t.bg }]}
-      edges={["top", "bottom"]}
-    >
+    <Screen scroll contentContainerStyle={{ paddingBottom: spacing["2xl"] }}>
       {/* Header with back button */}
       <View style={styles.header}>
         <BackButton />
       </View>
 
-      <View style={styles.container}>
+      <View
+        style={[
+          styles.container,
+          {
+            paddingHorizontal: compact.horizontalPadding,
+            paddingTop: compact.topPadding,
+          },
+        ]}
+      >
         {/* Step indicator */}
         <Text style={styles.stepLabel}>
           {step === "enter" ? "STEP 3" : "CONFIRM"}
@@ -143,6 +150,10 @@ export default function PinSetupScreen(): React.ReactElement {
         <Animated.View
           style={[
             styles.dotsRow,
+            {
+              gap: compact.pinDotGap,
+              marginTop: compact.isVeryShort ? 24 : 48,
+            },
             { transform: [{ translateX: shakeAnim }] },
           ]}
         >
@@ -151,7 +162,12 @@ export default function PinSetupScreen(): React.ReactElement {
               key={i}
               style={[
                 styles.dot,
-                { borderColor: t.border },
+                {
+                  width: compact.isVeryShort ? 18 : dimensions.pinDot.size,
+                  height: compact.isVeryShort ? 18 : dimensions.pinDot.size,
+                  borderRadius: compact.isVeryShort ? 9 : dimensions.pinDot.size / 2,
+                  borderColor: t.border,
+                },
                 i < pin.length && styles.dotFilled,
               ]}
             />
@@ -166,26 +182,51 @@ export default function PinSetupScreen(): React.ReactElement {
         )}
 
         {/* NumPad */}
-        <View style={styles.numPad}>
+        <View style={[styles.numPad, { gap: compact.numPadRowGap }]}>
           {NUM_ROWS.map((row, ri) => (
-            <View key={ri} style={styles.numRow}>
+            <View key={ri} style={[styles.numRow, { gap: compact.numPadColGap }]}>
               {row.map((key, ki) => {
                 if (key === "") {
-                  return <View key={ki} style={styles.numKeyEmpty} />;
+                  return (
+                    <View
+                      key={ki}
+                      style={[
+                        styles.numKeyEmpty,
+                        {
+                          width: compact.numPadKeySize,
+                          height: compact.numPadKeySize,
+                        },
+                      ]}
+                    />
+                  );
                 }
                 return (
                   <Pressable
                     key={ki}
                     style={({ pressed }) => [
                       styles.numKey,
-                      { borderColor: t.border, backgroundColor: t.keyBg },
+                      {
+                        width: compact.numPadKeySize,
+                        height: compact.numPadKeySize,
+                        borderRadius: compact.numPadKeySize / 2,
+                        borderColor: t.border,
+                        backgroundColor: t.keyBg,
+                      },
                       pressed && styles.numKeyPressed,
                     ]}
                     onPress={() =>
                       key === "del" ? onDelete() : onDigit(key as number)
                     }
                   >
-                    <Text style={[styles.numKeyText, { color: t.text }]}>
+                    <Text
+                      style={[
+                        styles.numKeyText,
+                        {
+                          color: t.text,
+                          fontSize: compact.isVeryShort ? 22 : fontSizes.numPad,
+                        },
+                      ]}
+                    >
                       {key === "del" ? "⌫" : key}
                     </Text>
                   </Pressable>
@@ -196,7 +237,12 @@ export default function PinSetupScreen(): React.ReactElement {
         </View>
 
         {/* Hint */}
-        <Text style={[styles.hint, { color: t.textMut }]}>
+        <Text
+          style={[
+            styles.hint,
+            { color: t.textMut, marginTop: compact.isVeryShort ? spacing.lg : spacing["2xl"] },
+          ]}
+        >
           {step === "enter" ? "Don't share your PIN with anyone" : ""}
         </Text>
 
@@ -214,12 +260,11 @@ export default function PinSetupScreen(): React.ReactElement {
           showSoftInputOnFocus={false}
         />
       </View>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1 },
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -228,9 +273,6 @@ const styles = StyleSheet.create({
     minHeight: dimensions.headerMinHeight,
   },
   container: {
-    flex: 1,
-    paddingHorizontal: spacing.screenHorizontal,
-    paddingTop: spacing.xl,
     alignItems: "center",
   },
   stepLabel: {
@@ -250,14 +292,9 @@ const styles = StyleSheet.create({
   },
   dotsRow: {
     flexDirection: "row",
-    gap: dimensions.pinDot.gap,
     justifyContent: "center",
-    marginTop: spacing["5xl"],
   },
   dot: {
-    width: dimensions.pinDot.size,
-    height: dimensions.pinDot.size,
-    borderRadius: dimensions.pinDot.size / 2,
     borderWidth: borders.standard,
     backgroundColor: "transparent",
   },
@@ -285,17 +322,12 @@ const styles = StyleSheet.create({
   },
   numPad: {
     marginTop: spacing.lg,
-    gap: dimensions.numPadGap.row,
     alignItems: "center",
   },
   numRow: {
     flexDirection: "row",
-    gap: dimensions.numPadGap.col,
   },
   numKey: {
-    width: dimensions.numPadKey.size,
-    height: dimensions.numPadKey.size,
-    borderRadius: dimensions.numPadKey.size / 2,
     borderWidth: borders.medium,
     alignItems: "center",
     justifyContent: "center",
@@ -303,10 +335,7 @@ const styles = StyleSheet.create({
   numKeyPressed: {
     transform: [{ scale: 0.9 }],
   },
-  numKeyEmpty: {
-    width: dimensions.numPadKey.size,
-    height: dimensions.numPadKey.size,
-  },
+  numKeyEmpty: {},
   numKeyText: {
     fontFamily: fonts.semibold,
     fontSize: fontSizes.numPad,
