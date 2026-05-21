@@ -38,7 +38,8 @@ export function Screen({
     <ScrollView
       style={{ flex: 1 }}
       contentContainerStyle={[{ flexGrow: 1 }, contentContainerStyle]}
-      keyboardShouldPersistTaps="handled"
+      keyboardShouldPersistTaps="always"
+      keyboardDismissMode="interactive"
       showsVerticalScrollIndicator={false}
     >
       {children}
