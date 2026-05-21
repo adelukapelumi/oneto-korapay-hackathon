@@ -1,7 +1,11 @@
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useState } from "react";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { useAuth } from "../../src/auth/auth-state";
+import { clearToken } from "../../src/auth/token-store";
+import { wipeKeypair } from "../../src/crypto/keypair-store";
+import { wipeLocalTestingData } from "../../src/ledger/db";
 import { useThemeMode } from "../../src/theme/theme-provider";
 import { BackButton } from "../../components/BackButton";
 import {
@@ -52,8 +56,9 @@ function SettingsRow({
 
 export default function SettingsScreen(): React.ReactElement {
   const router = useRouter();
-  const { state, signOut } = useAuth();
+  const { state } = useAuth();
   const { mode, toggleTheme } = useThemeMode();
+  const [isWipingTestingData, setIsWipingTestingData] = useState(false);
   const t = getTheme(mode);
 
   if (state.status !== "authed") {
@@ -65,6 +70,50 @@ export default function SettingsScreen(): React.ReactElement {
   const displayName = email.split("@")[0] || "User";
   const isStudent = user.role === "STUDENT";
   const statusDisplay = user.status === "ACTIVE" ? "✓ Active" : user.status;
+
+  async function performTestingWipe(): Promise<void> {
+    if (isWipingTestingData) {
+      return;
+    }
+
+    setIsWipingTestingData(true);
+    try {
+      await Promise.all([wipeKeypair(), clearToken()]);
+      wipeLocalTestingData();
+      Alert.alert(
+        "Testing data wiped",
+        "Local testing data wiped. Restart the app before testing again.",
+      );
+    } catch {
+      Alert.alert(
+        "Wipe failed",
+        "Couldn't wipe local testing data. Close and reopen the app, then try again.",
+      );
+    } finally {
+      setIsWipingTestingData(false);
+    }
+  }
+
+  function confirmTestingWipe(): void {
+    if (isWipingTestingData) {
+      return;
+    }
+
+    Alert.alert(
+      "TEST ONLY",
+      "This is for testing only. It wipes this phone’s local private key and local ledger cache. Backend balances and server records are not deleted.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Wipe local data",
+          style: "destructive",
+          onPress: () => {
+            void performTestingWipe();
+          },
+        },
+      ],
+    );
+  }
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top"]}>
@@ -135,18 +184,32 @@ export default function SettingsScreen(): React.ReactElement {
           </View>
         </View>
 
-        {/* Sign Out */}
+        {/* TODO(TESTING_ONLY_REMOVE_BEFORE_USERS): Remove local key/ledger wipe button before production users. */}
         <Pressable
           style={({ pressed }) => [
-            styles.signOutButton,
-            { borderColor: t.border },
+            styles.testingResetCard,
+            { borderColor: colors.error },
             t.shadow,
-            pressed && styles.signOutButtonPressed,
+            pressed && !isWipingTestingData && styles.testingResetCardPressed,
+            isWipingTestingData && styles.testingResetCardDisabled,
           ]}
-          onPress={() => void signOut()}
+          onPress={confirmTestingWipe}
+          disabled={isWipingTestingData}
           accessibilityRole="button"
         >
-          <Text style={styles.signOutButtonText}>Sign Out</Text>
+          <Text style={styles.testingResetEyebrow}>TESTING ONLY</Text>
+          <Text style={styles.testingResetTitle}>
+            TEST ONLY: Wipe local keys and ledger
+          </Text>
+          <Text style={styles.testingResetBody}>
+            Clears this phone&apos;s stored keypair, JWT, pending ledger cache, and
+            merchant cache. Backend balances and server records stay unchanged.
+          </Text>
+          {isWipingTestingData ? (
+            <Text style={styles.testingResetAction}>Wiping local data...</Text>
+          ) : (
+            <Text style={styles.testingResetAction}>Tap to wipe this device only</Text>
+          )}
         </Pressable>
 
         {/* Version */}
@@ -270,23 +333,42 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.caption,
   },
 
-  signOutButton: {
+  testingResetCard: {
     marginTop: spacing["2xl"],
-    height: 52,
-    backgroundColor: colors.error,
-    borderRadius: radii.pill,
+    backgroundColor: colors.error + "14",
+    borderRadius: radii.xl,
     borderWidth: borders.standard,
-    alignItems: "center",
-    justifyContent: "center",
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.lg,
+    gap: spacing.sm,
   },
-  signOutButtonPressed: {
+  testingResetCardPressed: {
     transform: [{ translateX: 3 }, { translateY: 3 }],
     shadowOffset: { width: 0, height: 0 },
   },
-  signOutButtonText: {
+  testingResetCardDisabled: {
+    opacity: 0.7,
+  },
+  testingResetEyebrow: {
+    fontFamily: fonts.pixel,
+    fontSize: pixelFontSizes.xs,
+    color: colors.error,
+  },
+  testingResetTitle: {
     fontFamily: fonts.bold,
     fontSize: fontSizes.button,
-    color: "#fff",
+    color: colors.error,
+  },
+  testingResetBody: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.body,
+    color: colors.error,
+    lineHeight: 22,
+  },
+  testingResetAction: {
+    fontFamily: fonts.medium,
+    fontSize: fontSizes.caption,
+    color: colors.error,
   },
 
   versionSection: {

@@ -386,3 +386,17 @@ export function setLocalState(key: string, value: string): void {
     value,
   );
 }
+
+/**
+ * Testing-only reset helper for local SQLite persistence.
+ * Clears pending envelopes, local balance/sync cache, and cached merchants.
+ */
+export function wipeLocalTestingData(): void {
+  // TODO(TESTING_ONLY_REMOVE_BEFORE_USERS): Remove local key/ledger wipe button before production users.
+  const dbInstance = getDb();
+  dbInstance.withTransactionSync(() => {
+    dbInstance.runSync(`DELETE FROM pending_transactions`);
+    dbInstance.runSync(`DELETE FROM local_state`);
+    dbInstance.runSync(`DELETE FROM cached_merchants`);
+  });
+}

@@ -116,6 +116,22 @@ function createMockDb() {
       return { changes: before };
     }
 
+    if (s.startsWith("DELETE FROM PENDING_TRANSACTIONS")) {
+      ensureTable("pending_transactions");
+      const rows = tables.get("pending_transactions")!;
+      const before = rows.length;
+      rows.splice(0);
+      return { changes: before };
+    }
+
+    if (s.startsWith("DELETE FROM LOCAL_STATE")) {
+      ensureTable("local_state");
+      const rows = tables.get("local_state")!;
+      const before = rows.length;
+      rows.splice(0);
+      return { changes: before };
+    }
+
     if (s.startsWith("INSERT INTO CACHED_MERCHANTS")) {
       ensureTable("cached_merchants");
       const rows = tables.get("cached_merchants")!;
@@ -276,6 +292,7 @@ import {
   updateTransactionStatus,
   listCachedMerchants,
   replaceCachedMerchants,
+  wipeLocalTestingData,
 } from "../db";
 
 // ---- Helpers -------------------------------------------------------------
@@ -689,5 +706,33 @@ describe("cached merchants", () => {
     expect(merchants).toHaveLength(2);
     expect(merchants[0]!.userId).toBe("u_oldmerchant000001");
     expect(merchants[1]!.userId).toBe("u_oldmerchant000002");
+  });
+});
+
+describe("wipeLocalTestingData", () => {
+  beforeEach(() => resetDb());
+
+  it("clears pending transactions, local state, and cached merchants together", () => {
+    insertPendingTransaction({
+      id: "tx_0000000000000999",
+      envelopeJson: makeEnvelopeJson(),
+      recipientId: "u_merchant000000009",
+      recipientLabel: "Pilot Buka",
+      amountKobo: 15_000,
+      sequenceNumber: 4,
+      direction: "outgoing",
+      createdAt: "2026-05-01T13:00:00.000Z",
+    });
+    setLocalState("verified_balance_kobo", "75000");
+    setLocalState("last_sync_at", "2026-05-01T13:05:00.000Z");
+    replaceCachedMerchants([
+      { userId: "u_merchant000000009", label: "Pilot Buka" },
+    ]);
+
+    wipeLocalTestingData();
+
+    expect(mockDbInstance.tables.get("pending_transactions")).toHaveLength(0);
+    expect(mockDbInstance.tables.get("local_state")).toHaveLength(0);
+    expect(mockDbInstance.tables.get("cached_merchants")).toHaveLength(0);
   });
 });
