@@ -17,6 +17,7 @@ import {
   radii,
   borders,
 } from "../../src/theme/tokens";
+import { ONBOARDING_STUDENT_PAYMENT_COPY } from "../../src/payment/merchant-flow";
 
 const STEPS = [
   {
@@ -32,7 +33,7 @@ const STEPS = [
   {
     icon: "📷",
     title: "Pay offline",
-    desc: "Scan a merchant QR, confirm with your PIN, and you're done — no internet needed",
+    desc: ONBOARDING_STUDENT_PAYMENT_COPY,
   },
 ];
 

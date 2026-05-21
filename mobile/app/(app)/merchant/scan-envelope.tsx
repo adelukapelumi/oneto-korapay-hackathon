@@ -11,6 +11,10 @@ import {
   MerchantBalanceCapExceededError,
   parseVerifiedBalanceKoboOrThrow,
 } from "../../../src/payment/incoming-headroom";
+import {
+  MERCHANT_SCAN_INSTRUCTION,
+  MERCHANT_SCAN_TITLE,
+} from "../../../src/payment/merchant-flow";
 import { useThemeMode } from "../../../src/theme/theme-provider";
 import {
   getTheme,
@@ -233,14 +237,14 @@ export default function ScanEnvelopeScreen() {
             <Text style={styles.backIcon}>{"<"}</Text>
           </Pressable>
           <View style={styles.headerSpacer} />
-          <Text style={styles.headerLabel}>Scan Response</Text>
+          <Text style={styles.headerLabel}>{MERCHANT_SCAN_TITLE}</Text>
         </View>
         <View style={styles.permissionContainer}>
           <View style={styles.permissionCard}>
             <Text style={styles.permissionIcon}>CAM</Text>
             <Text style={styles.permissionTitle}>Camera Access Required</Text>
             <Text style={styles.permissionText}>
-              We need camera access to scan the customer's payment QR code.
+              {MERCHANT_SCAN_INSTRUCTION}
             </Text>
             <Pressable
               style={({ pressed }) => [
@@ -279,7 +283,7 @@ export default function ScanEnvelopeScreen() {
                 <Text style={styles.backIconWhite}>{"<"}</Text>
               </Pressable>
               <View style={styles.headerSpacer} />
-              <Text style={styles.headerLabelWhite}>Scan Response</Text>
+              <Text style={styles.headerLabelWhite}>{MERCHANT_SCAN_TITLE}</Text>
             </View>
           </SafeAreaView>
 
@@ -304,9 +308,12 @@ export default function ScanEnvelopeScreen() {
           </View>
 
           <View style={styles.bottomSection}>
-            <Text style={styles.scanText}>
-              {showSuccess ? "Payment verified" : "Scan the customer's response"}
+            <Text style={styles.scanTitle}>
+              {showSuccess ? "Payment verified" : MERCHANT_SCAN_TITLE}
             </Text>
+            {!showSuccess && (
+              <Text style={styles.scanText}>{MERCHANT_SCAN_INSTRUCTION}</Text>
+            )}
           </View>
         </View>
       </CameraView>
@@ -402,11 +409,24 @@ const styles = StyleSheet.create({
     borderRadius: radii.sm,
   },
 
-  bottomSection: { paddingBottom: 80, alignItems: "center" },
+  bottomSection: {
+    paddingBottom: 80,
+    alignItems: "center",
+    paddingHorizontal: spacing["2xl"],
+    gap: spacing.sm,
+  },
+  scanTitle: {
+    fontFamily: fonts.bold,
+    fontSize: fontSizes.bodyLg,
+    color: "#fff",
+    textAlign: "center",
+  },
   scanText: {
-    fontFamily: fonts.medium,
+    fontFamily: fonts.regular,
     fontSize: fontSizes.body,
     color: "#fff",
+    textAlign: "center",
+    lineHeight: 22,
   },
 
   permissionContainer: {

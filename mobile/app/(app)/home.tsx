@@ -16,6 +16,11 @@ import { fetchMe } from "../../src/api/auth";
 import { fetchLedger as fetchServerLedger } from "../../src/api/ledger";
 import { listPendingByStatus, setLocalState } from "../../src/ledger/db";
 import { syncPendingEnvelopes } from "../../src/api/reconcile";
+import {
+  MERCHANT_SCAN_CTA,
+  MERCHANT_SCAN_INSTRUCTION,
+  MERCHANT_SCAN_ROUTE,
+} from "../../src/payment/merchant-flow";
 import { syncOutgoingPendingFromServerLedger } from "../../src/payment/sync-outgoing";
 import { logger } from "../../src/lib/logger";
 import { useThemeMode } from "../../src/theme/theme-provider";
@@ -602,11 +607,11 @@ export default function HomeScreen(): React.ReactElement {
               t.shadow,
               pressed && styles.buttonPressed,
             ]}
-            onPress={() => router.push("/(app)/merchant/charge")}
+            onPress={() => router.push(MERCHANT_SCAN_ROUTE)}
             accessibilityRole="button"
           >
             <Text style={styles.actionIcon}>💳</Text>
-            <Text style={styles.actionTextPrimary}>Charge</Text>
+            <Text style={styles.actionTextPrimary}>{MERCHANT_SCAN_CTA}</Text>
           </Pressable>
           <Pressable
             style={({ pressed }) => [
@@ -624,6 +629,21 @@ export default function HomeScreen(): React.ReactElement {
             <Text style={styles.actionIcon}>↑</Text>
             <Text style={[styles.actionTextSecondary, { color: t.text }]}>Cash Out</Text>
           </Pressable>
+        </View>
+
+        <View
+          style={[
+            styles.merchantFlowCard,
+            { backgroundColor: t.card, borderColor: t.border },
+            t.shadow,
+          ]}
+        >
+          <Text style={[styles.merchantFlowTitle, { color: t.text }]}>
+            Student-led payments
+          </Text>
+          <Text style={[styles.merchantFlowBody, { color: t.textSec }]}>
+            {MERCHANT_SCAN_INSTRUCTION}
+          </Text>
         </View>
 
         <View style={styles.section}>
@@ -810,6 +830,23 @@ const styles = StyleSheet.create({
     gap: spacing.lg,
     marginHorizontal: spacing.xl,
     marginTop: spacing.xl,
+  },
+  merchantFlowCard: {
+    marginHorizontal: spacing.xl,
+    marginTop: spacing.lg,
+    borderWidth: borders.standard,
+    borderRadius: radii.xl,
+    padding: spacing.cardPad,
+    gap: spacing.xs,
+  },
+  merchantFlowTitle: {
+    fontFamily: fonts.bold,
+    fontSize: fontSizes.bodyLg,
+  },
+  merchantFlowBody: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.body,
+    lineHeight: 20,
   },
   actionButton: {
     flex: 1,
