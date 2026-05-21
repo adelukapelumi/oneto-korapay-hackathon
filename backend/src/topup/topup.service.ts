@@ -172,9 +172,7 @@ export class TopupService {
       return { success: true };
     }
 
-    const finalizedTopup = await this.finalizePendingTopup(reference, 'webhook', {
-      webhookPayload: validated,
-    });
+    const finalizedTopup = await this.finalizeSuccessfulWebhookTopup(reference, validated);
 
     if (!finalizedTopup) {
       this.logger.warn(
@@ -184,6 +182,63 @@ export class TopupService {
     }
 
     return { success: true };
+  }
+
+  private async finalizeSuccessfulWebhookTopup(
+    reference: string,
+    webhookPayload: KorapayWebhookPayload,
+  ): Promise<TopupRecordSnapshot | null> {
+    const topup = await this.getTopupSnapshot(reference);
+    if (!topup) {
+      return null;
+    }
+
+    if (this.normalizeStoredTopupStatus(topup.status) !== 'PENDING') {
+      return topup;
+    }
+
+    const webhookAmountKobo = this.parseMajorAmountToKobo(webhookPayload.data.amount, 'webhook');
+    const webhookVerification = this.toWebhookVerificationSnapshot(webhookPayload);
+
+    if (topup.amountKobo !== webhookAmountKobo) {
+      this.logger.error(
+        {
+          reference,
+          expectedAmountKobo: topup.amountKobo.toString(),
+          receivedAmountKobo: webhookAmountKobo.toString(),
+          source: 'webhook',
+        },
+        'Top-up webhook amount mismatch; refusing to credit balance',
+      );
+
+      await this.prisma.paymentTopup.update({
+        where: { reference },
+        data: {
+          status: 'FAILED',
+          korapayResponse: {
+            ...this.buildTopupAuditPayload('webhook', webhookVerification, webhookPayload),
+            internal_failure: 'amount_mismatch',
+          } as Prisma.InputJsonValue,
+        },
+      });
+
+      return {
+        ...topup,
+        status: 'FAILED',
+      };
+    }
+
+    // At this point the webhook is signed, schema-valid, event/status-consistent,
+    // references a pending local top-up, and matches the stored kobo amount.
+    // Credit directly from the webhook so a flaky verification endpoint cannot
+    // strand a real paid top-up in PENDING.
+    return this.creditVerifiedPendingTopup(
+      topup,
+      webhookAmountKobo,
+      webhookVerification,
+      'webhook',
+      webhookPayload,
+    );
   }
 
   private async finalizePendingTopup(
@@ -519,6 +574,21 @@ export class TopupService {
     }
 
     throw new BadRequestException('Missing amount in verification payload');
+  }
+
+  private toWebhookVerificationSnapshot(webhookPayload: KorapayWebhookPayload): KorapayTransactionVerification {
+    const currency =
+      typeof webhookPayload.data.currency === 'string'
+        ? webhookPayload.data.currency
+        : undefined;
+
+    return {
+      status: webhookPayload.data.status ?? '',
+      reference: webhookPayload.data.reference,
+      amount: webhookPayload.data.amount,
+      amountPaid: webhookPayload.data.amount,
+      currency,
+    };
   }
 
   private buildTopupAuditPayload(
