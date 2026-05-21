@@ -4,6 +4,10 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useAuth } from "../../../src/auth/auth-state";
 import { syncPendingEnvelopes } from "../../../src/api/reconcile";
+import {
+  MERCHANT_SCAN_ROUTE,
+  MERCHANT_SCAN_SUCCESS_CTA,
+} from "../../../src/payment/merchant-flow";
 import { useThemeMode } from "../../../src/theme/theme-provider";
 import {
   getTheme,
@@ -79,9 +83,11 @@ export default function SuccessScreen() {
             <Text style={styles.iconText}>✓</Text>
           </View>
 
-          <Text style={styles.pixelLabel}>PAYMENT RECEIVED</Text>
+          <Text style={styles.pixelLabel}>PAYMENT SCANNED</Text>
           <Text style={[styles.amount, { color: t.text }]}>₦{naira}</Text>
-          <Text style={[styles.subtitle, { color: t.textSec }]}>from {truncatedSender}</Text>
+          <Text style={[styles.subtitle, { color: t.textSec }]}>
+            Student payment received from {truncatedSender}
+          </Text>
 
           {state.status === "authed" && state.jwtFresh && (
             <View style={styles.syncBadge}>
@@ -100,9 +106,9 @@ export default function SuccessScreen() {
               t.shadow,
               pressed && styles.buttonPressed,
             ]}
-            onPress={() => router.push("/(app)/merchant/charge")}
+            onPress={() => router.push(MERCHANT_SCAN_ROUTE)}
           >
-            <Text style={styles.primaryButtonText}>New Payment →</Text>
+            <Text style={styles.primaryButtonText}>{MERCHANT_SCAN_SUCCESS_CTA}</Text>
           </Pressable>
 
           <Pressable
