@@ -1,6 +1,7 @@
 import { Injectable, Logger, InternalServerErrorException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
+import { z } from 'zod';
 
 export interface InitiateCheckoutParams {
   amountKobo: number;
@@ -34,6 +35,25 @@ export interface KorapayPayoutResponse {
     reference: string;
     status: string;
   };
+}
+
+const KorapayVerifyTransactionResponseSchema = z.object({
+  status: z.boolean(),
+  data: z.object({
+    reference: z.string().optional(),
+    status: z.string(),
+    amount: z.union([z.string(), z.number()]).optional(),
+    amount_paid: z.union([z.string(), z.number()]).optional(),
+    currency: z.string().optional(),
+  }).passthrough().optional(),
+}).passthrough();
+
+export interface KorapayTransactionVerification {
+  status: string;
+  reference?: string;
+  amount?: string | number;
+  amountPaid?: string | number;
+  currency?: string;
 }
 
 const KORAPAY_FETCH_TIMEOUT_MS = 10_000;
@@ -177,7 +197,7 @@ export class KorapayService {
     }
   }
 
-  async verifyTransaction(reference: string): Promise<{ status: string }> {
+  async verifyTransaction(reference: string): Promise<KorapayTransactionVerification> {
     try {
       const response = await this.fetchWithTimeout(`${this.baseUrl}/transactions/${reference}`, {
         method: 'GET',
@@ -195,12 +215,19 @@ export class KorapayService {
         throw new InternalServerErrorException('Verify transaction failed');
       }
 
-      const json = await response.json() as { status: boolean, data?: { status: string } };
-      if (!json.status || !json.data) {
+      const json = await response.json();
+      const parsed = KorapayVerifyTransactionResponseSchema.safeParse(json);
+      if (!parsed.success || !parsed.data.status || !parsed.data.data) {
         throw new InternalServerErrorException('Invalid verification response');
       }
 
-      return { status: json.data.status };
+      return {
+        status: parsed.data.data.status,
+        reference: parsed.data.data.reference,
+        amount: parsed.data.data.amount,
+        amountPaid: parsed.data.data.amount_paid,
+        currency: parsed.data.data.currency,
+      };
     } catch (error) {
       if (error instanceof InternalServerErrorException) {
         throw error;

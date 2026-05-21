@@ -118,6 +118,43 @@ describe('KorapayService', () => {
     });
   });
 
+  describe('verifyTransaction', () => {
+    it('returns normalized verification fields from Korapay', async () => {
+      jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          status: true,
+          data: {
+            reference: 'top_123',
+            status: 'success',
+            amount: '500.00',
+            amount_paid: '500.00',
+            currency: 'NGN',
+          },
+        }),
+      } as Response);
+
+      await expect(service.verifyTransaction('top_123')).resolves.toEqual({
+        status: 'success',
+        reference: 'top_123',
+        amount: '500.00',
+        amountPaid: '500.00',
+        currency: 'NGN',
+      });
+    });
+
+    it('returns not_found for a missing reference', async () => {
+      jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+        ok: false,
+        status: 404,
+      } as Response);
+
+      await expect(service.verifyTransaction('missing_ref')).resolves.toEqual({
+        status: 'not_found',
+      });
+    });
+  });
+
   describe('fetchWithTimeout', () => {
     it('aborts hanging fetch and rejects with controlled timeout error', async () => {
       jest.useFakeTimers();

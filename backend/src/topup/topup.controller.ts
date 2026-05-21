@@ -1,8 +1,9 @@
-import { Controller, Post, Body, Headers, UseGuards, Req, HttpCode, HttpStatus } from '@nestjs/common';
-import { TopupService } from './topup.service';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { Controller, Post, Body, Headers, UseGuards, Req, HttpCode, HttpStatus, Get, Param, UnauthorizedException } from '@nestjs/common';
+import { TopupService, type TopupStatusResponse } from './topup.service';
+import { JwtAuthGuard, type AuthenticatedRequest } from '../auth/jwt-auth.guard';
 import { IsInt, Min, Max } from 'class-validator';
-import { Request } from 'express';
+import { UserThrottlerGuard } from '../common/user-throttler.guard';
+import { Throttle } from '@nestjs/throttler';
 
 export class InitiateTopupDto {
   @IsInt()
@@ -18,11 +19,29 @@ export class TopupController {
   @Post('korapay/initiate')
   @UseGuards(JwtAuthGuard)
   async initiate(
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
     @Body() body: InitiateTopupDto
   ): Promise<{ reference: string; paymentUrl: string }> {
-    const userId = req.user.sub;
+    const userId = req.user?.sub;
+    if (!userId) {
+      throw new UnauthorizedException('Missing authenticated user context');
+    }
     return this.topupService.initiate(userId, body.amountKobo);
+  }
+
+  @Get('status/:reference')
+  @UseGuards(JwtAuthGuard, UserThrottlerGuard)
+  @Throttle({ default: { limit: 30, ttl: 60000 } })
+  async getStatus(
+    @Req() req: AuthenticatedRequest,
+    @Param('reference') reference: string,
+  ): Promise<TopupStatusResponse> {
+    const userId = req.user?.sub;
+    if (!userId) {
+      throw new UnauthorizedException('Missing authenticated user context');
+    }
+
+    return this.topupService.getStatusForUser(userId, reference);
   }
 
   @Post('korapay/webhook')
