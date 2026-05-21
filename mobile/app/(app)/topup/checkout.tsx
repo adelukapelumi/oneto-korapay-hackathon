@@ -16,6 +16,11 @@ import { fetchMe } from "../../../src/api/auth";
 import { fetchTopupStatus, type TopupStatusResponse } from "../../../src/api/topup";
 import { setLocalState } from "../../../src/ledger/db";
 import { logger } from "../../../src/lib/logger";
+import {
+  resolveCheckoutStatusState,
+  TOPUP_WEBVIEW_LOAD_ERROR_MESSAGE,
+  type CheckoutPaymentStatus,
+} from "../../../src/payment/topup-checkout-state";
 import { BackButton } from "../../../components/BackButton";
 import { useThemeMode } from "../../../src/theme/theme-provider";
 import {
@@ -30,8 +35,6 @@ import {
   dimensions,
 } from "../../../src/theme/tokens";
 
-type PaymentStatus = "idle" | "pending" | "success" | "failed";
-
 export default function CheckoutScreen(): React.ReactElement {
   const router = useRouter();
   const { paymentUrl, reference } = useLocalSearchParams<{
@@ -43,10 +46,11 @@ export default function CheckoutScreen(): React.ReactElement {
 
   const [isLoading, setIsLoading] = useState(true);
   const [isCheckingStatus, setIsCheckingStatus] = useState(false);
-  const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>("idle");
+  const [paymentStatus, setPaymentStatus] = useState<CheckoutPaymentStatus>("idle");
   const [statusMessage, setStatusMessage] = useState(
     "Payment was not confirmed. No balance was added.",
   );
+  const [webViewErrorMessage, setWebViewErrorMessage] = useState<string | null>(null);
 
   async function syncConfirmedBalance(): Promise<void> {
     try {
@@ -59,27 +63,13 @@ export default function CheckoutScreen(): React.ReactElement {
   }
 
   async function applyTopupStatus(topup: TopupStatusResponse): Promise<void> {
-    if (topup.status === "SUCCESS") {
-      setStatusMessage("Your balance has been updated after payment confirmation.");
-      setPaymentStatus("success");
+    const resolvedState = resolveCheckoutStatusState(topup);
+    setStatusMessage(resolvedState.statusMessage);
+    setPaymentStatus(resolvedState.paymentStatus);
+
+    if (resolvedState.shouldSyncBalance) {
       await syncConfirmedBalance();
-      return;
     }
-
-    if (topup.status === "FAILED" || topup.status === "EXPIRED") {
-      setStatusMessage(
-        topup.status === "EXPIRED"
-          ? "This payment session expired before confirmation. No balance was added."
-          : "Payment was not confirmed. No balance was added.",
-      );
-      setPaymentStatus("failed");
-      return;
-    }
-
-    setStatusMessage(
-      "Waiting for bank transfer confirmation. If you have made the transfer, your Oneto balance will update once payment is confirmed.",
-    );
-    setPaymentStatus("pending");
   }
 
   async function checkTopupStatus(): Promise<void> {
@@ -149,17 +139,37 @@ export default function CheckoutScreen(): React.ReactElement {
       </View>
 
       <View style={[styles.webviewContainer, { borderColor: t.border }]}>
-        <WebView
-          source={{ uri: paymentUrl }}
-          style={styles.webview}
-          startInLoadingState={false}
-          onLoadStart={() => setIsLoading(true)}
-          onLoadEnd={() => setIsLoading(false)}
-          javaScriptEnabled
-          domStorageEnabled
-          sharedCookiesEnabled
-        />
-        {isLoading ? (
+        {webViewErrorMessage ? (
+          <View style={[styles.webviewErrorContainer, { backgroundColor: t.bg }]}>
+            <Text style={[styles.webviewErrorTitle, { color: t.text }]}>Payment Page Unavailable</Text>
+            <Text style={[styles.webviewErrorText, { color: t.textSec }]}>
+              {webViewErrorMessage}
+            </Text>
+          </View>
+        ) : (
+          <WebView
+            source={{ uri: paymentUrl }}
+            style={styles.webview}
+            startInLoadingState={false}
+            onLoadStart={() => {
+              setIsLoading(true);
+              setWebViewErrorMessage(null);
+            }}
+            onLoadEnd={() => setIsLoading(false)}
+            onError={() => {
+              setIsLoading(false);
+              setWebViewErrorMessage(TOPUP_WEBVIEW_LOAD_ERROR_MESSAGE);
+            }}
+            onHttpError={() => {
+              setIsLoading(false);
+              setWebViewErrorMessage(TOPUP_WEBVIEW_LOAD_ERROR_MESSAGE);
+            }}
+            javaScriptEnabled
+            domStorageEnabled
+            sharedCookiesEnabled
+          />
+        )}
+        {isLoading && !webViewErrorMessage ? (
           <View style={[styles.loadingOverlay, { backgroundColor: t.bg }]}>
             <View style={styles.loadingCard}>
               <ActivityIndicator size="large" color={colors.primary} />
@@ -324,6 +334,23 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
   },
   webview: { flex: 1, backgroundColor: "#fff" },
+  webviewErrorContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: spacing.xl,
+    gap: spacing.md,
+  },
+  webviewErrorTitle: {
+    fontFamily: fonts.bold,
+    fontSize: fontSizes.h3,
+    textAlign: "center",
+  },
+  webviewErrorText: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.body,
+    textAlign: "center",
+  },
   loadingOverlay: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center" },
   loadingCard: { alignItems: "center", gap: spacing.lg },
   loadingText: { fontFamily: fonts.medium, fontSize: fontSizes.body },
