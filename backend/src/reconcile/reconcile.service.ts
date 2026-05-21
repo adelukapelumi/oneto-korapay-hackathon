@@ -8,7 +8,7 @@ import {
   MAX_USER_BALANCE_KOBO,
   toPublicKeyString,
 } from '@oneto/shared';
-import { Prisma } from '@prisma/client';
+import { DeviceKeyStatus, Prisma } from '@prisma/client';
 
 export type ReconcileResult =
   | { transactionId: string; status: 'success' }
@@ -95,23 +95,50 @@ export class ReconcileService {
         return this.reject(envelope.transactionId, 'sender_unknown', envelope);
       }
 
-      // d. Check sender.publicKey === envelope.senderPublicKey.
-      if (sender.publicKey !== envelope.senderPublicKey) {
-        return this.reject(envelope.transactionId, 'public_key_mismatch', envelope);
+      const nowMs = Date.now();
+
+      const senderDeviceKey = await this.prisma.userDeviceKey.findUnique({
+        where: {
+          userId_publicKey: {
+            userId: envelope.senderUserId,
+            publicKey: envelope.senderPublicKey,
+          },
+        },
+        select: {
+          publicKey: true,
+          status: true,
+          retiredAt: true,
+          verifyUntil: true,
+        },
+      });
+
+      if (!senderDeviceKey) {
+        return this.reject(envelope.transactionId, 'public_key_unknown', envelope);
+      }
+
+      const deviceKeyRejectionReason = this.getDeviceKeyRejectionReason(
+        senderDeviceKey,
+        envelope,
+        nowMs,
+      );
+      if (deviceKeyRejectionReason) {
+        return this.reject(envelope.transactionId, deviceKeyRejectionReason, envelope);
       }
 
       // e. Check timestamp: Math.abs(nowMs - Date.parse(envelope.timestamp)) <= 120_000.
-      const nowMs = Date.now();
       const timestampMs = new Date(envelope.timestamp).getTime();
       if (Math.abs(nowMs - timestampMs) > 120_000) {
         return this.reject(envelope.transactionId, 'timestamp_out_of_window', envelope);
       }
 
       // f & g & h & i: Use shared verifyEnvelope for consistency.
-      // sender.publicKey equals envelope.senderPublicKey here (checked above)
-      // and envelope.senderPublicKey already passed the regex enforced by
-      // TransactionEnvelopeSchema, so toPublicKeyString cannot throw.
-      const verification = verifyEnvelope(envelope, toPublicKeyString(sender.publicKey), nowMs);
+      // senderDeviceKey.publicKey was either created via the validated key
+      // registration endpoint or backfilled from that same mirror field.
+      const verification = verifyEnvelope(
+        envelope,
+        toPublicKeyString(senderDeviceKey.publicKey),
+        nowMs,
+      );
 
 
       if (!verification.ok) {
@@ -315,6 +342,40 @@ export class ReconcileService {
       if (typeof tx === 'string') return tx;
     }
     return 'unknown';
+  }
+
+  private getDeviceKeyRejectionReason(
+    deviceKey: {
+      publicKey: string;
+      status: DeviceKeyStatus;
+      retiredAt: Date | null;
+      verifyUntil: Date | null;
+    },
+    envelope: TransactionEnvelope,
+    nowMs: number,
+  ): string | null {
+    if (deviceKey.status === DeviceKeyStatus.ACTIVE) {
+      return null;
+    }
+
+    if (deviceKey.status === DeviceKeyStatus.REVOKED) {
+      return 'public_key_revoked';
+    }
+
+    if (deviceKey.retiredAt === null) {
+      return 'verify_only_missing_retired_at';
+    }
+
+    const envelopeTimestampMs = new Date(envelope.timestamp).getTime();
+    if (envelopeTimestampMs > deviceKey.retiredAt.getTime()) {
+      return 'verify_only_envelope_after_retired_at';
+    }
+
+    if (deviceKey.verifyUntil !== null && nowMs > deviceKey.verifyUntil.getTime()) {
+      return 'verify_only_window_expired';
+    }
+
+    return null;
   }
 
   private async resolveReconcileUniqueConflict(
