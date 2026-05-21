@@ -35,6 +35,30 @@ enum DeviceKeyStatus {
   REVOKED
 }
 
+enum KeyRecoveryStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum KeyRecoveryRiskType {
+  LOST_DEVICE
+  COMPROMISED_DEVICE
+}
+
+enum KeyRecoveryReason {
+  LOST_PHONE
+  STOLEN_PHONE
+  DAMAGED_PHONE
+  APP_UNINSTALLED
+  APP_DATA_CLEARED
+  FACTORY_RESET
+  FORGOT_PIN
+  KEYPAIR_WIPED
+  OTHER
+}
+
 model User {
   id                  String        @id @default(cuid()) // "u_" prefix will be enforced in service layer
   email               String        @unique
@@ -50,6 +74,8 @@ model User {
   ledgerEntries       LedgerEntry[]
   processedSequences ProcessedSequence[]
   deviceKeys         UserDeviceKey[]
+  keyRecoveryRequests KeyRecoveryRequest[] @relation("UserKeyRecoveryRequests")
+  reviewedKeyRecoveryRequests KeyRecoveryRequest[] @relation("ReviewedKeyRecoveryRequests")
   merchantProfile    MerchantProfile?
   cashouts           Cashout[] @relation("MerchantCashouts")
   approvedCashouts   Cashout[] @relation("AdminApprovals")
@@ -60,7 +86,7 @@ model User {
 model UserDeviceKey {
   id          String          @id @default(cuid())
   userId      String
-  publicKey   String
+  publicKey   String          @unique
   status      DeviceKeyStatus
   validFrom   DateTime        @default(now())
   retiredAt   DateTime?
@@ -69,10 +95,37 @@ model UserDeviceKey {
   updatedAt   DateTime        @updatedAt
 
   user        User            @relation(fields: [userId], references: [id])
+  recoveryRequests KeyRecoveryRequest[] @relation("OldKeyRecoveryRequests")
 
   @@index([userId, status])
-  @@index([publicKey])
   @@unique([userId, publicKey])
+}
+
+model KeyRecoveryRequest {
+  id                    String              @id @default(cuid())
+  userId                String
+  oldKeyId              String
+  requestedNewPublicKey String
+  status                KeyRecoveryStatus   @default(PENDING)
+  riskType              KeyRecoveryRiskType
+  reason                KeyRecoveryReason
+  userNotes             String?
+  approximateBalanceKobo BigInt?
+  lastMerchantText      String?
+  lastTopupAmountKobo   BigInt?
+  reviewedByUserId      String?
+  reviewedAt            DateTime?
+  decisionNotes         String?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  user                  User                @relation("UserKeyRecoveryRequests", fields: [userId], references: [id])
+  oldKey                UserDeviceKey       @relation("OldKeyRecoveryRequests", fields: [oldKeyId], references: [id])
+  reviewedBy            User?               @relation("ReviewedKeyRecoveryRequests", fields: [reviewedByUserId], references: [id])
+
+  @@index([userId, status])
+  @@index([status, createdAt])
+  @@index([oldKeyId])
 }
 
 enum LedgerEntryType {
