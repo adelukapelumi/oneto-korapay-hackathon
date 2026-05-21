@@ -12,7 +12,7 @@ import {
   toTransactionId,
   TransactionEnvelope,
 } from '@oneto/shared';
-import { Prisma } from '@prisma/client';
+import { DeviceKeyStatus, Prisma } from '@prisma/client';
 
 describe('ReconcileService', () => {
   let service: ReconcileService;
@@ -32,9 +32,14 @@ describe('ReconcileService', () => {
       create: jest.fn(),
       findMany: jest.fn(),
     },
+    userDeviceKey: {
+      findUnique: jest.fn(),
+    },
   };
 
   beforeEach(async () => {
+    jest.useRealTimers();
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ReconcileService,
@@ -45,9 +50,20 @@ describe('ReconcileService', () => {
     service = module.get<ReconcileService>(ReconcileService);
     prisma = module.get<PrismaService>(PrismaService);
     jest.clearAllMocks();
+    mockPrisma.userDeviceKey.findUnique.mockImplementation((args: any) => {
+      const lookup = args?.where?.userId_publicKey;
+      if (!lookup) {
+        return Promise.resolve(null);
+      }
+
+      return Promise.resolve(
+        createTestDeviceKey(lookup.publicKey, DeviceKeyStatus.ACTIVE),
+      );
+    });
   });
 
   afterEach(() => {
+    jest.useRealTimers();
     jest.clearAllMocks();
   });
 
@@ -58,6 +74,22 @@ describe('ReconcileService', () => {
     verifiedBalanceKobo: BigInt(balance),
     status: 'ACTIVE',
     role,
+  });
+
+  const createTestDeviceKey = (
+    publicKey: string,
+    status: DeviceKeyStatus = DeviceKeyStatus.ACTIVE,
+    overrides?: {
+      retiredAt?: Date | null;
+      verifyUntil?: Date | null;
+    },
+  ) => ({
+    id: 'dk_test',
+    userId: senderId,
+    publicKey,
+    status,
+    retiredAt: overrides?.retiredAt ?? null,
+    verifyUntil: overrides?.verifyUntil ?? null,
   });
 
   const createValidEnvelopeDraft = (
@@ -130,22 +162,169 @@ describe('ReconcileService', () => {
     expect(result).toMatchObject({ reason: 'sender_unknown' });
   });
 
-  it('4. Public key mismatch: envelope key != registered key', async () => {
+  it('4. rejects unknown sender public key', async () => {
     const draft = createValidEnvelopeDraft(senderId, recipientId, senderKey.publicKeyString);
     const envelope = signEnvelope(draft, senderKey.privateKey);
 
-    // Sender has rotated their key in DB
-    const newKey = generateKeypair();
     mockPrisma.user.findUnique.mockImplementation((args: any) => {
       const where = args?.where;
-      if (where?.id === senderId) return Promise.resolve(createTestUser(senderId, newKey.publicKeyString));
+      if (where?.id === senderId) return Promise.resolve(createTestUser(senderId, 'ed25519:' + 'b'.repeat(64)));
       if (where?.id === recipientId) return Promise.resolve(createTestUser(recipientId, 'dummy'));
       return Promise.resolve(null);
     });
+    mockPrisma.userDeviceKey.findUnique.mockResolvedValue(null);
 
     const result = await service.reconcileOneInternal(recipientId, envelope);
 
-    expect(result).toMatchObject({ status: 'rejected', reason: 'public_key_mismatch' });
+    expect(result).toMatchObject({ status: 'rejected', reason: 'public_key_unknown' });
+  });
+
+  it('returns generic invalid_envelope to public reconcile() callers for unknown sender public key', async () => {
+    const draft = createValidEnvelopeDraft(senderId, recipientId, senderKey.publicKeyString);
+    const envelope = signEnvelope(draft, senderKey.privateKey);
+
+    mockPrisma.user.findUnique.mockImplementation((args: any) => {
+      const where = args?.where;
+      if (where?.id === senderId) return Promise.resolve(createTestUser(senderId, 'ed25519:' + 'b'.repeat(64)));
+      if (where?.id === recipientId) return Promise.resolve(createTestUser(recipientId, 'dummy'));
+      return Promise.resolve(null);
+    });
+    mockPrisma.userDeviceKey.findUnique.mockResolvedValue(null);
+
+    const result = await service.reconcile(recipientId, [envelope]);
+
+    expect(result).toEqual([
+      {
+        transactionId: envelope.transactionId,
+        status: 'rejected',
+        reason: 'invalid_envelope',
+      },
+    ]);
+  });
+
+  it('accepts envelope signed by an ACTIVE key', async () => {
+    const draft = createValidEnvelopeDraft(senderId, recipientId, senderKey.publicKeyString);
+    const envelope = signEnvelope(draft, senderKey.privateKey);
+
+    mockPrisma.user.findUnique.mockImplementation((args: any) => {
+      const where = args?.where;
+      if (where?.id === senderId) return Promise.resolve(createTestUser(senderId, 'ed25519:' + 'a'.repeat(64)));
+      if (where?.id === recipientId) return Promise.resolve(createTestUser(recipientId, 'dummy'));
+      return Promise.resolve(null);
+    });
+    mockPrisma.userDeviceKey.findUnique.mockResolvedValue(
+      createTestDeviceKey(senderKey.publicKeyString, DeviceKeyStatus.ACTIVE),
+    );
+
+    const result = await service.reconcileOneInternal(recipientId, envelope);
+
+    expect(result).toEqual({ transactionId: envelope.transactionId, status: 'success' });
+  });
+
+  it('accepts envelope signed by a VERIFY_ONLY key when timestamp is before retiredAt and verifyUntil has not passed', async () => {
+    const fixedNow = new Date('2026-05-21T03:00:00.000Z');
+    jest.useFakeTimers().setSystemTime(fixedNow);
+
+    const draft = createValidEnvelopeDraft(senderId, recipientId, senderKey.publicKeyString);
+    draft.timestamp = '2026-05-21T02:59:30.000Z';
+    draft.expiresAt = '2026-05-21T03:00:30.000Z';
+    const envelope = signEnvelope(draft, senderKey.privateKey);
+
+    mockPrisma.user.findUnique.mockImplementation((args: any) => {
+      const where = args?.where;
+      if (where?.id === senderId) return Promise.resolve(createTestUser(senderId, 'ed25519:' + 'a'.repeat(64)));
+      if (where?.id === recipientId) return Promise.resolve(createTestUser(recipientId, 'dummy'));
+      return Promise.resolve(null);
+    });
+    mockPrisma.userDeviceKey.findUnique.mockResolvedValue(
+      createTestDeviceKey(senderKey.publicKeyString, DeviceKeyStatus.VERIFY_ONLY, {
+        retiredAt: new Date('2026-05-21T02:59:45.000Z'),
+        verifyUntil: new Date('2026-05-22T03:00:00.000Z'),
+      }),
+    );
+
+    const result = await service.reconcileOneInternal(recipientId, envelope);
+
+    expect(result).toEqual({ transactionId: envelope.transactionId, status: 'success' });
+  });
+
+  it('rejects VERIFY_ONLY key when envelope timestamp is after retiredAt', async () => {
+    const fixedNow = new Date('2026-05-21T03:05:00.000Z');
+    jest.useFakeTimers().setSystemTime(fixedNow);
+
+    const draft = createValidEnvelopeDraft(senderId, recipientId, senderKey.publicKeyString);
+    draft.timestamp = '2026-05-21T03:04:30.000Z';
+    draft.expiresAt = '2026-05-21T03:05:30.000Z';
+    const envelope = signEnvelope(draft, senderKey.privateKey);
+
+    mockPrisma.user.findUnique.mockImplementation((args: any) => {
+      const where = args?.where;
+      if (where?.id === senderId) return Promise.resolve(createTestUser(senderId, 'ed25519:' + 'a'.repeat(64)));
+      if (where?.id === recipientId) return Promise.resolve(createTestUser(recipientId, 'dummy'));
+      return Promise.resolve(null);
+    });
+    mockPrisma.userDeviceKey.findUnique.mockResolvedValue(
+      createTestDeviceKey(senderKey.publicKeyString, DeviceKeyStatus.VERIFY_ONLY, {
+        retiredAt: new Date('2026-05-21T03:04:00.000Z'),
+        verifyUntil: new Date('2026-05-22T03:05:00.000Z'),
+      }),
+    );
+
+    const result = await service.reconcileOneInternal(recipientId, envelope);
+
+    expect(result).toMatchObject({
+      status: 'rejected',
+      reason: 'verify_only_envelope_after_retired_at',
+    });
+  });
+
+  it('rejects VERIFY_ONLY key after verifyUntil has passed', async () => {
+    const fixedNow = new Date('2026-05-21T03:10:00.000Z');
+    jest.useFakeTimers().setSystemTime(fixedNow);
+
+    const draft = createValidEnvelopeDraft(senderId, recipientId, senderKey.publicKeyString);
+    draft.timestamp = '2026-05-21T03:09:30.000Z';
+    draft.expiresAt = '2026-05-21T03:10:30.000Z';
+    const envelope = signEnvelope(draft, senderKey.privateKey);
+
+    mockPrisma.user.findUnique.mockImplementation((args: any) => {
+      const where = args?.where;
+      if (where?.id === senderId) return Promise.resolve(createTestUser(senderId, 'ed25519:' + 'a'.repeat(64)));
+      if (where?.id === recipientId) return Promise.resolve(createTestUser(recipientId, 'dummy'));
+      return Promise.resolve(null);
+    });
+    mockPrisma.userDeviceKey.findUnique.mockResolvedValue(
+      createTestDeviceKey(senderKey.publicKeyString, DeviceKeyStatus.VERIFY_ONLY, {
+        retiredAt: new Date('2026-05-21T03:09:45.000Z'),
+        verifyUntil: new Date('2026-05-21T03:09:50.000Z'),
+      }),
+    );
+
+    const result = await service.reconcileOneInternal(recipientId, envelope);
+
+    expect(result).toMatchObject({
+      status: 'rejected',
+      reason: 'verify_only_window_expired',
+    });
+  });
+
+  it('rejects REVOKED sender keys', async () => {
+    const draft = createValidEnvelopeDraft(senderId, recipientId, senderKey.publicKeyString);
+    const envelope = signEnvelope(draft, senderKey.privateKey);
+
+    mockPrisma.user.findUnique.mockImplementation((args: any) => {
+      const where = args?.where;
+      if (where?.id === senderId) return Promise.resolve(createTestUser(senderId, 'ed25519:' + 'a'.repeat(64)));
+      if (where?.id === recipientId) return Promise.resolve(createTestUser(recipientId, 'dummy'));
+      return Promise.resolve(null);
+    });
+    mockPrisma.userDeviceKey.findUnique.mockResolvedValue(
+      createTestDeviceKey(senderKey.publicKeyString, DeviceKeyStatus.REVOKED),
+    );
+
+    const result = await service.reconcileOneInternal(recipientId, envelope);
+
+    expect(result).toMatchObject({ status: 'rejected', reason: 'public_key_revoked' });
   });
 
   it('5. Timestamp too old (past skew)', async () => {

@@ -29,6 +29,12 @@ enum CashoutStatus {
   CANCELLED
 }
 
+enum DeviceKeyStatus {
+  ACTIVE
+  VERIFY_ONLY
+  REVOKED
+}
+
 model User {
   id                  String        @id @default(cuid()) // "u_" prefix will be enforced in service layer
   email               String        @unique
@@ -43,11 +49,30 @@ model User {
 
   ledgerEntries       LedgerEntry[]
   processedSequences ProcessedSequence[]
+  deviceKeys         UserDeviceKey[]
   merchantProfile    MerchantProfile?
   cashouts           Cashout[] @relation("MerchantCashouts")
   approvedCashouts   Cashout[] @relation("AdminApprovals")
 
   @@index([email])
+}
+
+model UserDeviceKey {
+  id          String          @id @default(cuid())
+  userId      String
+  publicKey   String
+  status      DeviceKeyStatus
+  validFrom   DateTime        @default(now())
+  retiredAt   DateTime?
+  verifyUntil DateTime?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  user        User            @relation(fields: [userId], references: [id])
+
+  @@index([userId, status])
+  @@index([publicKey])
+  @@unique([userId, publicKey])
 }
 
 enum LedgerEntryType {
