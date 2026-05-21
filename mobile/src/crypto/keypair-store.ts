@@ -25,10 +25,26 @@ import {
   generateRandomBytes,
 } from "./pin-crypto";
 
-const SALT_KEY = "oneto.keypair.salt";
-const BLOB_KEY = "oneto.keypair.blob";
-const PUBKEY_KEY = "oneto.keypair.publicKey";
-const ATTEMPTS_KEY = "oneto.keypair.attempts";
+interface SlotKeys {
+  readonly saltKey: string;
+  readonly blobKey: string;
+  readonly publicKeyKey: string;
+  readonly attemptsKey: string;
+}
+
+const ACTIVE_SLOT: SlotKeys = {
+  saltKey: "oneto.keypair.salt",
+  blobKey: "oneto.keypair.blob",
+  publicKeyKey: "oneto.keypair.publicKey",
+  attemptsKey: "oneto.keypair.attempts",
+};
+
+const PENDING_RECOVERY_SLOT: SlotKeys = {
+  saltKey: "oneto.keypair.pending.salt",
+  blobKey: "oneto.keypair.pending.blob",
+  publicKeyKey: "oneto.keypair.pending.publicKey",
+  attemptsKey: "oneto.keypair.pending.attempts",
+};
 
 // Lockout policy:
 //   5 wrong attempts → lock for 5 minutes
@@ -119,15 +135,40 @@ function parseBlob(raw: string): EncryptedBlob {
 }
 
 export async function hasKeypair(): Promise<boolean> {
+  return hasKeypairInSlot(ACTIVE_SLOT);
+}
+
+export async function hasPendingRecoveryKeypair(): Promise<boolean> {
+  return hasKeypairInSlot(PENDING_RECOVERY_SLOT);
+}
+
+async function hasKeypairInSlot(slot: SlotKeys): Promise<boolean> {
   const [salt, blob, pub] = await Promise.all([
-    SecureStore.getItemAsync(SALT_KEY),
-    SecureStore.getItemAsync(BLOB_KEY),
-    SecureStore.getItemAsync(PUBKEY_KEY),
+    SecureStore.getItemAsync(slot.saltKey),
+    SecureStore.getItemAsync(slot.blobKey),
+    SecureStore.getItemAsync(slot.publicKeyKey),
   ]);
   return salt !== null && blob !== null && pub !== null;
 }
 
 export async function saveNewKeypair(
+  privateKey: Uint8Array,
+  publicKey: string,
+  pin: string,
+): Promise<void> {
+  await saveKeypairToSlot(ACTIVE_SLOT, privateKey, publicKey, pin);
+}
+
+export async function savePendingRecoveryKeypair(
+  privateKey: Uint8Array,
+  publicKey: string,
+  pin: string,
+): Promise<void> {
+  await saveKeypairToSlot(PENDING_RECOVERY_SLOT, privateKey, publicKey, pin);
+}
+
+async function saveKeypairToSlot(
+  slot: SlotKeys,
   privateKey: Uint8Array,
   publicKey: string,
   pin: string,
@@ -141,24 +182,37 @@ export async function saveNewKeypair(
   // Order: write salt + blob + pubkey before clearing any old attempts.
   // If we crash mid-write, hasKeypair() returns false and we re-onboard,
   // which is the safe direction.
-  await SecureStore.setItemAsync(SALT_KEY, toBase64(salt));
-  await SecureStore.setItemAsync(BLOB_KEY, serializeBlob(blob));
-  await SecureStore.setItemAsync(PUBKEY_KEY, publicKey);
-  await SecureStore.deleteItemAsync(ATTEMPTS_KEY);
+  await SecureStore.setItemAsync(slot.saltKey, toBase64(salt));
+  await SecureStore.setItemAsync(slot.blobKey, serializeBlob(blob));
+  await SecureStore.setItemAsync(slot.publicKeyKey, publicKey);
+  await SecureStore.deleteItemAsync(slot.attemptsKey);
 }
 
 export async function loadAndDecryptKeypair(
   pin: string,
 ): Promise<{ privateKey: Uint8Array; publicKey: string }> {
-  const state = await getAttemptState();
+  return loadAndDecryptKeypairFromSlot(ACTIVE_SLOT, pin);
+}
+
+export async function loadAndDecryptPendingRecoveryKeypair(
+  pin: string,
+): Promise<{ privateKey: Uint8Array; publicKey: string }> {
+  return loadAndDecryptKeypairFromSlot(PENDING_RECOVERY_SLOT, pin);
+}
+
+async function loadAndDecryptKeypairFromSlot(
+  slot: SlotKeys,
+  pin: string,
+): Promise<{ privateKey: Uint8Array; publicKey: string }> {
+  const state = await getAttemptStateForSlot(slot);
   if (state.isLocked) {
     throw new PinLockedError(state.lockedUntilMs ?? Date.now());
   }
 
   const [saltRaw, blobRaw, pub] = await Promise.all([
-    SecureStore.getItemAsync(SALT_KEY),
-    SecureStore.getItemAsync(BLOB_KEY),
-    SecureStore.getItemAsync(PUBKEY_KEY),
+    SecureStore.getItemAsync(slot.saltKey),
+    SecureStore.getItemAsync(slot.blobKey),
+    SecureStore.getItemAsync(slot.publicKeyKey),
   ]);
   if (saltRaw === null || blobRaw === null || pub === null) {
     throw new Error("No keypair stored on this device");
@@ -187,16 +241,64 @@ export async function changePinAndReencrypt(
 }
 
 export async function wipeKeypair(): Promise<void> {
+  await wipeSlot(ACTIVE_SLOT);
+}
+
+export async function wipePendingRecoveryKeypair(): Promise<void> {
+  await wipeSlot(PENDING_RECOVERY_SLOT);
+}
+
+async function wipeSlot(slot: SlotKeys): Promise<void> {
   await Promise.all([
-    SecureStore.deleteItemAsync(SALT_KEY),
-    SecureStore.deleteItemAsync(BLOB_KEY),
-    SecureStore.deleteItemAsync(PUBKEY_KEY),
-    SecureStore.deleteItemAsync(ATTEMPTS_KEY),
+    SecureStore.deleteItemAsync(slot.saltKey),
+    SecureStore.deleteItemAsync(slot.blobKey),
+    SecureStore.deleteItemAsync(slot.publicKeyKey),
+    SecureStore.deleteItemAsync(slot.attemptsKey),
   ]);
 }
 
-async function readAttempts(): Promise<StoredAttempts> {
-  const raw = await SecureStore.getItemAsync(ATTEMPTS_KEY);
+export async function getStoredPublicKey(): Promise<string | null> {
+  return SecureStore.getItemAsync(ACTIVE_SLOT.publicKeyKey);
+}
+
+export async function getPendingRecoveryPublicKey(): Promise<string | null> {
+  return SecureStore.getItemAsync(PENDING_RECOVERY_SLOT.publicKeyKey);
+}
+
+export async function moveKeypairToPendingRecovery(): Promise<void> {
+  await copySlot(ACTIVE_SLOT, PENDING_RECOVERY_SLOT);
+  await wipeSlot(ACTIVE_SLOT);
+}
+
+export async function promotePendingRecoveryKeypair(): Promise<void> {
+  await copySlot(PENDING_RECOVERY_SLOT, ACTIVE_SLOT);
+  await wipeSlot(PENDING_RECOVERY_SLOT);
+}
+
+async function copySlot(from: SlotKeys, to: SlotKeys): Promise<void> {
+  const [salt, blob, publicKey, attempts] = await Promise.all([
+    SecureStore.getItemAsync(from.saltKey),
+    SecureStore.getItemAsync(from.blobKey),
+    SecureStore.getItemAsync(from.publicKeyKey),
+    SecureStore.getItemAsync(from.attemptsKey),
+  ]);
+
+  if (salt === null || blob === null || publicKey === null) {
+    throw new Error("No keypair stored in source slot");
+  }
+
+  await SecureStore.setItemAsync(to.saltKey, salt);
+  await SecureStore.setItemAsync(to.blobKey, blob);
+  await SecureStore.setItemAsync(to.publicKeyKey, publicKey);
+  if (attempts === null) {
+    await SecureStore.deleteItemAsync(to.attemptsKey);
+  } else {
+    await SecureStore.setItemAsync(to.attemptsKey, attempts);
+  }
+}
+
+async function readAttempts(slot: SlotKeys): Promise<StoredAttempts> {
+  const raw = await SecureStore.getItemAsync(slot.attemptsKey);
   if (raw === null) {
     return { wrongAttempts: 0, lockedUntilMs: null };
   }
@@ -218,14 +320,27 @@ async function readAttempts(): Promise<StoredAttempts> {
   return { wrongAttempts: 0, lockedUntilMs: null };
 }
 
-async function writeAttempts(s: StoredAttempts): Promise<void> {
-  await SecureStore.setItemAsync(ATTEMPTS_KEY, JSON.stringify(s));
+async function writeAttempts(slot: SlotKeys, s: StoredAttempts): Promise<void> {
+  await SecureStore.setItemAsync(slot.attemptsKey, JSON.stringify(s));
 }
 
 export async function getAttemptState(
   nowMs: number = Date.now(),
 ): Promise<AttemptState> {
-  const stored = await readAttempts();
+  return getAttemptStateForSlot(ACTIVE_SLOT, nowMs);
+}
+
+export async function getPendingRecoveryAttemptState(
+  nowMs: number = Date.now(),
+): Promise<AttemptState> {
+  return getAttemptStateForSlot(PENDING_RECOVERY_SLOT, nowMs);
+}
+
+async function getAttemptStateForSlot(
+  slot: SlotKeys,
+  nowMs: number = Date.now(),
+): Promise<AttemptState> {
+  const stored = await readAttempts(slot);
   let lockedUntilMs = stored.lockedUntilMs;
   if (lockedUntilMs !== null && lockedUntilMs <= nowMs) {
     // Lock expired — surface as unlocked. We DON'T mutate the stored
@@ -250,12 +365,25 @@ export interface RecordResult {
 export async function recordWrongAttempt(
   nowMs: number = Date.now(),
 ): Promise<RecordResult> {
-  const stored = await readAttempts();
+  return recordWrongAttemptForSlot(ACTIVE_SLOT, nowMs);
+}
+
+export async function recordPendingRecoveryWrongAttempt(
+  nowMs: number = Date.now(),
+): Promise<RecordResult> {
+  return recordWrongAttemptForSlot(PENDING_RECOVERY_SLOT, nowMs);
+}
+
+async function recordWrongAttemptForSlot(
+  slot: SlotKeys,
+  nowMs: number = Date.now(),
+): Promise<RecordResult> {
+  const stored = await readAttempts(slot);
   const wrongAttempts = stored.wrongAttempts + 1;
 
   if (wrongAttempts >= ATTEMPTS_BEFORE_WIPE) {
     // Hard cap reached. Wipe and surface willWipe so the UI can route.
-    await wipeKeypair();
+    await wipeSlot(slot);
     return {
       remainingBeforeLock: 0,
       willWipe: true,
@@ -272,7 +400,7 @@ export async function recordWrongAttempt(
     ? nowMs + LOCKOUT_DURATION_MS
     : null;
 
-  await writeAttempts({ wrongAttempts, lockedUntilMs });
+  await writeAttempts(slot, { wrongAttempts, lockedUntilMs });
 
   const remainingBeforeLock = justHitLockoutBoundary
     ? 0
@@ -288,7 +416,11 @@ export async function recordWrongAttempt(
 }
 
 export async function clearAttempts(): Promise<void> {
-  await SecureStore.deleteItemAsync(ATTEMPTS_KEY);
+  await SecureStore.deleteItemAsync(ACTIVE_SLOT.attemptsKey);
+}
+
+export async function clearPendingRecoveryAttempts(): Promise<void> {
+  await SecureStore.deleteItemAsync(PENDING_RECOVERY_SLOT.attemptsKey);
 }
 
 // Re-export errors so callers don't have to import from pin-crypto separately.

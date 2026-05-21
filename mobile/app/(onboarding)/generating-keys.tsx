@@ -9,10 +9,16 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { generateKeypair } from "@oneto/shared";
-import { saveKeypairUnderPin } from "../../src/crypto/pin-derive";
-import { registerPublicKey, RotationSignatureRequiredError } from "../../src/api/keys";
+import {
+  moveKeypairToPendingRecovery,
+  saveKeypairUnderPin,
+} from "../../src/crypto/pin-derive";
+import {
+  registerPublicKey,
+  RotationSignatureRequiredError,
+} from "../../src/api/keys";
 import { NetworkError } from "../../src/api/errors";
 import { useAuth } from "../../src/auth/auth-state";
 import { logger } from "../../src/lib/logger";
@@ -29,7 +35,6 @@ import {
 
 type Phase =
   | { kind: "working"; message: string }
-  | { kind: "rotation_required" }
   | { kind: "error"; message: string };
 
 const STEP_MESSAGES: [string, string, string] = [
@@ -40,7 +45,8 @@ const STEP_MESSAGES: [string, string, string] = [
 const PROGRESS_CELLS = 8;
 
 export default function GeneratingKeysScreen(): React.ReactElement {
-  const { completeOnboarding } = useAuth();
+  const { completeOnboarding, stagePendingRecoveryKeypair } = useAuth();
+  const router = useRouter();
   const { mode } = useThemeMode();
   const t = getTheme(mode);
   const params = useLocalSearchParams<{ pin?: string }>();
@@ -92,13 +98,17 @@ export default function GeneratingKeysScreen(): React.ReactElement {
     }
 
     void (async () => {
+      let generatedPrivateKey: Uint8Array | null = null;
+      let generatedPublicKeyString: string | null = null;
       try {
         // 1. Generate keypair (Ed25519 from @oneto/shared — never roll our own)
         setPhase({ kind: "working", message: STEP_MESSAGES[0] });
         setProgressStep(0);
         // Yield to the event loop so the loading UI renders before scrypt starts.
         await new Promise<void>((resolve) => setTimeout(resolve, 80));
-        const { privateKey, publicKey, publicKeyString } = generateKeypair();
+        const { privateKey, publicKeyString } = generateKeypair();
+        generatedPrivateKey = privateKey;
+        generatedPublicKeyString = publicKeyString;
 
         // 2. Encrypt with PIN-derived key and persist in secure-store
         setPhase({ kind: "working", message: STEP_MESSAGES[1] });
@@ -111,13 +121,30 @@ export default function GeneratingKeysScreen(): React.ReactElement {
         await registerPublicKey(publicKeyString);
 
         // 4. Hand decrypted private key to the auth provider (in-memory ref).
-        // publicKey isn't strictly needed by completeOnboarding but we
-        // pass the bytes for symmetry with future signing API.
         completeOnboarding(privateKey, publicKeyString);
         // After this, _layout sees status=authed and redirects to /home.
       } catch (err) {
         if (err instanceof RotationSignatureRequiredError) {
-          setPhase({ kind: "rotation_required" });
+          try {
+            // Keep the newly generated key on-device, but move it out of the
+            // active slot so auth bootstrap never mistakes it for an approved
+            // payment device before recovery is reviewed.
+            await moveKeypairToPendingRecovery();
+            if (generatedPrivateKey && generatedPublicKeyString) {
+              stagePendingRecoveryKeypair(
+                generatedPrivateKey,
+                generatedPublicKeyString,
+              );
+            }
+            router.replace("/(onboarding)/device-linked");
+          } catch (moveErr) {
+            logger.warn("Failed to stage pending recovery keypair", moveErr);
+            setPhase({
+              kind: "error",
+              message:
+                "We couldn't prepare recovery on this phone. Try again.",
+            });
+          }
           return;
         }
         if (err instanceof NetworkError) {
@@ -135,31 +162,12 @@ export default function GeneratingKeysScreen(): React.ReactElement {
         });
       }
     })();
-  }, [pin, completeOnboarding]);
+  }, [pin, completeOnboarding, router, stagePendingRecoveryKeypair]);
 
   const spinInterpolation = spinAnim.interpolate({
     inputRange: [0, 1],
     outputRange: ["0deg", "360deg"],
   });
-
-  if (phase.kind === "rotation_required") {
-    return (
-      <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top", "bottom"]}>
-        <View style={styles.container}>
-          <Text style={[styles.title, { color: t.text }]}>We need to verify it's you</Text>
-          <Text style={[styles.body, { color: t.textSec }]}>
-            This account already has a key registered on another device. To
-            set up oneto on this phone, please contact support so we can
-            help you safely transfer.
-          </Text>
-          <View style={[styles.contactBox, { borderColor: t.borderSolid, backgroundColor: t.card }]}>
-            <Text style={[styles.contactLabel, { color: t.textMut }]}>Email</Text>
-            <Text style={[styles.contactValue, { color: t.text }]}>support@getoneto.com</Text>
-          </View>
-        </View>
-      </SafeAreaView>
-    );
-  }
 
   if (phase.kind === "error") {
     return (
@@ -277,21 +285,6 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     textAlign: "center",
     marginBottom: spacing["2xl"],
-  },
-  contactBox: {
-    borderWidth: borders.standard,
-    borderRadius: radii.md,
-    padding: spacing.lg,
-    width: "100%",
-  },
-  contactLabel: {
-    fontFamily: fonts.regular,
-    fontSize: fontSizes.sm,
-    marginBottom: spacing.xs,
-  },
-  contactValue: {
-    fontFamily: fonts.semibold,
-    fontSize: fontSizes.headerTitle,
   },
   button: {
     height: 52,
