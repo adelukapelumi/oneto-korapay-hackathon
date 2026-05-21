@@ -13,7 +13,7 @@ describe("merchant flow copy", () => {
   });
 
   it("uses student-led merchant scanner copy", () => {
-    expect(MERCHANT_SCAN_CTA).toBe("Scan payment QR");
+    expect(MERCHANT_SCAN_CTA).toBe("Scan QR");
     expect(MERCHANT_SCAN_TITLE).toBe("Scan student payment QR");
     expect(MERCHANT_SCAN_INSTRUCTION).toBe(
       "Ask the student to select your business, enter the amount, confirm with PIN, and show their payment QR.",

@@ -610,7 +610,6 @@ export default function HomeScreen(): React.ReactElement {
             onPress={() => router.push(MERCHANT_SCAN_ROUTE)}
             accessibilityRole="button"
           >
-            <Text style={styles.actionIcon}>💳</Text>
             <Text style={styles.actionTextPrimary}>{MERCHANT_SCAN_CTA}</Text>
           </Pressable>
           <Pressable
