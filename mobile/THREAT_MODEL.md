@@ -28,10 +28,26 @@ design satisfies them and what it explicitly does *not* defend against.
   unlock; it is never persisted.
 
 ### Lost phone
-- Same defenses as "stolen but locked": the PIN gates everything, and
-  10 wrong attempts wipes the keypair. The user contacts support to
-  unblock their account on a new device (manual recovery during pilot;
-  see POST_PILOT.md for the planned automated flow).
+- The target recovery policy is now documented in
+  `docs/key-recovery-policy.md`.
+- Current implementation only partially supports that target:
+  - the app stores the private key locally under the user's PIN
+  - the backend stores one public key on the user record
+  - replacing an existing public key requires a rotation signature from
+    the old private key
+  - when the user cannot produce that signature, the current app routes
+    them to support
+- The required target behavior is:
+  - normal device move: old phone approves the new phone
+  - lost phone: support-approved recovery creates a new ACTIVE key while
+    keeping the old key as VERIFY_ONLY where safe
+  - stolen/compromised phone: old key is blocked or REVOKED and affected
+    payments go to review
+  - old public keys must not be casually deleted, because already-scanned
+    offline payments may still need verification
+- Until device-key history and recovery requests are implemented,
+  support must handle lost-device recovery conservatively and must not
+  treat email OTP alone as authority to replace a payment key.
 
 ### Network interception
 - All API traffic uses HTTPS via `apiClient`. The brief calls for SSL
@@ -65,8 +81,10 @@ design satisfies them and what it explicitly does *not* defend against.
   inbox, they can complete the OTP flow on a new device. The backend's
   `pubKeyRegistered` flag plus the rotation-signature requirement turns
   this from "instant takeover" into "needs support intervention," which
-  is the lost-key recovery path. Post-pilot: an automated cooling-off
-  flow with explicit user confirmation (see POST_PILOT.md).
+  is the current lost-key recovery path.
+- The required target recovery policy is in
+  `docs/key-recovery-policy.md`. Current code only partially implements
+  that policy.
 
 ### Coercion / duress
 - Out of scope. No duress PIN, no plausible-deniability mode.
@@ -105,15 +123,19 @@ design satisfies them and what it explicitly does *not* defend against.
   surface, more bugs) or a recovery-shard model. Both are post-pilot. The
   pilot's UX is "one phone per user"; reinstall = manual support.
 
-### Why no automated lost-key recovery flow yet?
-- Email-channel takeover is the primary risk. The cooling-off flow needs
-  a clear UX and operational support runbook. Manual recovery (admin
-  intervention via Prisma) is acceptable at pilot volume; the support
-  email path is documented in `app/(onboarding)/generating-keys.tsx`.
+### Why recovery is not just email OTP
+- Email OTP proves inbox access. It does not prove control of the old
+  Oneto payment device.
+- A compromised email account must not be enough to replace the user's
+  payment key. The backend's rotation-signature requirement prevents
+  instant takeover when a user already has a registered key.
+- The complete target policy is in `docs/key-recovery-policy.md`;
+  user-facing copy is in `docs/key-recovery-user-copy.md`.
 
 ## Operational playbook references
-- Lost/stolen phone: user emails support@getoneto.com → admin clears the
-  user's `publicKey` in Prisma → user re-onboards on the new device.
+- Current manual lost/stolen phone flow: user emails support@getoneto.com
+  -> admin clears the user's `publicKey` in Prisma -> user re-onboards on
+  the new device.
 - Pre-pilot threat-model artifacts: `docs/threat-model.md`, `docs/failure-response.md`.
 - Storage-layer rules: CLAUDE.md sections 7.1 (cryptographic rules) and
   8 (double-entry ledger).
