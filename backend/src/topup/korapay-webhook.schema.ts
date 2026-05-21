@@ -6,13 +6,28 @@ import { z } from 'zod';
 export const KorapayWebhookSchema = z.object({
   event: z.string(),
   data: z.object({
-    reference: z.string().min(1),
+    reference: z.string().optional(),
+    payment_reference: z.string().optional(),
     amount: z.union([z.number().nonnegative(), z.string().min(1)]),
     status: z.string().optional(),
     customer: z.object({
       email: z.string().email(),
     }).optional(),
-  }).passthrough(),
+  })
+    .passthrough()
+    .superRefine((data, ctx) => {
+      const hasReference = typeof data.reference === 'string' && data.reference.trim().length > 0;
+      const hasPaymentReference =
+        typeof data.payment_reference === 'string' && data.payment_reference.trim().length > 0;
+
+      if (!hasReference && !hasPaymentReference) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Webhook payload must include reference or payment_reference',
+          path: ['reference'],
+        });
+      }
+    }),
 }).passthrough();
 
 export type KorapayWebhookPayload = z.infer<typeof KorapayWebhookSchema>;

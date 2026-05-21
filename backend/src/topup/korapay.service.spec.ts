@@ -103,6 +103,38 @@ describe('KorapayService', () => {
       expect(result.paymentUrl).toBe('https://checkout.korapay.com/xxx');
     });
 
+    it('rejects an invalid checkout URL returned by Korapay', async () => {
+      jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          status: true,
+          data: { checkout_url: 'not-a-valid-url', reference: 'top_123' },
+        }),
+      } as Response);
+
+      await expect(service.initiateCheckout({
+        amountKobo: 15_000,
+        reference: 'top_123',
+        customerEmail: 'test@cu.edu.ng',
+      })).rejects.toThrow(InternalServerErrorException);
+    });
+
+    it('rejects a non-HTTPS checkout URL returned by Korapay', async () => {
+      jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          status: true,
+          data: { checkout_url: 'http://checkout.korapay.com/xxx', reference: 'top_123' },
+        }),
+      } as Response);
+
+      await expect(service.initiateCheckout({
+        amountKobo: 15_000,
+        reference: 'top_123',
+        customerEmail: 'test@cu.edu.ng',
+      })).rejects.toThrow(InternalServerErrorException);
+    });
+
     it('throws on non-2xx response from Korapay', async () => {
       jest.spyOn(globalThis, 'fetch').mockResolvedValue({
         ok: false,
@@ -120,7 +152,7 @@ describe('KorapayService', () => {
 
   describe('verifyTransaction', () => {
     it('returns normalized verification fields from Korapay', async () => {
-      jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+      const fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue({
         ok: true,
         json: async () => ({
           status: true,
@@ -141,6 +173,16 @@ describe('KorapayService', () => {
         amountPaid: '500.00',
         currency: 'NGN',
       });
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://api.korapay.com/merchant/api/v1/charges/top_123',
+        expect.objectContaining({
+          method: 'GET',
+          headers: {
+            Authorization: 'Bearer sk_test_123',
+          },
+        }),
+      );
+      expect(fetchSpy.mock.calls[0]?.[0]).not.toContain('/transactions/');
     });
 
     it('returns not_found for a missing reference', async () => {

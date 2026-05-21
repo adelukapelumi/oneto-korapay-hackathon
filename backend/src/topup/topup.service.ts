@@ -77,6 +77,15 @@ export class TopupService {
 
     // Store reference→userId mapping so the webhook can identify the user
     // even when Korapay's payload omits the customer email (sandbox behavior).
+    const result = await this.korapayService.initiateCheckout({
+      amountKobo,
+      reference,
+      customerEmail: user.email,
+    });
+
+    // Create the local pending record only after Korapay has returned a
+    // validated checkout URL. This avoids stranding PENDING rows when
+    // initialization fails or returns an unusable checkout URL.
     await this.prisma.paymentTopup.create({
       data: {
         reference,
@@ -85,12 +94,6 @@ export class TopupService {
         status: 'PENDING',
         korapayResponse: {} as Prisma.InputJsonValue,
       },
-    });
-
-    const result = await this.korapayService.initiateCheckout({
-      amountKobo,
-      reference,
-      customerEmail: user.email,
     });
 
     return {
@@ -134,7 +137,7 @@ export class TopupService {
       return { success: true };
     }
 
-    const reference = data.reference;
+    const reference = this.resolveWebhookReference(data);
 
     if (event === 'charge.failed') {
       const amountKobo = this.parseMajorAmountToKobo(data.amount, 'webhook');
@@ -584,11 +587,27 @@ export class TopupService {
 
     return {
       status: webhookPayload.data.status ?? '',
-      reference: webhookPayload.data.reference,
+      reference: this.resolveWebhookReference(webhookPayload.data),
       amount: webhookPayload.data.amount,
       amountPaid: webhookPayload.data.amount,
       currency,
     };
+  }
+
+  private resolveWebhookReference(
+    data: Pick<KorapayWebhookPayload['data'], 'reference' | 'payment_reference'>,
+  ): string {
+    const reference = data.reference?.trim();
+    if (reference) {
+      return reference;
+    }
+
+    const paymentReference = data.payment_reference?.trim();
+    if (paymentReference) {
+      return paymentReference;
+    }
+
+    throw new BadRequestException('Webhook reference is missing');
   }
 
   private buildTopupAuditPayload(

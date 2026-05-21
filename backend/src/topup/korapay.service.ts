@@ -14,8 +14,8 @@ export interface KorapayCheckoutResponse {
   status: boolean;
   message: string;
   data: {
-    checkout_url: string;
-    reference: string;
+    checkout_url?: string | null;
+    reference?: string | null;
   };
 }
 
@@ -135,7 +135,12 @@ export class KorapayService {
         throw new InternalServerErrorException('Invalid payment gateway response');
       }
 
-      return { paymentUrl: json.data.checkout_url };
+      const checkoutUrl = this.validateCheckoutUrl(json.data.checkout_url, params.reference);
+      this.logger.log(
+        `Korapay checkout initialized for reference ${params.reference} host=${checkoutUrl.hostname}`,
+      );
+
+      return { paymentUrl: checkoutUrl.toString() };
     } catch (error) {
       if (error instanceof InternalServerErrorException) {
         throw error;
@@ -199,7 +204,7 @@ export class KorapayService {
 
   async verifyTransaction(reference: string): Promise<KorapayTransactionVerification> {
     try {
-      const response = await this.fetchWithTimeout(`${this.baseUrl}/transactions/${reference}`, {
+      const response = await this.fetchWithTimeout(`${this.baseUrl}/charges/${encodeURIComponent(reference)}`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${this.secretKey}`,
@@ -211,7 +216,7 @@ export class KorapayService {
           return { status: 'not_found' };
         }
         const errorText = await response.text();
-        this.logger.error(`Korapay verify transaction failed: ${response.status} ${errorText}`);
+        this.logger.error(`Korapay verify charge failed: ${response.status} ${errorText}`);
         throw new InternalServerErrorException('Verify transaction failed');
       }
 
@@ -273,6 +278,26 @@ export class KorapayService {
       clearTimeout(timeout);
       removeExternalAbortListener?.();
     }
+  }
+
+  private validateCheckoutUrl(rawCheckoutUrl: string, reference: string): URL {
+    let checkoutUrl: URL;
+
+    try {
+      checkoutUrl = new URL(rawCheckoutUrl);
+    } catch {
+      this.logger.error(`Korapay returned an invalid checkout URL for reference ${reference}`);
+      throw new InternalServerErrorException('Invalid payment gateway response');
+    }
+
+    if (checkoutUrl.protocol !== 'https:' || checkoutUrl.hostname.length === 0) {
+      this.logger.error(
+        `Korapay returned a non-HTTPS or hostless checkout URL for reference ${reference}`,
+      );
+      throw new InternalServerErrorException('Invalid payment gateway response');
+    }
+
+    return checkoutUrl;
   }
 
   // TODO post-pilot: initiateVirtualAccount()
