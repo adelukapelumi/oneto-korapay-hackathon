@@ -29,12 +29,22 @@ import {
   PinLockedError,
   changePinAndReencrypt,
   clearAttempts,
+  clearPendingRecoveryAttempts,
   getAttemptState,
+  getPendingRecoveryAttemptState,
+  getPendingRecoveryPublicKey,
   hasKeypair,
+  hasPendingRecoveryKeypair,
   loadAndDecryptKeypair,
+  loadAndDecryptPendingRecoveryKeypair,
+  moveKeypairToPendingRecovery,
+  promotePendingRecoveryKeypair,
   recordWrongAttempt,
+  recordPendingRecoveryWrongAttempt,
   saveNewKeypair,
+  savePendingRecoveryKeypair,
   wipeKeypair,
+  wipePendingRecoveryKeypair,
 } from "./keypair-store";
 
 const reset = (SecureStore as unknown as { __reset: () => void }).__reset;
@@ -67,6 +77,45 @@ describe("keypair-store", () => {
       await expect(
         saveNewKeypair(new Uint8Array(31), samplePublicKey, "123456"),
       ).rejects.toThrow();
+    });
+  });
+
+  describe("pending recovery slot", () => {
+    it("stores and decrypts a pending recovery keypair separately from the active slot", async () => {
+      const pk = samplePrivateKey();
+      await savePendingRecoveryKeypair(pk, samplePublicKey, "123456");
+
+      await expect(hasKeypair()).resolves.toBe(false);
+      await expect(hasPendingRecoveryKeypair()).resolves.toBe(true);
+      await expect(getPendingRecoveryPublicKey()).resolves.toBe(samplePublicKey);
+
+      const loaded = await loadAndDecryptPendingRecoveryKeypair("123456");
+      expect(Array.from(loaded.privateKey)).toEqual(Array.from(pk));
+      expect(loaded.publicKey).toBe(samplePublicKey);
+    });
+
+    it("moves an active keypair into the pending recovery slot", async () => {
+      await saveNewKeypair(samplePrivateKey(), samplePublicKey, "123456");
+
+      await moveKeypairToPendingRecovery();
+
+      await expect(hasKeypair()).resolves.toBe(false);
+      await expect(hasPendingRecoveryKeypair()).resolves.toBe(true);
+      await expect(getPendingRecoveryPublicKey()).resolves.toBe(samplePublicKey);
+    });
+
+    it("promotes a pending recovery keypair into the active slot", async () => {
+      const pk = samplePrivateKey();
+      await savePendingRecoveryKeypair(pk, samplePublicKey, "123456");
+
+      await promotePendingRecoveryKeypair();
+
+      await expect(hasPendingRecoveryKeypair()).resolves.toBe(false);
+      await expect(hasKeypair()).resolves.toBe(true);
+
+      const loaded = await loadAndDecryptKeypair("123456");
+      expect(Array.from(loaded.privateKey)).toEqual(Array.from(pk));
+      expect(loaded.publicKey).toBe(samplePublicKey);
     });
   });
 
@@ -182,6 +231,40 @@ describe("keypair-store", () => {
     });
   });
 
+  describe("pending recovery attempts", () => {
+    it("tracks pending recovery PIN attempts separately", async () => {
+      await savePendingRecoveryKeypair(samplePrivateKey(), samplePublicKey, "123456");
+
+      await recordPendingRecoveryWrongAttempt();
+      await recordPendingRecoveryWrongAttempt();
+      const before = await getPendingRecoveryAttemptState();
+      expect(before.wrongAttempts).toBe(2);
+
+      await clearPendingRecoveryAttempts();
+      const after = await getPendingRecoveryAttemptState();
+      expect(after.wrongAttempts).toBe(0);
+    });
+
+    it("wipes the pending recovery slot after too many wrong attempts", async () => {
+      await savePendingRecoveryKeypair(samplePrivateKey(), samplePublicKey, "123456");
+      const now = 2_000_000;
+
+      for (let i = 0; i < ATTEMPTS_BEFORE_LOCKOUT; i++) {
+        await recordPendingRecoveryWrongAttempt(now);
+      }
+      for (let i = 0; i < ATTEMPTS_BEFORE_WIPE - ATTEMPTS_BEFORE_LOCKOUT - 1; i++) {
+        await recordPendingRecoveryWrongAttempt(now + LOCKOUT_DURATION_MS + 1);
+      }
+
+      const wipeResult = await recordPendingRecoveryWrongAttempt(
+        now + LOCKOUT_DURATION_MS + 1,
+      );
+
+      expect(wipeResult.willWipe).toBe(true);
+      await expect(hasPendingRecoveryKeypair()).resolves.toBe(false);
+    });
+  });
+
   describe("changePinAndReencrypt", () => {
     it("rejects a wrong old PIN", async () => {
       await saveNewKeypair(samplePrivateKey(), samplePublicKey, "111111");
@@ -212,6 +295,17 @@ describe("keypair-store", () => {
       await wipeKeypair();
       await expect(hasKeypair()).resolves.toBe(false);
       const state = await getAttemptState();
+      expect(state.wrongAttempts).toBe(0);
+    });
+  });
+
+  describe("wipePendingRecoveryKeypair", () => {
+    it("removes all pending recovery key material", async () => {
+      await savePendingRecoveryKeypair(samplePrivateKey(), samplePublicKey, "111111");
+      await recordPendingRecoveryWrongAttempt();
+      await wipePendingRecoveryKeypair();
+      await expect(hasPendingRecoveryKeypair()).resolves.toBe(false);
+      const state = await getPendingRecoveryAttemptState();
       expect(state.wrongAttempts).toBe(0);
     });
   });

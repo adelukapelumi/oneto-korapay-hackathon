@@ -23,6 +23,9 @@ export default function OnboardingLayout(): React.ReactElement {
   if (state.status === "locked") {
     return <Redirect href="/(locked)/pin-entry" />;
   }
+  if (state.status === "recovery_pending") {
+    return <Stack screenOptions={{ headerShown: false }} />;
+  }
   return <Stack screenOptions={{ headerShown: false }} />;
 }
 

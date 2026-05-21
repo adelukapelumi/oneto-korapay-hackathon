@@ -23,6 +23,9 @@ export default function LockedLayout(): React.ReactElement {
   if (state.status === "onboarding") {
     return <Redirect href="/(onboarding)/welcome" />;
   }
+  if (state.status === "recovery_pending") {
+    return <Redirect href="/(onboarding)/device-linked" />;
+  }
   return <Stack screenOptions={{ headerShown: false }} />;
 }
 
