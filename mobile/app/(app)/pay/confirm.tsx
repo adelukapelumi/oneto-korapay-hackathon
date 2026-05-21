@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useCallback, useState, useRef } from "react";
 import {
   ActivityIndicator,
   Animated,
@@ -10,7 +10,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useRouter, useLocalSearchParams } from "expo-router";
+import { useRouter, useLocalSearchParams, useFocusEffect } from "expo-router";
 import { useAuth } from "../../../src/auth/auth-state";
 import {
   PinIncorrectError,
@@ -22,6 +22,10 @@ import {
   buildAndSignEnvelope,
   InsufficientBalanceError,
 } from "../../../src/payment/build-envelope";
+import {
+  getSpendableBalanceSnapshot,
+  type SpendableBalanceSnapshot,
+} from "../../../src/payment/balance-snapshot";
 import { logger } from "../../../src/lib/logger";
 import { PaymentRequest } from "@oneto/shared";
 import { BackButton } from "../../../components/BackButton";
@@ -63,8 +67,43 @@ export default function ConfirmPaymentScreen(): React.ReactElement | null {
   const [pin, setPin] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [signing, setSigning] = useState(false);
+  const [balanceSnapshot, setBalanceSnapshot] = useState<SpendableBalanceSnapshot | null>(null);
+  const [balanceLoading, setBalanceLoading] = useState(false);
   const inputRef = useRef<TextInput>(null);
   const shakeAnim = useRef(new Animated.Value(0)).current;
+
+  useFocusEffect(
+    useCallback(() => {
+      if (state.status !== "authed" && state.status !== "locked") {
+        return;
+      }
+
+      let isActive = true;
+      setBalanceLoading(true);
+
+      getSpendableBalanceSnapshot()
+        .then((snapshot) => {
+          if (!isActive) return;
+          setBalanceSnapshot(snapshot);
+          setError(null);
+        })
+        .catch((err) => {
+          if (!isActive) return;
+          setBalanceSnapshot(null);
+          logger.info("Confirm balance refresh failed", err);
+          setError(err instanceof Error ? err.message : "Could not load your balance.");
+        })
+        .finally(() => {
+          if (isActive) {
+            setBalanceLoading(false);
+          }
+        });
+
+      return () => {
+        isActive = false;
+      };
+    }, [state.status]),
+  );
 
   if (state.status !== "authed" && state.status !== "locked") {
     return null;
@@ -105,8 +144,9 @@ export default function ConfirmPaymentScreen(): React.ReactElement | null {
     );
   }
 
-  const balanceKobo = Number(user.verifiedBalanceKobo);
-  const canPay = balanceKobo >= paymentRequest.amountKobo;
+  const hasBalanceSnapshot = balanceSnapshot !== null;
+  const balanceKobo = balanceSnapshot?.spendableBalanceKobo ?? Number(user.verifiedBalanceKobo);
+  const canPay = hasBalanceSnapshot && balanceKobo >= paymentRequest.amountKobo;
   const afterBalanceKobo = balanceKobo - paymentRequest.amountKobo;
 
   function triggerShake(): void {
@@ -137,6 +177,12 @@ export default function ConfirmPaymentScreen(): React.ReactElement | null {
 
   async function onSubmit(pinValue: string): Promise<void> {
     setError(null);
+
+    if (!hasBalanceSnapshot || !canPay) {
+      setError("Could not confirm your latest spendable balance.");
+      return;
+    }
+
     setSigning(true);
 
     try {
@@ -217,8 +263,18 @@ export default function ConfirmPaymentScreen(): React.ReactElement | null {
 
           <View style={styles.balanceRow}>
             <Text style={[styles.balanceLabel, { color: t.textSec }]}>Your balance</Text>
-            <Text style={[styles.balanceValue, { color: t.text }]}>{formatNaira(balanceKobo)}</Text>
+            {balanceLoading && !hasBalanceSnapshot ? (
+              <ActivityIndicator size="small" color={colors.primary} />
+            ) : (
+              <Text style={[styles.balanceValue, { color: t.text }]}>{formatNaira(balanceKobo)}</Text>
+            )}
           </View>
+
+          {balanceSnapshot && balanceSnapshot.pendingOutgoingKobo > 0 && (
+            <Text style={[styles.pendingBalanceNote, { color: t.textMut }]}>
+              Includes pending offline payments
+            </Text>
+          )}
 
           {canPay && (
             <View style={styles.balanceRow}>
@@ -228,7 +284,20 @@ export default function ConfirmPaymentScreen(): React.ReactElement | null {
           )}
         </View>
 
-        {canPay ? (
+        {!hasBalanceSnapshot ? (
+          <View style={styles.signingContainer}>
+            {balanceLoading ? (
+              <>
+                <ActivityIndicator size="large" color={colors.primary} />
+                <Text style={[styles.signingText, { color: t.textSec }]}>Loading balance...</Text>
+              </>
+            ) : error ? (
+              <View style={styles.errorBanner}>
+                <Text style={styles.errorBannerText}>{error}</Text>
+              </View>
+            ) : null}
+          </View>
+        ) : canPay ? (
           <>
             {/* PIN Entry */}
             {signing ? (
@@ -328,7 +397,7 @@ export default function ConfirmPaymentScreen(): React.ReactElement | null {
         onChangeText={(t) => {
           const digits = t.replace(/\D/g, "").slice(0, PIN_LENGTH);
           setPin(digits);
-          if (digits.length === PIN_LENGTH) {
+          if (digits.length === PIN_LENGTH && canPay) {
             void onSubmit(digits);
           }
         }}
@@ -423,6 +492,12 @@ const styles = StyleSheet.create({
     fontFamily: fonts.semibold,
     fontSize: fontSizes.body,
     color: colors.primary,
+  },
+  pendingBalanceNote: {
+    alignSelf: "flex-start",
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.sm,
+    marginTop: spacing.xs,
   },
 
   // PIN Entry

@@ -8,17 +8,27 @@ import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { buildAllowedCorsOrigins } from './common/cors';
+import type { NextFunction, Request, Response } from 'express';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     bufferLogs: true,
   });
 
+  const expressApp = app.getHttpAdapter().getInstance();
   // Required behind Railway/reverse proxies so throttling keys on real client IP.
-  app.getHttpAdapter().getInstance().set('trust proxy', 1);
+  expressApp.set('trust proxy', 1);
+  expressApp.disable('etag');
 
   app.useLogger(app.get(Logger));
   app.use(helmet());
+
+  app.use((_req: Request, res: Response, next: NextFunction) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    next();
+  });
 
 
   const configService = app.get(ConfigService);
