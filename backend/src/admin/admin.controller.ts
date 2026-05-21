@@ -11,11 +11,20 @@ import {
 } from "@nestjs/common";
 import { AdminService } from "./admin.service";
 import { CashoutService } from "../cashout/cashout.service";
+import { RecoveryService } from "../recovery/recovery.service";
 import { JwtAuthGuard, type AuthenticatedRequest } from "../auth/jwt-auth.guard";
 import { RolesGuard } from "../auth/role.guard";
 import { AdminCookieSessionGuard } from "../auth/admin-cookie-session.guard";
 import { AdminCsrfGuard } from "../auth/admin-csrf.guard";
 import { ZodValidationPipe } from "../common/validation/zod-validation.pipe";
+import {
+  ApproveRecoveryRequestDto,
+  ApproveRecoveryRequestSchema,
+  RecoveryIdParamDto,
+  RecoveryIdParamSchema,
+  RejectRecoveryRequestDto,
+  RejectRecoveryRequestSchema,
+} from "../recovery/recovery.schemas";
 import {
   AdminMerchantUserIdParamDto,
   AdminMerchantUserIdParamSchema,
@@ -36,6 +45,7 @@ export class AdminController {
   constructor(
     private readonly adminService: AdminService,
     private readonly cashoutService: CashoutService,
+    private readonly recoveryService: RecoveryService,
   ) {}
 
   @Get("overview")
@@ -128,6 +138,53 @@ export class AdminController {
   @Get("cashouts/pending")
   async getPendingCashouts() {
     return { cashouts: await this.adminService.getPendingCashouts() };
+  }
+
+  @Get("recovery/pending")
+  async getPendingRecoveryRequests() {
+    return {
+      recoveryRequests: await this.recoveryService.listPendingRecoveryRequests(),
+    };
+  }
+
+  @Post("recovery/:id/approve")
+  async approveRecoveryRequest(
+    @Param(new ZodValidationPipe(RecoveryIdParamSchema))
+    params: RecoveryIdParamDto,
+    @Body(new ZodValidationPipe(ApproveRecoveryRequestSchema))
+    body: ApproveRecoveryRequestDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const adminUserId = req.user?.sub;
+    if (!adminUserId) {
+      throw new UnauthorizedException("Missing authenticated admin context");
+    }
+
+    return this.recoveryService.approveRecoveryRequest(
+      params.id,
+      adminUserId,
+      body,
+    );
+  }
+
+  @Post("recovery/:id/reject")
+  async rejectRecoveryRequest(
+    @Param(new ZodValidationPipe(RecoveryIdParamSchema))
+    params: RecoveryIdParamDto,
+    @Body(new ZodValidationPipe(RejectRecoveryRequestSchema))
+    body: RejectRecoveryRequestDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const adminUserId = req.user?.sub;
+    if (!adminUserId) {
+      throw new UnauthorizedException("Missing authenticated admin context");
+    }
+
+    return this.recoveryService.rejectRecoveryRequest(
+      params.id,
+      adminUserId,
+      body,
+    );
   }
 
   @Post("cashouts/:id/approve")

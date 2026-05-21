@@ -5,6 +5,7 @@ import request from "supertest";
 import { AdminController } from "./admin.controller";
 import { AdminService } from "./admin.service";
 import { CashoutService } from "../cashout/cashout.service";
+import { RecoveryService } from "../recovery/recovery.service";
 import { ADMIN_SESSION_COOKIE_NAME } from "../auth/admin-session.constants";
 import { AdminCookieSessionGuard } from "../auth/admin-cookie-session.guard";
 import { AdminCsrfGuard } from "../auth/admin-csrf.guard";
@@ -40,6 +41,12 @@ describe("Admin HTTP boundary", () => {
 
   const mockCashoutService = {
     approveCashout: jest.fn(),
+  };
+
+  const mockRecoveryService = {
+    listPendingRecoveryRequests: jest.fn(),
+    approveRecoveryRequest: jest.fn(),
+    rejectRecoveryRequest: jest.fn(),
   };
 
   const mockJwtWrapperService = {
@@ -84,6 +91,7 @@ describe("Admin HTTP boundary", () => {
         AdminCsrfGuard,
         { provide: AdminService, useValue: mockAdminService },
         { provide: CashoutService, useValue: mockCashoutService },
+        { provide: RecoveryService, useValue: mockRecoveryService },
         { provide: JwtWrapperService, useValue: mockJwtWrapperService },
         { provide: ConfigService, useValue: mockConfigService },
       ],

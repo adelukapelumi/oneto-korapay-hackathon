@@ -3,6 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { AdminController } from "./admin.controller";
 import { AdminService } from "./admin.service";
 import { CashoutService } from "../cashout/cashout.service";
+import { RecoveryService } from "../recovery/recovery.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { JwtWrapperService } from "../auth/jwt.service";
 import { RolesGuard } from "../auth/role.guard";
@@ -29,12 +30,19 @@ describe("AdminController", () => {
     approveCashout: jest.fn(),
   };
 
+  const mockRecoveryService = {
+    listPendingRecoveryRequests: jest.fn(),
+    approveRecoveryRequest: jest.fn(),
+    rejectRecoveryRequest: jest.fn(),
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [AdminController],
       providers: [
         { provide: AdminService, useValue: mockAdminService },
         { provide: CashoutService, useValue: mockCashoutService },
+        { provide: RecoveryService, useValue: mockRecoveryService },
         { provide: JwtWrapperService, useValue: { verifyToken: jest.fn() } },
         {
           provide: ConfigService,
