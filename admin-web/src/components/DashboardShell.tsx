@@ -12,7 +12,7 @@ type DashboardShellProps = {
 
 const navItems = [
   { to: "/overview", label: "Overview" },
-  { to: "/merchants/pending", label: "Pending Merchants" },
+  { to: "/merchants", label: "Merchants" },
   { to: "/cashouts/pending", label: "Pending Cashouts" },
 ];
 

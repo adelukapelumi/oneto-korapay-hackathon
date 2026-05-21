@@ -1,8 +1,11 @@
 import type {
+  AdminMerchant,
   AdminOverview,
+  CreateAdminMerchantInput,
   PendingCashout,
   PendingMerchant,
   ReconciliationReport,
+  UpdateAdminMerchantInput,
 } from "./types";
 
 const configuredApiBaseUrl =
@@ -151,4 +154,69 @@ export function approveCashout(id: string, onAuthFailure: OnAuthFailure) {
     method: "POST",
     requiresCsrf: true,
   }, onAuthFailure);
+}
+
+export async function getMerchants(onAuthFailure: OnAuthFailure) {
+  const result = await request<{ merchants: AdminMerchant[] }>(
+    "/admin/merchants",
+    {
+      method: "GET",
+    },
+    onAuthFailure,
+  );
+
+  return result.merchants;
+}
+
+export function createMerchant(
+  input: CreateAdminMerchantInput,
+  onAuthFailure: OnAuthFailure,
+) {
+  return request<{ merchant: AdminMerchant }>(
+    "/admin/merchants",
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+      requiresCsrf: true,
+    },
+    onAuthFailure,
+  );
+}
+
+export function updateMerchant(
+  userId: string,
+  input: UpdateAdminMerchantInput,
+  onAuthFailure: OnAuthFailure,
+) {
+  return request<{ merchant: AdminMerchant }>(
+    `/admin/merchants/${userId}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(input),
+      requiresCsrf: true,
+    },
+    onAuthFailure,
+  );
+}
+
+export function deactivateMerchant(userId: string, onAuthFailure: OnAuthFailure) {
+  return request<{ userId: string; status: string }>(
+    `/admin/merchants/${userId}/deactivate`,
+    {
+      method: "POST",
+      requiresCsrf: true,
+    },
+    onAuthFailure,
+  );
+}
+
+export function reactivateMerchant(userId: string, onAuthFailure: OnAuthFailure) {
+  return request<{ userId: string; status: string; verifiedAt: string }>(
+    `/admin/merchants/${userId}/reactivate`,
+    {
+      method: "POST",
+      requiresCsrf: true,
+    },
+    onAuthFailure,
+  );
 }
