@@ -6,12 +6,17 @@ import { IOtpProvider } from "../otp-channel/otp-provider.interface";
 import { BadRequestException, ForbiddenException, UnauthorizedException } from "@nestjs/common";
 import { E164 } from "../common/phone";
 import { ADMIN_SESSION_MAX_AGE_SECONDS } from "./admin-session.constants";
+import { generateOnetoUserId } from "../common/user-id";
+
+jest.mock("../common/user-id", () => ({
+  generateOnetoUserId: jest.fn(),
+}));
 
 // -- FIXTURES & HELPERS --
 
 function makeUser(overrides: any = {}) {
   return {
-    id: "u_test00000000001",
+    id: "u_0123456789abcdef",
     email: "alice@stu.cu.edu.ng",
     phone: null,
     publicKey: null,
@@ -33,6 +38,8 @@ describe("AuthService", () => {
   let mockOtpProvider: any;
 
   beforeEach(() => {
+    (generateOnetoUserId as jest.Mock).mockReturnValue("u_aaaaaaaaaaaaaaaa");
+
     mockPrisma = {
       user: {
         upsert: jest.fn(),
@@ -229,8 +236,23 @@ describe("AuthService", () => {
       expect(mockPrisma.user.upsert).toHaveBeenCalledWith({
         where: { email: "alice@stu.cu.edu.ng" },
         update: {},
-        create: { email: "alice@stu.cu.edu.ng" },
+        create: {
+          id: "u_aaaaaaaaaaaaaaaa",
+          email: "alice@stu.cu.edu.ng",
+        },
       });
+    });
+
+    it("assigns a canonical oneto user ID when creating a new public-auth student", async () => {
+      mockOtpStore.verifyOtp.mockResolvedValue(true);
+      mockPrisma.user.upsert.mockResolvedValue(makeUser());
+      mockJwt.generateToken.mockReturnValue("token123");
+
+      await authService.verifyOtp("alice@stu.cu.edu.ng", "123456");
+
+      const createData = mockPrisma.user.upsert.mock.calls[0][0].create;
+      expect(generateOnetoUserId).toHaveBeenCalledTimes(1);
+      expect(createData.id).toMatch(/^u_[0-9a-f]{16}$/);
     });
 
     it("calls jwtService.generateToken with { sub, email, role } from upserted user", async () => {

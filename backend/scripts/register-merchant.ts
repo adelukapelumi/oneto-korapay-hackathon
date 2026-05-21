@@ -5,9 +5,9 @@ dotenv.config({ path: resolve(__dirname, '..', '.env') });
 
 import * as fs from 'fs';
 import { PrismaClient } from '@prisma/client';
-import { randomBytes } from 'crypto';
 import { normalizeEmail, InvalidEmailError } from '../src/common/email';
 import { normalizePhone, InvalidPhoneError } from '../src/common/phone';
+import { generateOnetoUserId } from '../src/common/user-id';
 
 const prisma = new PrismaClient();
 
@@ -31,10 +31,6 @@ interface NormalizedMerchant {
   accountNumber: string;
   accountName: string;
   businessAddress: string | undefined;
-}
-
-function generateUserId(): string {
-  return `u_${randomBytes(8).toString('hex')}`;
 }
 
 function printUsage(): void {
@@ -227,7 +223,7 @@ async function registerMerchant(input: MerchantInput): Promise<string> {
         };
       }
 
-      const userId = generateUserId();
+      const userId = generateOnetoUserId();
 
       const user = await tx.user.create({
         data: {

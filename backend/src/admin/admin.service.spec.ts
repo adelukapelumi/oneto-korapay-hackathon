@@ -5,6 +5,11 @@ import {
 } from "@nestjs/common";
 import { CashoutStatus, Role, Status } from "@prisma/client";
 import { AdminService } from "./admin.service";
+import { generateOnetoUserId } from "../common/user-id";
+
+jest.mock("../common/user-id", () => ({
+  generateOnetoUserId: jest.fn(),
+}));
 
 describe("AdminService", () => {
   let service: AdminService;
@@ -65,6 +70,8 @@ describe("AdminService", () => {
   });
 
   beforeEach(() => {
+    (generateOnetoUserId as jest.Mock).mockReturnValue("u_bbbbbbbbbbbbbbbb");
+
     prisma = {
       user: {
         count: jest.fn(),
@@ -217,6 +224,7 @@ describe("AdminService", () => {
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     expect(prisma.user.create).toHaveBeenCalledWith({
       data: {
+        id: "u_bbbbbbbbbbbbbbbb",
         email: "merchant@getoneto.com",
         role: Role.MERCHANT,
         status: Status.ACTIVE,
@@ -291,6 +299,8 @@ describe("AdminService", () => {
     );
 
     const createCall = prisma.user.create.mock.calls[0][0];
+    expect(generateOnetoUserId).toHaveBeenCalledTimes(1);
+    expect(createCall.data.id).toMatch(/^u_[0-9a-f]{16}$/);
     expect(createCall.data.verifiedBalanceKobo).toBeUndefined();
     expect(createCall.data.sequenceNumber).toBeUndefined();
     expect(prisma.user.update).not.toHaveBeenCalled();

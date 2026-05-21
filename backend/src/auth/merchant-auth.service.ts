@@ -6,6 +6,7 @@ import { JwtWrapperService } from "./jwt.service";
 import { IOtpProvider } from "../otp-channel/otp-provider.interface";
 import { E164, normalizePhone, InvalidPhoneError } from "../common/phone";
 import { normalizeEmail, InvalidEmailError } from "../common/email";
+import { generateOnetoUserId } from "../common/user-id";
 
 export interface MerchantSignupData {
   businessName: string;
@@ -141,6 +142,7 @@ export class MerchantAuthService {
           phone: merchantData.phone || existingUser?.phone,
         },
         create: {
+          id: generateOnetoUserId(),
           email,
           phone: merchantData.phone,
           role: "MERCHANT",

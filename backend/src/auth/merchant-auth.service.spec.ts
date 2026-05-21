@@ -5,6 +5,11 @@ import { OTP_STORE, OtpRateLimitExceededError } from "./otp-store.service";
 import { JwtWrapperService } from "./jwt.service";
 import { IOtpProvider } from "../otp-channel/otp-provider.interface";
 import { BadRequestException, ConflictException, ForbiddenException, ServiceUnavailableException, UnauthorizedException } from "@nestjs/common";
+import { generateOnetoUserId } from "../common/user-id";
+
+jest.mock("../common/user-id", () => ({
+  generateOnetoUserId: jest.fn(),
+}));
 
 describe("MerchantAuthService", () => {
   let service: MerchantAuthService;
@@ -14,6 +19,8 @@ describe("MerchantAuthService", () => {
   let otpProvider: any;
 
   beforeEach(async () => {
+    (generateOnetoUserId as jest.Mock).mockReturnValue("u_cccccccccccccccc");
+
     prisma = {
       user: {
         findUnique: jest.fn(),
@@ -221,12 +228,32 @@ describe("MerchantAuthService", () => {
         where: { email },
         update: { phone: undefined },
         create: {
+          id: "u_cccccccccccccccc",
           email,
           phone: undefined,
           role: "MERCHANT",
           status: "PENDING_VERIFICATION",
         },
       });
+    });
+
+    it("7b. verifyMerchantOtp: assigns a canonical oneto user ID for new merchant signup", async () => {
+      otpStore.verifyOtp.mockResolvedValue(true);
+      prisma.user.findUnique.mockResolvedValue(null);
+      prisma.user.upsert.mockResolvedValue({
+        id: "u_cccccccccccccccc",
+        email,
+        role: "MERCHANT",
+        status: "PENDING_VERIFICATION",
+        publicKey: null,
+      });
+      jwtService.generateToken.mockReturnValue("token_123");
+
+      await service.verifyMerchantOtp(email, code);
+
+      const createData = prisma.user.upsert.mock.calls[0][0].create;
+      expect(generateOnetoUserId).toHaveBeenCalledTimes(1);
+      expect(createData.id).toMatch(/^u_[0-9a-f]{16}$/);
     });
 
     it("8. verifyMerchantOtp: creates MerchantProfile with all provided fields", async () => {
