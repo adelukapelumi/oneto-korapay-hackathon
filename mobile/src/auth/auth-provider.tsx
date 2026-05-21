@@ -7,12 +7,17 @@ import {
   clearAttempts,
   hasKeypair,
   unlockKeypairWithPin,
+  wipeKeypair,
 } from "../crypto/pin-derive";
 import { logger } from "../lib/logger";
 import { clearToken, getToken, setToken } from "./token-store";
 import { isJwtExpired } from "./jwt-decode";
 import { AuthContext, type AppState, type AuthState } from "./auth-state";
 import { initDb, setLocalState } from "../ledger/db";
+import {
+  isUserNotFoundError,
+  resetLocalAuthAfterMissingUser,
+} from "./bootstrap-recovery";
 
 interface ProviderProps {
   readonly children: React.ReactNode;
@@ -49,6 +54,15 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
       decryptedPrivateKey.current = null;
     }
   }, []);
+
+  const resetLocalAuthForMissingUser = useCallback(async () => {
+    await resetLocalAuthAfterMissingUser({
+      clearTokenFn: clearToken,
+      clearAttemptsFn: clearAttempts,
+      wipeKeypairFn: wipeKeypair,
+      wipeInMemoryKeyFn: wipeInMemoryKey,
+    });
+  }, [wipeInMemoryKey]);
 
   const signOut = useCallback(async () => {
     await clearToken();
@@ -203,6 +217,12 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
             setLocalState("verified_balance_kobo", user.verifiedBalanceKobo);
             setLocalState("last_sync_at", new Date().toISOString());
           } catch (err) {
+            if (isUserNotFoundError(err)) {
+              await resetLocalAuthForMissingUser();
+              if (!isMounted.current) return;
+              setState({ status: "unauthed" });
+              return;
+            }
             // If offline at boot, we still proceed to onboarding —
             // the user can complete PIN setup; key registration will
             // retry until network is back.
@@ -259,6 +279,11 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
             logger.info(
               "Offline at boot; treating stored token as valid for now",
             );
+          } else if (isUserNotFoundError(err)) {
+            await resetLocalAuthForMissingUser();
+            if (!isMounted.current) return;
+            setState({ status: "unauthed" });
+            return;
           } else {
             // 401 → interceptor will clear the token; propagate to
             // unauthed via the unauthorized handler. Other errors:

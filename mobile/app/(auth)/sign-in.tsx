@@ -47,8 +47,6 @@ export default function SignInScreen(): React.ReactElement {
   const [focused, setFocused] = useState(false);
   const compact = useCompactLayout();
 
-  // Ref so the Pressable wrapper can programmatically focus the input
-  // when the user taps anywhere in the input box, not just the text field itself.
   const emailInputRef = useRef<TextInput>(null);
 
   const { control, handleSubmit, formState, watch } = useForm<SignInForm>({
@@ -120,14 +118,13 @@ export default function SignInScreen(): React.ReactElement {
             name="email"
             render={({ field, fieldState }) => (
               <View style={styles.field}>
-                <Pressable
+                <View
                   style={[
                     styles.inputWrap,
                     { backgroundColor: t.inputBg, borderColor: t.border },
                     focused && styles.inputWrapFocused,
                     fieldState.error && styles.inputWrapError,
                   ]}
-                  onPress={() => emailInputRef.current?.focus()}
                 >
                   <Text style={styles.inputIcon}>✉️</Text>
                   <TextInput
@@ -155,7 +152,7 @@ export default function SignInScreen(): React.ReactElement {
                       <Text style={styles.cuBadgeText}>✓ CU</Text>
                     </View>
                   )}
-                </Pressable>
+                </View>
                 {fieldState.error ? (
                   <Text style={styles.fieldError}>
                     {fieldState.error.message}
