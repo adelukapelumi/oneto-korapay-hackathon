@@ -1,6 +1,6 @@
 export const MERCHANT_SCAN_ROUTE = "/(app)/merchant/scan-envelope" as const;
 
-export const MERCHANT_SCAN_CTA = "Scan payment QR";
+export const MERCHANT_SCAN_CTA = "Scan QR";
 
 export const MERCHANT_SCAN_TITLE = "Scan student payment QR";
 

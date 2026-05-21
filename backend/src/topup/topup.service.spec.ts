@@ -61,8 +61,11 @@ describe('TopupService', () => {
     };
   }
 
-  function buildPendingTopup(overrides?: Partial<{ status: string; amountKobo: bigint; userId: string }>) {
+  function buildPendingTopup(
+    overrides?: Partial<{ reference: string; status: string; amountKobo: bigint; userId: string }>,
+  ) {
     return {
+      reference: overrides?.reference ?? 'top_123',
       userId: overrides?.userId ?? 'u_123',
       status: overrides?.status ?? 'PENDING',
       amountKobo: overrides?.amountKobo ?? BigInt(50_000),
@@ -139,6 +142,175 @@ describe('TopupService', () => {
       mockPrisma.paymentTopup.findFirst.mockResolvedValue(null);
 
       await expect(service.getStatusForUser('u_other', 'top_123')).rejects.toThrow(NotFoundException);
+      expect(mockKorapay.verifyTransaction).not.toHaveBeenCalled();
+    });
+
+    it('verifies and credits a pending top-up when Korapay confirms success', async () => {
+      mockPrisma.paymentTopup.findFirst.mockResolvedValue({
+        reference: 'top_123',
+        status: 'PENDING',
+        amountKobo: BigInt(50_000),
+      });
+      mockPrisma.paymentTopup.findUnique.mockResolvedValue(buildPendingTopup());
+      mockKorapay.verifyTransaction.mockResolvedValue({
+        status: 'success',
+        reference: 'top_123',
+        amount: '500.00',
+        amountPaid: '500.00',
+        currency: 'NGN',
+      });
+      mockHappyPathUsers();
+
+      await expect(service.getStatusForUser('u_123', 'top_123')).resolves.toEqual({
+        reference: 'top_123',
+        status: 'SUCCESS',
+        amountKobo: '50000',
+      });
+
+      expect(mockKorapay.verifyTransaction).toHaveBeenCalledWith('top_123');
+      expect(mockPrisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'u_123' },
+          data: { verifiedBalanceKobo: { increment: BigInt(50_000) } },
+        }),
+      );
+      expect(mockPrisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'u_operating' },
+          data: { verifiedBalanceKobo: { decrement: BigInt(50_000) } },
+        }),
+      );
+      expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledTimes(2);
+      expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            transactionId: 'top_123',
+            userId: 'u_123',
+            type: LedgerEntryType.CREDIT,
+            amountKobo: BigInt(50_000),
+          }),
+        }),
+      );
+      expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            transactionId: 'top_123',
+            userId: 'u_operating',
+            type: LedgerEntryType.DEBIT,
+            amountKobo: BigInt(50_000),
+          }),
+        }),
+      );
+    });
+
+    it('leaves the top-up pending when Korapay verification is still pending', async () => {
+      mockPrisma.paymentTopup.findFirst.mockResolvedValue({
+        reference: 'top_123',
+        status: 'PENDING',
+        amountKobo: BigInt(50_000),
+      });
+      mockPrisma.paymentTopup.findUnique.mockResolvedValue(buildPendingTopup());
+      mockKorapay.verifyTransaction.mockResolvedValue({
+        status: 'processing',
+        reference: 'top_123',
+        amount: '500.00',
+      });
+
+      await expect(service.getStatusForUser('u_123', 'top_123')).resolves.toEqual({
+        reference: 'top_123',
+        status: 'PENDING',
+        amountKobo: '50000',
+      });
+
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
+      expect(mockPrisma.paymentTopup.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { reference: 'top_123' },
+          data: expect.objectContaining({
+            korapayResponse: expect.objectContaining({
+              source: 'status_poll',
+            }),
+          }),
+        }),
+      );
+    });
+
+    it('marks the top-up failed when Korapay verification says failed', async () => {
+      mockPrisma.paymentTopup.findFirst.mockResolvedValue({
+        reference: 'top_123',
+        status: 'PENDING',
+        amountKobo: BigInt(50_000),
+      });
+      mockPrisma.paymentTopup.findUnique.mockResolvedValue(buildPendingTopup());
+      mockKorapay.verifyTransaction.mockResolvedValue({
+        status: 'failed',
+        reference: 'top_123',
+        amount: '500.00',
+      });
+
+      await expect(service.getStatusForUser('u_123', 'top_123')).resolves.toEqual({
+        reference: 'top_123',
+        status: 'FAILED',
+        amountKobo: '50000',
+      });
+
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
+      expect(mockPrisma.paymentTopup.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { reference: 'top_123' },
+          data: expect.objectContaining({ status: 'FAILED' }),
+        }),
+      );
+    });
+
+    it('does not double-credit when status is already successful', async () => {
+      mockPrisma.paymentTopup.findFirst.mockResolvedValue({
+        reference: 'top_123',
+        status: 'SUCCESS',
+        amountKobo: BigInt(50_000),
+      });
+
+      await expect(service.getStatusForUser('u_123', 'top_123')).resolves.toEqual({
+        reference: 'top_123',
+        status: 'SUCCESS',
+        amountKobo: '50000',
+      });
+
+      expect(mockKorapay.verifyTransaction).not.toHaveBeenCalled();
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
+      expect(mockPrisma.ledgerEntry.create).not.toHaveBeenCalled();
+    });
+
+    it('stays idempotent when status polling races with another finalizer', async () => {
+      mockPrisma.paymentTopup.findFirst.mockResolvedValue({
+        reference: 'top_123',
+        status: 'PENDING',
+        amountKobo: BigInt(50_000),
+      });
+      mockPrisma.paymentTopup.findUnique
+        .mockResolvedValueOnce(buildPendingTopup())
+        .mockResolvedValueOnce(buildPendingTopup({ status: 'SUCCESS' }));
+      mockKorapay.verifyTransaction.mockResolvedValue({
+        status: 'success',
+        reference: 'top_123',
+        amount: '500.00',
+        amountPaid: '500.00',
+        currency: 'NGN',
+      });
+      mockHappyPathUsers();
+
+      const p2002Error = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: 'test',
+        meta: { target: ['transactionId', 'userId'] },
+      });
+      mockPrisma.$transaction.mockRejectedValue(p2002Error);
+
+      await expect(service.getStatusForUser('u_123', 'top_123')).resolves.toEqual({
+        reference: 'top_123',
+        status: 'SUCCESS',
+        amountKobo: '50000',
+      });
     });
   });
 
