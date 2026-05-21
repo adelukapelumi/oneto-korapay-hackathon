@@ -60,7 +60,7 @@ enum KeyRecoveryReason {
 }
 
 model User {
-  id                  String        @id @default(cuid()) // "u_" prefix will be enforced in service layer
+  id                  String        @id @default(cuid()) // Legacy fallback only. Envelope-participating users must be created with canonical "u_" IDs in service helpers.
   email               String        @unique
   phone               String?
   verifiedBalanceKobo BigInt        @default(0)

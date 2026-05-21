@@ -19,6 +19,7 @@ import { IOtpProvider } from "../otp-channel/otp-provider.interface";
 import { E164 } from "../common/phone";
 import { normalizeEmail, InvalidEmailError } from "../common/email";
 import { ADMIN_SESSION_MAX_AGE_SECONDS } from "./admin-session.constants";
+import { generateOnetoUserId } from "../common/user-id";
 
 @Injectable()
 export class AuthService {
@@ -193,7 +194,10 @@ export class AuthService {
     const user = await this.prisma.user.upsert({
       where: { email },
       update: {},
-      create: { email },
+      create: {
+        id: generateOnetoUserId(),
+        email,
+      },
     });
 
     // Account state checks — block login for admin-flagged accounts.

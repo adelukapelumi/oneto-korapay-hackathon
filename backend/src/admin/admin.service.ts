@@ -12,6 +12,7 @@ import {
   CreateAdminMerchantDto,
   UpdateAdminMerchantDto,
 } from "./admin.schemas";
+import { generateOnetoUserId } from "../common/user-id";
 
 const OPERATING_USER_ID = "u_operating";
 const ADMIN_MERCHANT_SELECT = {
@@ -253,6 +254,7 @@ export class AdminService {
 
         return tx.user.create({
           data: {
+            id: generateOnetoUserId(),
             email: normalizedEmail,
             role: Role.MERCHANT,
             status: Status.ACTIVE,
