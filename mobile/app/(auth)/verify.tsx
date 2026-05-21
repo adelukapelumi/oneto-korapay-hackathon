@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Animated,
-  KeyboardAvoidingView,
   Platform,
   Pressable,
   StyleSheet,
@@ -10,14 +9,15 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { Screen } from "../../components/Screen";
 import { fetchMe, requestOtp, verifyOtp } from "../../src/api/auth";
 import { NetworkError, UnauthorizedError } from "../../src/api/errors";
 import { useAuth } from "../../src/auth/auth-state";
 import { setToken } from "../../src/auth/token-store";
 import { logger } from "../../src/lib/logger";
 import { BackButton } from "../../components/BackButton";
+import { useCompactLayout } from "../../src/ui/responsive";
 import { useThemeMode } from "../../src/theme/theme-provider";
 import {
   getTheme,
@@ -47,6 +47,7 @@ export default function VerifyScreen(): React.ReactElement {
   const [error, setError] = useState<string | null>(null);
   const [resendCooldown, setResendCooldown] = useState(RESEND_COOLDOWN_SECONDS);
   const [verified, setVerified] = useState(false);
+  const compact = useCompactLayout();
 
   const inputRef = useRef<TextInput>(null);
   const shakeAnim = useRef(new Animated.Value(0)).current;
@@ -134,19 +135,34 @@ export default function VerifyScreen(): React.ReactElement {
   }
 
   return (
-    <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top", "bottom"]}>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-      >
+    <Screen
+      scroll
+      keyboard
+      contentContainerStyle={{ paddingBottom: spacing["2xl"] }}
+    >
         {/* Header */}
         <View style={styles.header}>
           <BackButton />
         </View>
 
-        <View style={styles.container}>
+        <View
+          style={[
+            styles.container,
+            {
+              paddingHorizontal: compact.horizontalPadding,
+              paddingTop: compact.topPadding,
+            },
+          ]}
+        >
           <Text style={styles.stepLabel}>STEP 2</Text>
-          <Text style={[styles.title, { color: t.text }]}>Verify your email</Text>
+          <Text
+            style={[
+              styles.title,
+              { color: t.text, fontSize: compact.isVeryShort ? fontSizes.h2 : fontSizes.h2Lg },
+            ]}
+          >
+            Verify your email
+          </Text>
           <Text style={[styles.subtitle, { color: t.textSec }]}>We sent a 6-digit code to</Text>
           <Text style={[styles.emailText, { color: t.text }]}>{email}</Text>
 
@@ -178,17 +194,38 @@ export default function VerifyScreen(): React.ReactElement {
               </View>
             ) : (
               <View style={styles.otpArea}>
-                <View style={styles.otpCells} pointerEvents="none">
+                <View
+                  style={[
+                    styles.otpCells,
+                    { gap: compact.isVeryShort ? 6 : compact.isNarrow ? 8 : 10 },
+                  ]}
+                  pointerEvents="none"
+                >
                   {Array.from({ length: CODE_LENGTH }).map((_, i) => (
                     <View
                       key={i}
                       style={[
                         styles.otpCell,
-                        { borderColor: t.border, backgroundColor: t.inputBg },
+                        {
+                          width: compact.isVeryShort ? 42 : compact.isNarrow ? 44 : dimensions.otpCell.width,
+                          height: compact.isVeryShort ? 50 : compact.isNarrow ? 52 : dimensions.otpCell.height,
+                          borderColor: t.border,
+                          backgroundColor: t.inputBg,
+                        },
                         code[i] ? styles.otpCellFilled : null,
                       ]}
                     >
-                      <Text style={[styles.otpDigit, { color: t.text }]}>{code[i] || ""}</Text>
+                      <Text
+                        style={[
+                          styles.otpDigit,
+                          {
+                            color: t.text,
+                            fontSize: compact.isVeryShort ? 20 : fontSizes.otpInput,
+                          },
+                        ]}
+                      >
+                        {code[i] || ""}
+                      </Text>
                     </View>
                   ))}
                 </View>
@@ -235,14 +272,11 @@ export default function VerifyScreen(): React.ReactElement {
             <Text style={styles.error}>{error}</Text>
           ) : null}
         </View>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1 },
-  flex: { flex: 1 },
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -251,9 +285,7 @@ const styles = StyleSheet.create({
     minHeight: dimensions.headerMinHeight,
   },
   container: {
-    flex: 1,
-    paddingHorizontal: spacing.screenHorizontal,
-    paddingTop: spacing.xl,
+    alignItems: "center",
   },
   stepLabel: {
     fontFamily: fonts.pixel,
@@ -270,11 +302,13 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.body,
     marginTop: spacing.md,
     lineHeight: 21,
+    textAlign: "center",
   },
   emailText: {
     fontFamily: fonts.bold,
     fontSize: fontSizes.bodyLg,
     marginTop: spacing.xs,
+    textAlign: "center",
   },
   otpContainer: {
     marginTop: spacing["4xl"],
@@ -285,7 +319,6 @@ const styles = StyleSheet.create({
   },
   otpCells: {
     flexDirection: "row",
-    gap: 10,
     justifyContent: "center",
   },
   otpCell: {

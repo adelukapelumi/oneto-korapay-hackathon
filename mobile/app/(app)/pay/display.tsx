@@ -6,10 +6,11 @@ import {
   Text,
   View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import QRCode from "react-native-qrcode-svg";
 import { TransactionEnvelope } from "@oneto/shared";
+import { Screen } from "../../../components/Screen";
+import { useCompactLayout } from "../../../src/ui/responsive";
 import { useThemeMode } from "../../../src/theme/theme-provider";
 import {
   getTheme,
@@ -34,6 +35,7 @@ export default function DisplayScreen(): React.ReactElement | null {
   const { envelope: envelopeRaw } = useLocalSearchParams<{ envelope: string }>();
   const { mode } = useThemeMode();
   const t = getTheme(mode);
+  const compact = useCompactLayout();
 
   // Floating sparkle animation
   const floatAnim = useRef(new Animated.Value(0)).current;
@@ -88,7 +90,7 @@ export default function DisplayScreen(): React.ReactElement | null {
 
   if (!envelope) {
     return (
-      <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top", "bottom"]}>
+      <Screen>
         <View style={styles.errorContainer}>
           <Text style={styles.errorIcon}>⚠️</Text>
           <Text style={[styles.errorTitle, { color: t.text }]}>Invalid Data</Text>
@@ -107,12 +109,19 @@ export default function DisplayScreen(): React.ReactElement | null {
             <Text style={[styles.errorButtonText, { color: t.text }]}>Go Home</Text>
           </Pressable>
         </View>
-      </SafeAreaView>
+      </Screen>
     );
   }
 
   return (
-    <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top", "bottom"]}>
+    <Screen
+      scroll
+      contentContainerStyle={{
+        paddingHorizontal: compact.horizontalPadding,
+        paddingTop: compact.topPadding,
+        paddingBottom: spacing["2xl"],
+      }}
+    >
       <View style={styles.container}>
         {/* Header */}
         <Animated.View
@@ -129,7 +138,11 @@ export default function DisplayScreen(): React.ReactElement | null {
         <Animated.View
           style={[
             styles.qrCard,
-            { backgroundColor: t.card, borderColor: t.border },
+            {
+              backgroundColor: t.card,
+              borderColor: t.border,
+              padding: compact.isVeryShort ? spacing.lg : spacing.cardPadLg,
+            },
             t.shadow,
             {
               opacity: fadeAnim,
@@ -148,7 +161,7 @@ export default function DisplayScreen(): React.ReactElement | null {
           <View style={styles.qrInner}>
             <QRCode
               value={envelopeRaw}
-              size={240}
+              size={compact.qrSize}
               ecl="M"
               quietZone={8}
               color={colors.primaryText}
@@ -181,7 +194,7 @@ export default function DisplayScreen(): React.ReactElement | null {
         <Pressable
           style={({ pressed }) => [
             styles.doneButton,
-            { borderColor: t.border },
+            { height: compact.buttonHeight, borderColor: t.border },
             t.shadow,
             pressed && styles.buttonPressed,
           ]}
@@ -191,19 +204,13 @@ export default function DisplayScreen(): React.ReactElement | null {
           <Text style={styles.doneButtonText}>Done ✓</Text>
         </Pressable>
       </View>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-  },
   container: {
     flex: 1,
-    paddingHorizontal: spacing.screenHorizontal,
-    paddingTop: spacing["3xl"],
-    paddingBottom: spacing["2xl"],
     alignItems: "center",
   },
 
@@ -228,7 +235,6 @@ const styles = StyleSheet.create({
   qrCard: {
     borderWidth: borders.standard,
     borderRadius: radii.xl,
-    padding: spacing.cardPadLg,
     position: "relative",
   },
   sparkle: {
@@ -283,7 +289,6 @@ const styles = StyleSheet.create({
   // Done Button
   doneButton: {
     width: "100%",
-    height: 52,
     backgroundColor: colors.primary,
     borderRadius: radii.pill,
     borderWidth: borders.standard,

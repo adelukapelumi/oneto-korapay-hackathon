@@ -1,7 +1,11 @@
 import { useEffect, useRef } from "react";
 import { Animated, Easing, Pressable, StyleSheet, Text, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import { Screen } from "../../components/Screen";
+import {
+  useCompactLayout,
+  type CompactLayoutMetrics,
+} from "../../src/ui/responsive";
 import { useThemeMode } from "../../src/theme/theme-provider";
 import {
   getTheme,
@@ -38,12 +42,14 @@ function StepCard({
   desc,
   index,
   theme,
+  compact,
 }: {
   icon: string;
   title: string;
   desc: string;
   index: number;
   theme: ReturnType<typeof getTheme>;
+  compact: CompactLayoutMetrics;
 }): React.ReactElement {
   const translateY = useRef(new Animated.Value(30)).current;
   const opacity = useRef(new Animated.Value(0)).current;
@@ -83,11 +89,32 @@ function StepCard({
         styles.card,
         { backgroundColor: theme.card, borderColor: theme.border },
         theme.shadow,
+        {
+          gap: compact.isVeryShort ? spacing.md : spacing.lg,
+          padding: compact.isVeryShort ? spacing.md : spacing.cardPad,
+        },
         { opacity, transform: [{ translateY }, { scale }] },
       ]}
     >
-      <View style={[styles.cardIcon, { borderColor: theme.border, backgroundColor: theme.cardAlt }]}>
-        <Text style={styles.cardIconText}>{icon}</Text>
+      <View
+        style={[
+          styles.cardIcon,
+          {
+            width: compact.isVeryShort ? 44 : 52,
+            height: compact.isVeryShort ? 44 : 52,
+            borderColor: theme.border,
+            backgroundColor: theme.cardAlt,
+          },
+        ]}
+      >
+        <Text
+          style={[
+            styles.cardIconText,
+            { fontSize: compact.isVeryShort ? 20 : 24 },
+          ]}
+        >
+          {icon}
+        </Text>
       </View>
       <View style={styles.cardBody}>
         <View style={styles.cardTitleRow}>
@@ -104,6 +131,7 @@ export default function WelcomeScreen(): React.ReactElement {
   const router = useRouter();
   const { mode } = useThemeMode();
   const t = getTheme(mode);
+  const compact = useCompactLayout();
 
   const headerOpacity = useRef(new Animated.Value(0)).current;
   const headerY = useRef(new Animated.Value(-16)).current;
@@ -137,7 +165,17 @@ export default function WelcomeScreen(): React.ReactElement {
   }, []);
 
   return (
-    <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top", "bottom"]}>
+    <Screen
+      scroll
+      contentContainerStyle={[
+        styles.container,
+        {
+          paddingHorizontal: compact.horizontalPadding,
+          paddingTop: compact.topPadding,
+          paddingBottom: spacing["2xl"],
+        },
+      ]}
+    >
       <View style={styles.container}>
         <Animated.View
           style={[
@@ -146,7 +184,12 @@ export default function WelcomeScreen(): React.ReactElement {
           ]}
         >
           <Text style={styles.pixelLabel}>LET'S GO</Text>
-          <Text style={[styles.title, { color: t.text }]}>
+          <Text
+            style={[
+              styles.title,
+              { color: t.text, fontSize: compact.isVeryShort ? fontSizes.h2 : fontSizes.h2Lg },
+            ]}
+          >
             Welcome to <Text style={styles.titleAccent}>oneto</Text>
           </Text>
           <Text style={[styles.subtitle, { color: t.textSec }]}>
@@ -154,9 +197,22 @@ export default function WelcomeScreen(): React.ReactElement {
           </Text>
         </Animated.View>
 
-        <View style={styles.stepsContainer}>
+        <View
+          style={[
+            styles.stepsContainer,
+            { gap: compact.isVeryShort ? spacing.md : spacing.lg, marginTop: compact.sectionGap },
+          ]}
+        >
           {STEPS.map((s, i) => (
-            <StepCard key={i} icon={s.icon} title={s.title} desc={s.desc} index={i} theme={t} />
+            <StepCard
+              key={i}
+              icon={s.icon}
+              title={s.title}
+              desc={s.desc}
+              index={i}
+              theme={t}
+              compact={compact}
+            />
           ))}
         </View>
 
@@ -166,6 +222,7 @@ export default function WelcomeScreen(): React.ReactElement {
           <Pressable
             style={({ pressed }) => [
               styles.button,
+              { height: compact.buttonHeight },
               { borderColor: t.border },
               t.shadow,
               pressed && styles.buttonPressed,
@@ -173,21 +230,17 @@ export default function WelcomeScreen(): React.ReactElement {
             onPress={() => router.push("/(onboarding)/pin-setup")}
             accessibilityRole="button"
           >
-            <Text style={styles.buttonText}>Continue</Text>
+          <Text style={styles.buttonText}>Continue</Text>
           </Pressable>
         </Animated.View>
       </View>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1 },
   container: {
     flex: 1,
-    paddingHorizontal: spacing.screenHorizontal,
-    paddingTop: spacing["4xl"],
-    paddingBottom: spacing["2xl"],
     alignItems: "stretch",
   },
   headerSection: { alignItems: "center" },
@@ -195,14 +248,14 @@ const styles = StyleSheet.create({
   title: { fontFamily: fonts.bold, fontSize: fontSizes.h2Lg, textAlign: "center" },
   titleAccent: { color: colors.primary },
   subtitle: { fontFamily: fonts.regular, fontSize: fontSizes.body, marginTop: spacing.sm, textAlign: "center" },
-  stepsContainer: { gap: spacing.lg, marginTop: spacing["3xl"] },
+  stepsContainer: {},
   card: {
-    flexDirection: "row", alignItems: "center", gap: spacing.lg,
+    flexDirection: "row", alignItems: "center",
     borderWidth: borders.standard,
-    borderRadius: radii.xl, padding: spacing.cardPad,
+    borderRadius: radii.xl,
   },
-  cardIcon: { width: 52, height: 52, borderRadius: radii.lg, borderWidth: borders.medium, alignItems: "center", justifyContent: "center" },
-  cardIconText: { fontSize: 24 },
+  cardIcon: { borderRadius: radii.lg, borderWidth: borders.medium, alignItems: "center", justifyContent: "center" },
+  cardIconText: {},
   cardBody: { flex: 1 },
   cardTitleRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
   cardStep: { fontFamily: fonts.pixel, fontSize: pixelFontSizes.sm },
