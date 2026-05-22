@@ -1,4 +1,4 @@
-import { useCallback, useState, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Animated,
@@ -23,8 +23,9 @@ import {
   InsufficientBalanceError,
 } from "../../../src/payment/build-envelope";
 import {
-  getSpendableBalanceSnapshot,
-  type SpendableBalanceSnapshot,
+  getStoredStudentBalanceProjection,
+  getStudentBalanceProjection,
+  type StudentBalanceProjection,
 } from "../../../src/payment/balance-snapshot";
 import { logger } from "../../../src/lib/logger";
 import { PaymentRequest } from "@oneto/shared";
@@ -67,10 +68,11 @@ export default function ConfirmPaymentScreen(): React.ReactElement | null {
   const [pin, setPin] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [signing, setSigning] = useState(false);
-  const [balanceSnapshot, setBalanceSnapshot] = useState<SpendableBalanceSnapshot | null>(null);
+  const [balanceSnapshot, setBalanceSnapshot] = useState<StudentBalanceProjection | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(false);
   const inputRef = useRef<TextInput>(null);
   const shakeAnim = useRef(new Animated.Value(0)).current;
+  const insufficientBalanceLoggedRef = useRef(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -79,9 +81,13 @@ export default function ConfirmPaymentScreen(): React.ReactElement | null {
       }
 
       let isActive = true;
+      const storedProjection = getStoredStudentBalanceProjection();
+      if (storedProjection) {
+        setBalanceSnapshot(storedProjection);
+      }
       setBalanceLoading(true);
 
-      getSpendableBalanceSnapshot()
+      getStudentBalanceProjection()
         .then((snapshot) => {
           if (!isActive) return;
           setBalanceSnapshot(snapshot);
@@ -145,9 +151,34 @@ export default function ConfirmPaymentScreen(): React.ReactElement | null {
   }
 
   const hasBalanceSnapshot = balanceSnapshot !== null;
-  const balanceKobo = balanceSnapshot?.spendableBalanceKobo ?? Number(user.verifiedBalanceKobo);
+  const balanceKobo =
+    balanceSnapshot?.availableBalanceKobo ?? Number(user.verifiedBalanceKobo);
   const canPay = hasBalanceSnapshot && balanceKobo >= paymentRequest.amountKobo;
   const afterBalanceKobo = balanceKobo - paymentRequest.amountKobo;
+
+  useEffect(() => {
+    insufficientBalanceLoggedRef.current = false;
+  }, [paymentRequest.requestNonce]);
+
+  useEffect(() => {
+    if (
+      !balanceSnapshot ||
+      paymentRequest.amountKobo <= balanceSnapshot.availableBalanceKobo ||
+      insufficientBalanceLoggedRef.current
+    ) {
+      return;
+    }
+
+    logger.info("qr_generation_rejected_insufficient_available_balance", {
+      userId: user.id,
+      serverConfirmedBalanceKobo: balanceSnapshot.serverConfirmedBalanceKobo,
+      pendingOutgoingKobo: balanceSnapshot.pendingOutgoingKobo,
+      availableBalanceKobo: balanceSnapshot.availableBalanceKobo,
+      pendingOutgoingCount: balanceSnapshot.pendingOutgoingCount,
+      timestamp: new Date().toISOString(),
+    });
+    insufficientBalanceLoggedRef.current = true;
+  }, [balanceSnapshot, paymentRequest.amountKobo, user.id]);
 
   function triggerShake(): void {
     Animated.sequence([

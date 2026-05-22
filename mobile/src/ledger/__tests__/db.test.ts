@@ -403,6 +403,40 @@ describe("sumPendingOutgoingKobo", () => {
     });
     expect(sumPendingOutgoingKobo()).toBe(50_000);
   });
+
+  it("does not count reconciled outgoing transactions", () => {
+    insertPendingTransaction({
+      id: "tx_0000000000000201",
+      envelopeJson: makeEnvelopeJson(),
+      recipientId: "u_merchant000000001",
+      recipientLabel: "Pilot Buka",
+      amountKobo: 150_000,
+      sequenceNumber: 1,
+      direction: "outgoing",
+      createdAt: "2026-05-01T10:00:00.000Z",
+    });
+
+    updateTransactionStatus("tx_0000000000000201", "reconciled");
+
+    expect(sumPendingOutgoingKobo()).toBe(0);
+  });
+
+  it("does not count rejected outgoing transactions", () => {
+    insertPendingTransaction({
+      id: "tx_0000000000000202",
+      envelopeJson: makeEnvelopeJson(),
+      recipientId: "u_merchant000000002",
+      recipientLabel: "Cafe 24",
+      amountKobo: 150_000,
+      sequenceNumber: 2,
+      direction: "outgoing",
+      createdAt: "2026-05-01T11:00:00.000Z",
+    });
+
+    updateTransactionStatus("tx_0000000000000202", "rejected");
+
+    expect(sumPendingOutgoingKobo()).toBe(0);
+  });
 });
 
 describe("sumPendingIncomingKobo", () => {

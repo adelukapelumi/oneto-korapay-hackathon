@@ -1,16 +1,23 @@
 import { fetchMe } from "../api/auth";
 import {
   getLocalState,
+  listPendingByStatus,
   setLocalState,
   sumPendingOutgoingKobo,
 } from "../ledger/db";
+import { logger } from "../lib/logger";
+import { syncOutgoingPendingFromServerLedger } from "./sync-outgoing";
 
-export interface SpendableBalanceSnapshot {
-  readonly verifiedBalanceKobo: number;
+export interface StudentBalanceProjection {
+  readonly serverConfirmedBalanceKobo: number;
   readonly pendingOutgoingKobo: number;
-  readonly spendableBalanceKobo: number;
+  readonly availableBalanceKobo: number;
+  readonly pendingOutgoingCount: number;
+  readonly lastSyncedAt: string | null;
   readonly source: "server" | "local";
 }
+
+export type SpendableBalanceSnapshot = StudentBalanceProjection;
 
 function parseStoredKobo(value: string | null): number | null {
   if (value === null) {
@@ -31,35 +38,86 @@ function assertValidKobo(value: number, label: string): void {
   }
 }
 
-export async function getSpendableBalanceSnapshot(): Promise<SpendableBalanceSnapshot> {
-  let verifiedBalanceKobo: number | null = null;
+function buildProjection(
+  serverConfirmedBalanceKobo: number,
+  source: "server" | "local",
+  lastSyncedAt: string | null,
+): StudentBalanceProjection {
+  assertValidKobo(serverConfirmedBalanceKobo, "server-confirmed balance");
+
+  const pendingOutgoingKobo = sumPendingOutgoingKobo();
+  assertValidKobo(pendingOutgoingKobo, "pending outgoing balance");
+
+  const pendingOutgoingCount = listPendingByStatus(
+    "pending_reconciliation",
+    "outgoing",
+  ).length;
+  const availableBalanceKobo =
+    serverConfirmedBalanceKobo - pendingOutgoingKobo;
+
+  logger.debug("balance_projection_computed", {
+    serverConfirmedBalanceKobo,
+    pendingOutgoingKobo,
+    availableBalanceKobo,
+    pendingOutgoingCount,
+    source,
+    timestamp: new Date().toISOString(),
+  });
+
+  return {
+    serverConfirmedBalanceKobo,
+    pendingOutgoingKobo,
+    availableBalanceKobo,
+    pendingOutgoingCount,
+    lastSyncedAt,
+    source,
+  };
+}
+
+export function getStoredStudentBalanceProjection(): StudentBalanceProjection | null {
+  const storedBalanceKobo = parseStoredKobo(getLocalState("verified_balance_kobo"));
+  if (storedBalanceKobo === null) {
+    return null;
+  }
+
+  return buildProjection(
+    storedBalanceKobo,
+    "local",
+    getLocalState("last_sync_at"),
+  );
+}
+
+export async function getStudentBalanceProjection(): Promise<StudentBalanceProjection> {
+  let serverConfirmedBalanceKobo: number | null = null;
   let source: "server" | "local" = "local";
+  let lastSyncedAt = getLocalState("last_sync_at");
+
+  await syncOutgoingPendingFromServerLedger();
 
   try {
     const fresh = await fetchMe();
-    verifiedBalanceKobo = Number(fresh.verifiedBalanceKobo);
-    assertValidKobo(verifiedBalanceKobo, "server balance");
+    serverConfirmedBalanceKobo = Number(fresh.verifiedBalanceKobo);
+    assertValidKobo(serverConfirmedBalanceKobo, "server balance");
 
     setLocalState("verified_balance_kobo", fresh.verifiedBalanceKobo);
-    setLocalState("last_sync_at", new Date().toISOString());
+    lastSyncedAt = new Date().toISOString();
+    setLocalState("last_sync_at", lastSyncedAt);
     source = "server";
   } catch {
-    verifiedBalanceKobo = parseStoredKobo(getLocalState("verified_balance_kobo"));
+    serverConfirmedBalanceKobo = parseStoredKobo(
+      getLocalState("verified_balance_kobo"),
+    );
   }
 
-  if (verifiedBalanceKobo === null) {
+  if (serverConfirmedBalanceKobo === null) {
     throw new Error(
       "No verified balance available. Open the app online to sync your balance.",
     );
   }
 
-  const pendingOutgoingKobo = sumPendingOutgoingKobo();
-  assertValidKobo(pendingOutgoingKobo, "pending outgoing balance");
+  return buildProjection(serverConfirmedBalanceKobo, source, lastSyncedAt);
+}
 
-  return {
-    verifiedBalanceKobo,
-    pendingOutgoingKobo,
-    spendableBalanceKobo: verifiedBalanceKobo - pendingOutgoingKobo,
-    source,
-  };
+export async function getSpendableBalanceSnapshot(): Promise<SpendableBalanceSnapshot> {
+  return getStudentBalanceProjection();
 }
