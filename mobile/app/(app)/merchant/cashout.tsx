@@ -1,10 +1,20 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { View, Text, StyleSheet, Pressable, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Stack, useRouter } from "expo-router";
+import { Stack, useFocusEffect, useRouter } from "expo-router";
 import { useAuth } from "../../../src/auth/auth-state";
+import { fetchMe } from "../../../src/api/auth";
 import { requestCashout, Cashout } from "../../../src/api/cashout";
 import { ApiError } from "../../../src/api/errors";
+import { setLocalState } from "../../../src/ledger/db";
+import {
+  buildMerchantBalanceProjection,
+  getCashoutRequestDecision,
+  getPendingIncomingSummary,
+  type CashoutRequestBlockReason,
+  type MerchantBalanceProjection,
+} from "../../../src/payment/merchant-balance-projection";
+import { logger } from "../../../src/lib/logger";
 import { BackButton } from "../../../components/BackButton";
 import { useThemeMode } from "../../../src/theme/theme-provider";
 import {
@@ -19,26 +29,98 @@ import {
   dimensions,
 } from "../../../src/theme/tokens";
 
+function getCashoutBlockMessage(reason: CashoutRequestBlockReason): string {
+  switch (reason) {
+    case "jwt_stale":
+      return "Sign in again to request a cashout.";
+    case "balance_unconfirmed":
+      return "Connect to the internet to confirm your cashout balance.";
+    case "zero_balance":
+      return "Your available cashout balance is zero.";
+    case "request_in_progress":
+      return "Please wait while your cashout balance is being confirmed.";
+  }
+}
+
 export default function CashoutScreen(): React.ReactElement {
   const router = useRouter();
   const { state } = useAuth();
   const { mode } = useThemeMode();
   const t = getTheme(mode);
   const [loading, setLoading] = useState(false);
+  const [refreshingBalance, setRefreshingBalance] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successData, setSuccessData] = useState<Cashout | null>(null);
+  const [projection, setProjection] =
+    useState<MerchantBalanceProjection | null>(null);
+  const [balanceConfirmedOnline, setBalanceConfirmedOnline] = useState(false);
+
+  const refreshCashoutBalance = useCallback(async () => {
+    if (state.status !== "authed") return;
+
+    setRefreshingBalance(true);
+    setError(null);
+
+    try {
+      const fresh = await fetchMe();
+      const settledBalanceKobo = Number(fresh.verifiedBalanceKobo);
+      const nextProjection = buildMerchantBalanceProjection({
+        settledBalanceKobo,
+        ...getPendingIncomingSummary(),
+      });
+
+      setProjection(nextProjection);
+      setBalanceConfirmedOnline(true);
+      setLocalState("verified_balance_kobo", fresh.verifiedBalanceKobo);
+      setLocalState("last_sync_at", new Date().toISOString());
+      logger.debug("cashout_balance_rendered", {
+        hasPendingSync: nextProjection.hasPendingSync,
+        pendingIncomingCount: nextProjection.pendingIncomingCount,
+        balanceConfirmedOnline: true,
+      });
+    } catch (err) {
+      logger.info("Cashout balance refresh failed", err);
+      setProjection(
+        buildMerchantBalanceProjection({
+          settledBalanceKobo: 0,
+          ...getPendingIncomingSummary(),
+        }),
+      );
+      setBalanceConfirmedOnline(false);
+      setError("Connect to the internet to confirm your cashout balance.");
+    } finally {
+      setRefreshingBalance(false);
+    }
+  }, [state]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void refreshCashoutBalance();
+    }, [refreshCashoutBalance]),
+  );
 
   if (state.status !== "authed") {
     return <View />;
   }
 
-  const { user, jwtFresh } = state;
-  const balanceKobo = Number(user.verifiedBalanceKobo);
-  const balanceNaira = (balanceKobo / 100).toFixed(2);
+  const { jwtFresh } = state;
+  const balanceProjection =
+    projection ??
+    buildMerchantBalanceProjection({
+      settledBalanceKobo: 0,
+      ...getPendingIncomingSummary(),
+    });
+  const balanceNaira = (balanceProjection.cashoutableBalanceKobo / 100).toFixed(2);
+  const cashoutDecision = getCashoutRequestDecision({
+    jwtFresh,
+    balanceConfirmedOnline,
+    cashoutableBalanceKobo: balanceProjection.cashoutableBalanceKobo,
+    isRequestInProgress: loading || refreshingBalance,
+  });
 
   const handleRequestCashout = async () => {
-    if (balanceKobo <= 0) {
-      setError("Your balance is zero.");
+    if (!cashoutDecision.canRequestCashout) {
+      setError(getCashoutBlockMessage(cashoutDecision.reason));
       return;
     }
     setLoading(true);
@@ -46,11 +128,13 @@ export default function CashoutScreen(): React.ReactElement {
     try {
       const res = await requestCashout();
       setSuccessData(res);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ApiError) {
         setError(err.message || "Failed to request cashout");
-      } else {
+      } else if (err instanceof Error) {
         setError(err.message || "An unexpected error occurred");
+      } else {
+        setError("An unexpected error occurred");
       }
     } finally {
       setLoading(false);
@@ -78,8 +162,24 @@ export default function CashoutScreen(): React.ReactElement {
         )}
 
         <View style={[styles.balanceCard, { backgroundColor: t.card, borderColor: t.border }, t.shadow]}>
-          <Text style={[styles.balanceLabel, { color: t.textSec }]}>Current Balance</Text>
-          <Text style={[styles.balanceAmount, { color: t.text }]}>₦{balanceNaira}</Text>
+          <Text style={[styles.balanceLabel, { color: t.textSec }]}>Available for Cashout</Text>
+          {refreshingBalance ? (
+            <ActivityIndicator color={colors.primary} style={styles.balanceSpinner} />
+          ) : (
+            <Text style={[styles.balanceAmount, { color: t.text }]}>
+              {balanceConfirmedOnline ? `₦${balanceNaira}` : "Confirm online"}
+            </Text>
+          )}
+          {!balanceConfirmedOnline ? (
+            <Text style={[styles.balanceNote, { color: t.textSec }]}>
+              Connect to the internet to confirm your cashout balance.
+            </Text>
+          ) : null}
+          {balanceProjection.hasPendingSync ? (
+            <Text style={[styles.balanceNote, { color: t.textSec }]}>
+              ₦{(balanceProjection.pendingIncomingKobo / 100).toFixed(2)} pending verification is not yet cashoutable.
+            </Text>
+          ) : null}
         </View>
 
         {error ? (
@@ -122,11 +222,11 @@ export default function CashoutScreen(): React.ReactElement {
                 styles.primaryButton,
                 { borderColor: t.border },
                 t.shadow,
-                (!jwtFresh || loading || balanceKobo <= 0) && styles.disabledButton,
+                !cashoutDecision.canRequestCashout && styles.disabledButton,
                 pressed && styles.buttonPressed,
               ]}
               onPress={handleRequestCashout}
-              disabled={!jwtFresh || loading || balanceKobo <= 0}
+              disabled={!cashoutDecision.canRequestCashout}
             >
               {loading ? (
                 <ActivityIndicator color={colors.primaryText} />
@@ -192,6 +292,16 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.h2Lg,
     marginTop: spacing.xs,
     letterSpacing: -1,
+  },
+  balanceSpinner: {
+    marginTop: spacing.md,
+  },
+  balanceNote: {
+    fontFamily: fonts.medium,
+    fontSize: fontSizes.sm,
+    marginTop: spacing.sm,
+    textAlign: "center",
+    lineHeight: 18,
   },
   errorBox: {
     backgroundColor: colors.error + "15",
