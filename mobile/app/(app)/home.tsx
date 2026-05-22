@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -10,7 +10,6 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from "expo-router";
-import { MAX_USER_BALANCE_KOBO } from "@oneto/shared";
 import { useAuth } from "../../src/auth/auth-state";
 import { fetchMe } from "../../src/api/auth";
 import { fetchLedger as fetchServerLedger } from "../../src/api/ledger";
@@ -21,7 +20,11 @@ import {
   MERCHANT_SCAN_INSTRUCTION,
   MERCHANT_SCAN_ROUTE,
 } from "../../src/payment/merchant-flow";
-import { syncOutgoingPendingFromServerLedger } from "../../src/payment/sync-outgoing";
+import {
+  getStoredStudentBalanceProjection,
+  getStudentBalanceProjection,
+  type StudentBalanceProjection,
+} from "../../src/payment/balance-snapshot";
 import { logger } from "../../src/lib/logger";
 import { useThemeMode } from "../../src/theme/theme-provider";
 import {
@@ -180,6 +183,12 @@ export default function HomeScreen(): React.ReactElement {
   const [balanceKobo, setBalanceKobo] = useState(
     state.status === "authed" ? Number(state.user.verifiedBalanceKobo) : 0,
   );
+  const [studentBalanceProjection, setStudentBalanceProjection] =
+    useState<StudentBalanceProjection | null>(
+      state.status === "authed" && state.user.role === "STUDENT"
+        ? getStoredStudentBalanceProjection()
+        : null,
+    );
   const [ledgerEntries, setLedgerEntries] = useState<TxnItemProps[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
@@ -190,9 +199,28 @@ export default function HomeScreen(): React.ReactElement {
   const user = state.status === "authed" ? state.user : null;
   const jwtFresh = state.status === "authed" ? state.jwtFresh : false;
 
+  useEffect(() => {
+    if (!user || user.role !== "STUDENT" || !studentBalanceProjection) {
+      return;
+    }
+
+    logger.debug("dashboard_balance_rendered", {
+      userId: user.id,
+      serverConfirmedBalanceKobo:
+        studentBalanceProjection.serverConfirmedBalanceKobo,
+      pendingOutgoingKobo: studentBalanceProjection.pendingOutgoingKobo,
+      availableBalanceKobo: studentBalanceProjection.availableBalanceKobo,
+      pendingOutgoingCount: studentBalanceProjection.pendingOutgoingCount,
+      timestamp: new Date().toISOString(),
+    });
+  }, [studentBalanceProjection, user]);
+
   useFocusEffect(
     useCallback(() => {
       if (!user) return;
+      if (user.role === "STUDENT") {
+        setStudentBalanceProjection(getStoredStudentBalanceProjection());
+      }
       void refreshData();
       if (user.role === "MERCHANT") {
         const pending = listPendingByStatus(
@@ -227,16 +255,24 @@ export default function HomeScreen(): React.ReactElement {
   );
 
   async function refreshData(): Promise<void> {
-    try {
-      const fresh = await fetchMe();
-      setBalanceKobo(Number(fresh.verifiedBalanceKobo));
-      setLocalState("verified_balance_kobo", fresh.verifiedBalanceKobo);
-      setLocalState("last_sync_at", new Date().toISOString());
-    } catch (err) {
-      logger.info("Balance refresh failed (offline?)", err);
+    if (user?.role === "STUDENT") {
+      try {
+        const projection = await getStudentBalanceProjection();
+        setStudentBalanceProjection(projection);
+      } catch (err) {
+        logger.info("Student balance projection refresh failed", err);
+      }
+    } else {
+      try {
+        const fresh = await fetchMe();
+        setBalanceKobo(Number(fresh.verifiedBalanceKobo));
+        setLocalState("verified_balance_kobo", fresh.verifiedBalanceKobo);
+        setLocalState("last_sync_at", new Date().toISOString());
+      } catch (err) {
+        logger.info("Balance refresh failed (offline?)", err);
+      }
     }
     try {
-      await syncOutgoingPendingFromServerLedger();
       const res = await fetchServerLedger(undefined, 10);
       setLedgerEntries(res.entries.map(mapLedgerEntry));
     } catch (err) {
@@ -289,6 +325,18 @@ export default function HomeScreen(): React.ReactElement {
   const firstName = email.split("@")[0]?.split(".")[0] ?? "there";
   const capName = firstName.charAt(0).toUpperCase() + firstName.slice(1);
   const isNewUser = ledgerEntries.length === 0;
+  const availableBalanceKobo =
+    studentBalanceProjection?.availableBalanceKobo ??
+    Number(user.verifiedBalanceKobo);
+  const pendingOutgoingKobo = studentBalanceProjection?.pendingOutgoingKobo ?? 0;
+  const pendingOutgoingCount =
+    studentBalanceProjection?.pendingOutgoingCount ?? 0;
+  const studentBalanceStatusText =
+    studentBalanceProjection?.source === "server"
+      ? "Updated just now"
+      : studentBalanceProjection?.lastSyncedAt
+        ? "Using last synced balance"
+        : "Last known available balance";
 
   const refreshControl = (
     <RefreshControl
@@ -401,13 +449,19 @@ export default function HomeScreen(): React.ReactElement {
             </View>
             <View style={styles.balanceHeader}>
               <View>
-                <Text style={[styles.balanceLabel, { color: t.textSec }]}>Total Balance</Text>
+                <Text style={[styles.balanceLabel, { color: t.textSec }]}>Available Balance</Text>
                 <Text style={[styles.balanceAmount, { color: t.text }]}>
-                  {formatNaira(balanceKobo)}
+                  {formatNaira(availableBalanceKobo)}
                 </Text>
                 <Text style={[styles.balanceUpdated, { color: t.textMut }]}>
-                  {jwtFresh ? "✓ Updated just now" : "Last known balance"}
+                  {studentBalanceStatusText}
                 </Text>
+                {pendingOutgoingKobo > 0 ? (
+                  <Text style={[styles.balancePendingSummary, { color: t.textSec }]}>
+                    {formatNaira(pendingOutgoingKobo)} pending offline payment
+                    {pendingOutgoingCount === 1 ? "" : "s"}
+                  </Text>
+                ) : null}
               </View>
               <View
                 style={[
@@ -780,6 +834,11 @@ const styles = StyleSheet.create({
     fontFamily: fonts.regular,
     fontSize: fontSizes.sm,
     marginTop: spacing.xs,
+  },
+  balancePendingSummary: {
+    fontFamily: fonts.medium,
+    fontSize: fontSizes.sm,
+    marginTop: spacing.sm,
   },
   connectDot: {
     width: 10,
