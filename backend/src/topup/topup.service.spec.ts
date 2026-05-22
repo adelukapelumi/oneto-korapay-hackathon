@@ -72,6 +72,18 @@ describe('TopupService', () => {
     };
   }
 
+  function mockSuccessfulVerification(
+    overrides?: Partial<{ reference: string; status: string; amount: string; amountPaid: string; currency: string }>,
+  ) {
+    mockKorapay.verifyTransaction.mockResolvedValue({
+      status: overrides?.status ?? 'success',
+      reference: overrides?.reference ?? 'top_123',
+      amount: overrides?.amount ?? '500.00',
+      amountPaid: overrides?.amountPaid ?? '500.00',
+      currency: overrides?.currency ?? 'NGN',
+    });
+  }
+
   function mockHappyPathUsers(balanceKobo: bigint = BigInt(0)) {
     mockPrisma.user.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) => {
       if (where.id === 'u_123') {
@@ -466,15 +478,16 @@ describe('TopupService', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
-    it('credits a pending top-up directly from a valid charge.success webhook', async () => {
+    it('calls active Korapay verification before crediting a valid charge.success webhook', async () => {
       mockKorapay.verifyWebhookSignature.mockReturnValue(true);
       mockPrisma.paymentTopup.findUnique.mockResolvedValue(buildPendingTopup());
+      mockSuccessfulVerification();
       mockHappyPathUsers();
 
       const result = await service.handleWebhook(buildSuccessfulPayload(), 'good-sig');
 
       expect(result).toEqual({ success: true });
-      expect(mockKorapay.verifyTransaction).not.toHaveBeenCalled();
+      expect(mockKorapay.verifyTransaction).toHaveBeenCalledWith('top_123');
       expect(mockPrisma.paymentTopup.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { reference: 'top_123' },
@@ -516,35 +529,116 @@ describe('TopupService', () => {
       );
     });
 
-    it('does not let Korapay verification not_found block a valid signed success webhook', async () => {
+    it('keeps a signed success webhook pending when active verification is not successful yet', async () => {
       mockKorapay.verifyWebhookSignature.mockReturnValue(true);
       mockKorapay.verifyTransaction.mockResolvedValue({
         status: 'not_found',
       });
       mockPrisma.paymentTopup.findUnique.mockResolvedValue(buildPendingTopup());
-      mockHappyPathUsers();
 
       const result = await service.handleWebhook(buildSuccessfulPayload(), 'good-sig');
 
       expect(result).toEqual({ success: true });
-      expect(mockKorapay.verifyTransaction).not.toHaveBeenCalled();
+      expect(mockKorapay.verifyTransaction).toHaveBeenCalledWith('top_123');
       expect(mockPrisma.paymentTopup.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { reference: 'top_123' },
-          data: expect.objectContaining({ status: 'SUCCESS' }),
+          data: expect.objectContaining({
+            korapayResponse: expect.objectContaining({
+              source: 'webhook',
+              verification: expect.objectContaining({
+                status: 'not_found',
+              }),
+            }),
+          }),
         }),
       );
-      expect(mockPrisma.user.update).toHaveBeenCalledWith(
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
+      expect(mockPrisma.ledgerEntry.create).not.toHaveBeenCalled();
+    });
+
+    it('does not credit when a signed success webhook active verification is failed', async () => {
+      mockKorapay.verifyWebhookSignature.mockReturnValue(true);
+      mockKorapay.verifyTransaction.mockResolvedValue({
+        status: 'failed',
+        reference: 'top_123',
+        amount: '500.00',
+      });
+      mockPrisma.paymentTopup.findUnique.mockResolvedValue(buildPendingTopup());
+
+      const result = await service.handleWebhook(buildSuccessfulPayload(), 'good-sig');
+
+      expect(result).toEqual({ success: true });
+      expect(mockPrisma.paymentTopup.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: 'u_123' },
-          data: { verifiedBalanceKobo: { increment: BigInt(50_000) } },
+          where: { reference: 'top_123' },
+          data: expect.objectContaining({ status: 'FAILED' }),
         }),
       );
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
+      expect(mockPrisma.ledgerEntry.create).not.toHaveBeenCalled();
+    });
+
+    it('fails closed when signed success webhook active verification amount mismatches', async () => {
+      mockKorapay.verifyWebhookSignature.mockReturnValue(true);
+      mockKorapay.verifyTransaction.mockResolvedValue({
+        status: 'success',
+        reference: 'top_123',
+        amount: '600.00',
+        amountPaid: '600.00',
+        currency: 'NGN',
+      });
+      mockPrisma.paymentTopup.findUnique.mockResolvedValue(buildPendingTopup());
+
+      const result = await service.handleWebhook(buildSuccessfulPayload(), 'good-sig');
+
+      expect(result).toEqual({ success: true });
+      expect(mockPrisma.paymentTopup.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { reference: 'top_123' },
+          data: expect.objectContaining({
+            status: 'FAILED',
+            korapayResponse: expect.objectContaining({
+              source: 'webhook',
+              internal_failure: 'amount_mismatch',
+            }),
+          }),
+        }),
+      );
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
+      expect(mockPrisma.ledgerEntry.create).not.toHaveBeenCalled();
+    });
+
+    it('keeps the top-up pending when signed success webhook active verification throws', async () => {
+      mockKorapay.verifyWebhookSignature.mockReturnValue(true);
+      mockKorapay.verifyTransaction.mockRejectedValue(new InternalServerErrorException('gateway timeout'));
+      mockPrisma.paymentTopup.findUnique.mockResolvedValue(buildPendingTopup());
+
+      const result = await service.handleWebhook(buildSuccessfulPayload(), 'good-sig');
+
+      expect(result).toEqual({ success: true });
+      expect(mockPrisma.paymentTopup.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { reference: 'top_123' },
+          data: expect.objectContaining({
+            korapayResponse: expect.objectContaining({
+              source: 'webhook',
+              verification: expect.objectContaining({
+                status: 'verification_error',
+              }),
+            }),
+          }),
+        }),
+      );
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
+      expect(mockPrisma.ledgerEntry.create).not.toHaveBeenCalled();
     });
 
     it('uses payment_reference when reference is absent', async () => {
       mockKorapay.verifyWebhookSignature.mockReturnValue(true);
       mockPrisma.paymentTopup.findUnique.mockResolvedValue(buildPendingTopup());
+      mockSuccessfulVerification();
       mockHappyPathUsers();
 
       const result = await service.handleWebhook(
@@ -566,6 +660,7 @@ describe('TopupService', () => {
           where: { reference: 'top_123' },
         }),
       );
+      expect(mockKorapay.verifyTransaction).toHaveBeenCalledWith('top_123');
       expect(mockPrisma.user.update).toHaveBeenCalled();
     });
 
@@ -602,6 +697,7 @@ describe('TopupService', () => {
       let topup = buildPendingTopup();
       let userBalanceKobo = BigInt(0);
       let operatingBalanceKobo = BigInt(0);
+      mockSuccessfulVerification();
 
       mockPrisma.paymentTopup.findUnique.mockImplementation(async () => topup);
       mockPrisma.paymentTopup.update.mockImplementation(
@@ -704,6 +800,7 @@ describe('TopupService', () => {
     it('returns success idempotently when the transaction hits the unique constraint race path', async () => {
       mockKorapay.verifyWebhookSignature.mockReturnValue(true);
       mockPrisma.paymentTopup.findUnique.mockResolvedValue(buildPendingTopup());
+      mockSuccessfulVerification();
       mockHappyPathUsers();
 
       const p2002Error = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
@@ -746,6 +843,7 @@ describe('TopupService', () => {
     it('marks the top-up failed when the balance cap would be exceeded', async () => {
       mockKorapay.verifyWebhookSignature.mockReturnValue(true);
       mockPrisma.paymentTopup.findUnique.mockResolvedValue(buildPendingTopup());
+      mockSuccessfulVerification();
       mockPrisma.user.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) => {
         if (where.id === 'u_123') {
           return {
@@ -780,6 +878,7 @@ describe('TopupService', () => {
     it('throws 500 on internal transaction failures so real processing errors still retry', async () => {
       mockKorapay.verifyWebhookSignature.mockReturnValue(true);
       mockPrisma.paymentTopup.findUnique.mockResolvedValue(buildPendingTopup());
+      mockSuccessfulVerification();
       mockHappyPathUsers();
       mockPrisma.$transaction.mockRejectedValue(new Error('DB crash'));
 
