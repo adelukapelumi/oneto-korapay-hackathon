@@ -9,12 +9,13 @@ import {
   hasPendingRecoveryKeypair,
   unlockKeypairWithPin,
   wipeKeypair,
+  wipePendingRecoveryKeypair,
 } from "../crypto/pin-derive";
 import { logger } from "../lib/logger";
 import { clearToken, getToken, setToken } from "./token-store";
 import { isJwtExpired } from "./jwt-decode";
 import { AuthContext, type AppState, type AuthState } from "./auth-state";
-import { initDb } from "../ledger/db";
+import { initDb, wipeLocalTestingData } from "../ledger/db";
 import {
   isUserNotFoundError,
   resetLocalAuthAfterMissingUser,
@@ -25,6 +26,10 @@ import {
   persistMeProfile,
 } from "./profile-cache";
 import { toLockedOrUnauthed, unlockLockedState } from "./auth-transitions";
+import {
+  resetLocalAppForTesting as resetLocalAppStorageForTesting,
+  wipeLocalPaymentKeyOnlyForTesting as wipeLocalPaymentKeyStorageOnlyForTesting,
+} from "./local-test-reset";
 
 interface ProviderProps {
   readonly children: React.ReactNode;
@@ -110,6 +115,31 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
       setState({ status: "unauthed" });
     }
   }, [wipeInMemoryKey]);
+
+  const wipeLocalPaymentKeyOnlyForTesting = useCallback(async () => {
+    await wipeLocalPaymentKeyStorageOnlyForTesting();
+    wipeInMemoryKey();
+    if (!isMounted.current) return;
+    setState((prev) => {
+      if (prev.status !== "authed") {
+        return prev;
+      }
+      return { status: "onboarding", user: prev.user };
+    });
+  }, [wipeInMemoryKey]);
+
+  const resetLocalAppForTesting = useCallback(async () => {
+    await resetLocalAppStorageForTesting({
+      clearTokenFn: clearToken,
+      wipeActiveKeypairFn: wipeKeypair,
+      wipePendingRecoveryKeypairFn: wipePendingRecoveryKeypair,
+      wipeSqliteLocalDataFn: wipeLocalTestingData,
+      wipeInMemoryKeyFn: wipeInMemoryKey,
+      clearInMemoryPendingRecoveryKeypairFn: clearPendingRecoveryKeypair,
+    });
+    if (!isMounted.current) return;
+    setState({ status: "unauthed" });
+  }, [clearPendingRecoveryKeypair, wipeInMemoryKey]);
 
   const signIn = useCallback(
     async (token: string, nextUser: Me) => {
@@ -530,6 +560,8 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
       unlock,
       lock,
       signOut,
+      wipeLocalPaymentKeyOnlyForTesting,
+      resetLocalAppForTesting,
       hydrateProfile,
       reauthenticate,
       getDecryptedPrivateKey,
@@ -544,6 +576,8 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
       unlock,
       lock,
       signOut,
+      wipeLocalPaymentKeyOnlyForTesting,
+      resetLocalAppForTesting,
       hydrateProfile,
       reauthenticate,
       getDecryptedPrivateKey,

@@ -3,9 +3,6 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-nati
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { useAuth } from "../../src/auth/auth-state";
-import { clearToken } from "../../src/auth/token-store";
-import { wipeKeypair } from "../../src/crypto/keypair-store";
-import { wipeLocalTestingData } from "../../src/ledger/db";
 import { useThemeMode } from "../../src/theme/theme-provider";
 import { BackButton } from "../../components/BackButton";
 import {
@@ -56,9 +53,14 @@ function SettingsRow({
 
 export default function SettingsScreen(): React.ReactElement {
   const router = useRouter();
-  const { state } = useAuth();
+  const {
+    state,
+    wipeLocalPaymentKeyOnlyForTesting,
+    resetLocalAppForTesting,
+  } = useAuth();
   const { mode, toggleTheme } = useThemeMode();
-  const [isWipingTestingData, setIsWipingTestingData] = useState(false);
+  const [isWipingPaymentKey, setIsWipingPaymentKey] = useState(false);
+  const [isResettingLocalApp, setIsResettingLocalApp] = useState(false);
   const t = getTheme(mode);
 
   if (state.status !== "authed") {
@@ -71,44 +73,88 @@ export default function SettingsScreen(): React.ReactElement {
   const isStudent = user.role === "STUDENT";
   const statusDisplay = user.status === "ACTIVE" ? "✓ Active" : user.status;
 
-  async function performTestingWipe(): Promise<void> {
-    if (isWipingTestingData) {
+  async function performPaymentKeyWipe(): Promise<void> {
+    if (isWipingPaymentKey || isResettingLocalApp) {
       return;
     }
 
-    setIsWipingTestingData(true);
+    setIsWipingPaymentKey(true);
     try {
-      await Promise.all([wipeKeypair(), clearToken()]);
-      wipeLocalTestingData();
+      await wipeLocalPaymentKeyOnlyForTesting();
       Alert.alert(
-        "Testing data wiped",
-        "Local testing data wiped. Restart the app before testing again.",
+        "Payment key wiped",
+        "This phone's local payment key was wiped. The account is still linked on the server, so setup may require recovery.",
       );
+      router.replace("/");
     } catch {
       Alert.alert(
         "Wipe failed",
-        "Couldn't wipe local testing data. Close and reopen the app, then try again.",
+        "Couldn't wipe this phone's payment key. Close and reopen the app, then try again.",
       );
     } finally {
-      setIsWipingTestingData(false);
+      setIsWipingPaymentKey(false);
     }
   }
 
-  function confirmTestingWipe(): void {
-    if (isWipingTestingData) {
+  function confirmPaymentKeyWipe(): void {
+    if (isWipingPaymentKey || isResettingLocalApp) {
       return;
     }
 
     Alert.alert(
       "TEST ONLY",
-      "This is for testing only. It wipes this phone’s local private key and local ledger cache. Backend balances and server records are not deleted.",
+      "This simulates losing this phone's payment key. It does not unlink the account on the server. Signing in or setting up again may require recovery.",
       [
         { text: "Cancel", style: "cancel" },
         {
-          text: "Wipe local data",
+          text: "Wipe payment key",
           style: "destructive",
           onPress: () => {
-            void performTestingWipe();
+            void performPaymentKeyWipe();
+          },
+        },
+      ],
+    );
+  }
+
+  async function performFullLocalReset(): Promise<void> {
+    if (isWipingPaymentKey || isResettingLocalApp) {
+      return;
+    }
+
+    setIsResettingLocalApp(true);
+    try {
+      await resetLocalAppForTesting();
+      Alert.alert(
+        "Local app reset",
+        "This device was reset locally. Server account links, balances, and ledger rows were not changed.",
+      );
+      router.replace("/");
+    } catch {
+      Alert.alert(
+        "Reset failed",
+        "Couldn't reset this device's local app state. Close and reopen the app, then try again.",
+      );
+    } finally {
+      setIsResettingLocalApp(false);
+    }
+  }
+
+  function confirmFullLocalReset(): void {
+    if (isWipingPaymentKey || isResettingLocalApp) {
+      return;
+    }
+
+    Alert.alert(
+      "TESTING ONLY: reset this app",
+      "This clears the token, local keys, pending recovery key, PIN attempt state, cached profile, local ledger, and merchant cache on this phone only. It does not call the backend.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Reset this app",
+          style: "destructive",
+          onPress: () => {
+            void performFullLocalReset();
           },
         },
       ],
@@ -184,31 +230,58 @@ export default function SettingsScreen(): React.ReactElement {
           </View>
         </View>
 
-        {/* TODO(TESTING_ONLY_REMOVE_BEFORE_USERS): Remove local key/ledger wipe button before production users. */}
+        {/* TODO(TESTING_ONLY_REMOVE_BEFORE_USERS): Remove local reset buttons before production users. */}
         <Pressable
           style={({ pressed }) => [
             styles.testingResetCard,
             { borderColor: colors.error },
             t.shadow,
-            pressed && !isWipingTestingData && styles.testingResetCardPressed,
-            isWipingTestingData && styles.testingResetCardDisabled,
+            pressed && !isWipingPaymentKey && !isResettingLocalApp && styles.testingResetCardPressed,
+            (isWipingPaymentKey || isResettingLocalApp) && styles.testingResetCardDisabled,
           ]}
-          onPress={confirmTestingWipe}
-          disabled={isWipingTestingData}
+          onPress={confirmPaymentKeyWipe}
+          disabled={isWipingPaymentKey || isResettingLocalApp}
           accessibilityRole="button"
         >
           <Text style={styles.testingResetEyebrow}>TESTING ONLY</Text>
           <Text style={styles.testingResetTitle}>
-            TEST ONLY: Wipe local keys and ledger
+            Wipe payment key only
           </Text>
           <Text style={styles.testingResetBody}>
-            Clears this phone&apos;s stored keypair, JWT, pending ledger cache, and
-            merchant cache. Backend balances and server records stay unchanged.
+            Simulates losing this phone's payment key. It does not unlink the
+            account on the server, and signing in again may require recovery.
           </Text>
-          {isWipingTestingData ? (
-            <Text style={styles.testingResetAction}>Wiping local data...</Text>
+          {isWipingPaymentKey ? (
+            <Text style={styles.testingResetAction}>Wiping payment key...</Text>
           ) : (
-            <Text style={styles.testingResetAction}>Tap to wipe this device only</Text>
+            <Text style={styles.testingResetAction}>Tap to wipe only the local key</Text>
+          )}
+        </Pressable>
+
+        <Pressable
+          style={({ pressed }) => [
+            styles.testingResetCard,
+            { borderColor: colors.error },
+            t.shadow,
+            pressed && !isWipingPaymentKey && !isResettingLocalApp && styles.testingResetCardPressed,
+            (isWipingPaymentKey || isResettingLocalApp) && styles.testingResetCardDisabled,
+          ]}
+          onPress={confirmFullLocalReset}
+          disabled={isWipingPaymentKey || isResettingLocalApp}
+          accessibilityRole="button"
+        >
+          <Text style={styles.testingResetEyebrow}>TESTING ONLY</Text>
+          <Text style={styles.testingResetTitle}>
+            Testing only: reset this app
+          </Text>
+          <Text style={styles.testingResetBody}>
+            Clears this phone's token, local keys, PIN attempts, cached profile,
+            pending ledger, and merchant cache. Backend records stay unchanged.
+          </Text>
+          {isResettingLocalApp ? (
+            <Text style={styles.testingResetAction}>Resetting this app...</Text>
+          ) : (
+            <Text style={styles.testingResetAction}>Tap to clear local device state</Text>
           )}
         </Pressable>
 

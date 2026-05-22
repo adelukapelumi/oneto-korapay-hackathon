@@ -48,6 +48,10 @@ export interface AuthState {
   lock: () => void;
   /** Sign out: drop token + lock keypair (keypair stays on disk). */
   signOut: () => Promise<void>;
+  /** Testing only: wipe the active local payment key without touching token/profile/ledger. */
+  wipeLocalPaymentKeyOnlyForTesting: () => Promise<void>;
+  /** Testing only: clear local device state and return to unauthenticated flow. */
+  resetLocalAppForTesting: () => Promise<void>;
   /** Stores a fresh /me profile and updates whichever auth state currently owns it. */
   hydrateProfile: (user: Me) => void;
   /**
