@@ -12,7 +12,11 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { useAuth } from "../../src/auth/auth-state";
 import { fetchLedger, LedgerEntry } from "../../src/api/ledger";
-import { mergeTransactions, DisplayTransaction } from "../../src/payment/transaction-list";
+import {
+  buildTransactionDisplayRows,
+  getCachedMerchantLabelsByUserId,
+  type TransactionDisplayRow,
+} from "../../src/payment/transaction-list";
 import { BackButton } from "../../components/BackButton";
 import { useThemeMode } from "../../src/theme/theme-provider";
 import {
@@ -111,27 +115,14 @@ export default function HistoryScreen(): React.ReactElement {
     }
   }, [jwtFresh]);
 
-  const displayTransactions = mergeTransactions(serverEntries);
+  const displayTransactions = buildTransactionDisplayRows(serverEntries, {
+    merchantLabelsByUserId: getCachedMerchantLabelsByUserId(),
+  });
 
-  const renderItem = ({ item }: { item: DisplayTransaction }) => {
-    const isExpiredRelease =
-      item.source === "local" &&
-      item.direction === "outgoing" &&
-      item.terminalReason === "expired_unclaimed";
-    const isCredit =
-      isExpiredRelease ||
-      (item.source === "server" && item.type === "CREDIT") ||
-      (item.source === "local" && item.direction === "incoming");
-
+  const renderItem = ({ item }: { item: TransactionDisplayRow }) => {
+    const isCredit = item.amountDirection === "credit";
     const txnType: TxnType = isCredit ? "credit" : "debit";
     const sign = isCredit ? "+" : "−";
-
-    const label =
-      item.source === "server"
-        ? item.description
-        : item.terminalReason === "expired_unclaimed"
-          ? "Payment expired unclaimed"
-        : item.recipientLabel || "Offline Transaction";
 
     const dateStr = new Date(item.createdAt).toLocaleString(undefined, {
       month: "short",
@@ -140,30 +131,27 @@ export default function HistoryScreen(): React.ReactElement {
       minute: "2-digit",
     });
 
-    let statusText = "";
-    let statusColor: string = t.textMut;
-    if (item.status === "confirmed" || item.status === "reconciled") {
-      statusText = "✓";
-      statusColor = colors.primary;
-    } else if (item.status === "pending_reconciliation") {
-      statusText = "⏳ pending";
-      statusColor = colors.secondary;
-    } else if (item.status === "rejected") {
-      statusText = "✗ rejected";
-      statusColor = colors.error;
-    }
-
-    if (isExpiredRelease) {
-      statusText = "Released";
-      statusColor = colors.primary;
-    }
+    const statusIcon =
+      item.statusIcon === "hourglass"
+        ? "⏳"
+        : item.statusIcon === "x"
+          ? "✗"
+          : item.statusIcon === "released"
+            ? "↺"
+            : "✓";
+    const statusColor =
+      item.statusTone === "pending"
+        ? colors.secondary
+        : item.statusTone === "rejected"
+          ? colors.error
+          : colors.primary;
 
     return (
       <View style={[styles.txnItem, { borderBottomColor: t.border + "40" }]}>
         <TxnIcon type={txnType} theme={t} />
         <View style={styles.txnBody}>
           <Text style={[styles.txnLabel, { color: t.text }]} numberOfLines={1}>
-            {label}
+            {item.title}
           </Text>
           <Text style={[styles.txnTime, { color: t.textSec }]}>{dateStr}</Text>
         </View>
@@ -174,10 +162,10 @@ export default function HistoryScreen(): React.ReactElement {
               { color: isCredit ? colors.primary : colors.error },
             ]}
           >
-            {sign}{formatNaira(Number(item.amountKobo))}
+            {sign}{formatNaira(item.amountKobo)}
           </Text>
           <Text style={[styles.txnStatus, { color: statusColor }]}>
-            {statusText}
+            {statusIcon} {item.statusLabel}
           </Text>
         </View>
       </View>

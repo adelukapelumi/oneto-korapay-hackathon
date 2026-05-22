@@ -13,7 +13,7 @@ import { useRouter, useFocusEffect } from "expo-router";
 import { useAuth } from "../../src/auth/auth-state";
 import { fetchMe } from "../../src/api/auth";
 import { NetworkError } from "../../src/api/errors";
-import { fetchLedger as fetchServerLedger } from "../../src/api/ledger";
+import { fetchLedger as fetchServerLedger, type LedgerEntry } from "../../src/api/ledger";
 import { listPendingByStatus, setLocalState } from "../../src/ledger/db";
 import { syncPendingEnvelopes } from "../../src/api/reconcile";
 import {
@@ -37,6 +37,14 @@ import {
   getMerchantSyncButtonState,
   shouldRequestMerchantAutoSync,
 } from "../../src/payment/merchant-sync-state";
+import {
+  buildTransactionDisplayRows,
+  getCachedMerchantLabelsByUserId,
+  type TransactionDisplayRow,
+  type TransactionDisplayType,
+  type TransactionStatusIcon,
+  type TransactionStatusTone,
+} from "../../src/payment/transaction-list";
 import { logger } from "../../src/lib/logger";
 import { useThemeMode } from "../../src/theme/theme-provider";
 import {
@@ -61,54 +69,50 @@ function formatNaira(kobo: number): string {
   );
 }
 
-type TxnType = "sent" | "received" | "topup" | "cashout";
-
-interface TxnItemProps {
-  type: TxnType;
-  label: string;
-  amountKobo: number;
-  time: string;
-  status: "pending" | "confirmed";
-}
-
-interface TxnItemInternalProps extends TxnItemProps {
+interface TxnItemInternalProps {
+  tx: TransactionDisplayRow;
   t: ReturnType<typeof getTheme>;
 }
 
-function TxnItem({
-  type,
-  label,
-  amountKobo,
-  time,
-  status,
-  t,
-}: TxnItemInternalProps): React.ReactElement {
-  const icons: Record<TxnType, string> = {
+function TxnItem({ tx, t }: TxnItemInternalProps): React.ReactElement {
+  const icons: Record<TransactionDisplayType, string> = {
     sent: "↑",
     received: "↓",
     topup: "↓",
     cashout: "↑",
   };
-  const iconColors: Record<TxnType, string> = {
+  const iconColors: Record<TransactionDisplayType, string> = {
     sent: colors.error,
     received: colors.primary,
     topup: colors.primary,
     cashout: colors.secondary,
   };
-  const isDebit = type === "sent" || type === "cashout";
+  const statusIcons: Record<TransactionStatusIcon, string> = {
+    hourglass: "⏳",
+    check: "✓",
+    x: "✗",
+    released: "↺",
+  };
+  const statusColors: Record<TransactionStatusTone, string> = {
+    pending: colors.secondary,
+    confirmed: colors.primary,
+    rejected: colors.error,
+    released: colors.primary,
+  };
+  const isDebit = tx.amountDirection === "debit";
 
   return (
     <View style={styles.txnItem}>
       <View
-        style={[styles.txnIcon, { backgroundColor: iconColors[type] + "18", borderColor: t.border }]}
+        style={[styles.txnIcon, { backgroundColor: iconColors[tx.displayType] + "18", borderColor: t.border }]}
       >
-        <Text style={[styles.txnIconText, { color: iconColors[type] }]}>
-          {icons[type]}
+        <Text style={[styles.txnIconText, { color: iconColors[tx.displayType] }]}>
+          {icons[tx.displayType]}
         </Text>
       </View>
       <View style={styles.txnBody}>
-        <Text style={[styles.txnLabel, { color: t.text }]}>{label}</Text>
-        <Text style={[styles.txnTime, { color: t.textSec }]}>{time}</Text>
+        <Text style={[styles.txnLabel, { color: t.text }]}>{tx.title}</Text>
+        <Text style={[styles.txnTime, { color: t.textSec }]}>{timeAgo(tx.createdAt)}</Text>
       </View>
       <View style={styles.txnRight}>
         <Text
@@ -118,53 +122,14 @@ function TxnItem({
           ]}
         >
           {isDebit ? "−" : "+"}
-          {formatNaira(amountKobo)}
+          {formatNaira(tx.amountKobo)}
         </Text>
-        <Text style={[styles.txnStatus, { color: t.textMut }]}>
-          {status === "pending" ? "⏳ pending" : "✓"}
+        <Text style={[styles.txnStatus, { color: statusColors[tx.statusTone] }]}>
+          {statusIcons[tx.statusIcon]} {tx.statusLabel}
         </Text>
       </View>
     </View>
   );
-}
-
-interface RawLedgerEntry {
-  id: string;
-  type: "DEBIT" | "CREDIT";
-  amountKobo: string;
-  description: string;
-  createdAt: string;
-}
-
-function mapLedgerEntry(entry: RawLedgerEntry): TxnItemProps {
-  const isDebit = entry.type === "DEBIT";
-  const desc = entry.description ?? "";
-
-  let type: TxnType = isDebit ? "sent" : "topup";
-  let label = desc;
-  if (
-    desc.startsWith("Top-up") ||
-    desc.startsWith("TOPUP") ||
-    desc.includes("Korapay")
-  ) {
-    type = "topup";
-    label = "Top-up via Korapay";
-  } else if (desc.startsWith("Cashout") || desc.includes("cashout")) {
-    type = "cashout";
-    label = "Cashout";
-  } else if (isDebit) {
-    type = "sent";
-  } else {
-    type = "received";
-  }
-
-  return {
-    type,
-    label,
-    amountKobo: Number(entry.amountKobo),
-    time: timeAgo(entry.createdAt),
-    status: "confirmed",
-  };
 }
 
 function timeAgo(iso: string): string {
@@ -210,7 +175,7 @@ export default function HomeScreen(): React.ReactElement {
         ? getStoredStudentBalanceProjection()
         : null,
     );
-  const [ledgerEntries, setLedgerEntries] = useState<TxnItemProps[]>([]);
+  const [serverLedgerEntries, setServerLedgerEntries] = useState<LedgerEntry[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
@@ -296,7 +261,7 @@ export default function HomeScreen(): React.ReactElement {
     }
     try {
       const res = await fetchServerLedger(undefined, 10);
-      setLedgerEntries(res.entries.map(mapLedgerEntry));
+      setServerLedgerEntries(res.entries);
     } catch (err) {
       logger.info("Ledger fetch failed", err);
       if (err instanceof NetworkError) {
@@ -442,7 +407,13 @@ export default function HomeScreen(): React.ReactElement {
   const email = user.email ?? "";
   const firstName = email.split("@")[0]?.split(".")[0] ?? "there";
   const capName = firstName.charAt(0).toUpperCase() + firstName.slice(1);
-  const isNewUser = ledgerEntries.length === 0;
+  const dashboardTransactions = buildTransactionDisplayRows(serverLedgerEntries, {
+    localLimit: 5,
+    limit: 5,
+    merchantLabelsByUserId: getCachedMerchantLabelsByUserId(),
+  });
+  const recentConfirmedPaymentCount = serverLedgerEntries.length;
+  const isNewUser = dashboardTransactions.length === 0;
   const availableBalanceKobo =
     studentBalanceProjection?.availableBalanceKobo ??
     Number(user.verifiedBalanceKobo);
@@ -491,8 +462,8 @@ export default function HomeScreen(): React.ReactElement {
         </Pressable>
       </View>
       <View style={[styles.activityCard, { backgroundColor: t.card, borderColor: t.border }, t.shadow]}>
-        {ledgerEntries.length > 0 ? (
-          ledgerEntries.map((tx, i) => <TxnItem key={i} {...tx} t={t} />)
+        {dashboardTransactions.length > 0 ? (
+          dashboardTransactions.map((tx) => <TxnItem key={tx.id} tx={tx} t={t} />)
         ) : (
           <View style={styles.emptyActivity}>
             <Text style={[styles.emptyIcon, { color: t.textMut }]}>₦</Text>
@@ -618,7 +589,7 @@ export default function HomeScreen(): React.ReactElement {
             <View style={styles.badgeRow}>
               <View style={styles.paymentsBadge}>
                 <Text style={styles.badgeText}>
-                  {ledgerEntries.length} PAYMENTS
+                  {dashboardTransactions.length} PAYMENTS
                 </Text>
               </View>
             </View>
@@ -659,13 +630,13 @@ export default function HomeScreen(): React.ReactElement {
 
           {activitySection}
 
-          {ledgerEntries.length >= 10 && ledgerEntries.length < 25 && (
+          {recentConfirmedPaymentCount >= 10 && recentConfirmedPaymentCount < 25 && (
             <View style={[styles.milestoneCard, t.shadow]}>
               <Text style={styles.milestoneIcon}>🎯</Text>
               <View style={styles.milestoneBody}>
                 <Text style={styles.milestoneLabel}>MILESTONE</Text>
                 <Text style={[styles.milestoneText, { color: t.text }]}>
-                  {ledgerEntries.length} payments! You're a regular.
+                  {recentConfirmedPaymentCount} payments! You're a regular.
                 </Text>
               </View>
             </View>
