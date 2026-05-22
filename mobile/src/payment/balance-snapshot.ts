@@ -1,4 +1,5 @@
 import { fetchMe } from "../api/auth";
+import type { Me } from "../api/auth";
 import {
   getLocalState,
   listPendingByStatus,
@@ -6,6 +7,7 @@ import {
   sumPendingOutgoingKobo,
 } from "../ledger/db";
 import { logger } from "../lib/logger";
+import { persistMeProfile } from "../auth/profile-cache";
 import { syncOutgoingPendingFromServerLedger } from "./sync-outgoing";
 
 export interface StudentBalanceProjection {
@@ -87,7 +89,9 @@ export function getStoredStudentBalanceProjection(): StudentBalanceProjection | 
   );
 }
 
-export async function getStudentBalanceProjection(): Promise<StudentBalanceProjection> {
+export async function getStudentBalanceProjection(
+  onFreshProfile?: (me: Me) => void,
+): Promise<StudentBalanceProjection> {
   let serverConfirmedBalanceKobo: number | null = null;
   let source: "server" | "local" = "local";
   let lastSyncedAt = getLocalState("last_sync_at");
@@ -96,6 +100,8 @@ export async function getStudentBalanceProjection(): Promise<StudentBalanceProje
 
   try {
     const fresh = await fetchMe();
+    persistMeProfile(fresh);
+    onFreshProfile?.(fresh);
     serverConfirmedBalanceKobo = Number(fresh.verifiedBalanceKobo);
     assertValidKobo(serverConfirmedBalanceKobo, "server balance");
 

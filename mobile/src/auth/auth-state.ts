@@ -22,7 +22,12 @@ export type AppState =
   | { readonly status: "unauthed" }
   | { readonly status: "onboarding"; readonly user: Me }
   | { readonly status: "recovery_pending"; readonly user: Me }
-  | { readonly status: "locked"; readonly user: Me; readonly hasJwt: boolean }
+  | {
+      readonly status: "locked";
+      readonly user: Me;
+      readonly hasJwt: boolean;
+      readonly jwtFreshAfterUnlock?: boolean;
+    }
   | { readonly status: "authed"; readonly user: Me; readonly jwtFresh: boolean };
 
 export interface AuthState {
@@ -43,6 +48,8 @@ export interface AuthState {
   lock: () => void;
   /** Sign out: drop token + lock keypair (keypair stays on disk). */
   signOut: () => Promise<void>;
+  /** Stores a fresh /me profile and updates whichever auth state currently owns it. */
+  hydrateProfile: (user: Me) => void;
   /**
    * Re-authenticate using the stored email. Sends an OTP to
    * state.user.email - no free-text email input is shown. Returns the

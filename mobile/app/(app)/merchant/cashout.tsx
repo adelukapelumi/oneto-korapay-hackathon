@@ -44,7 +44,7 @@ function getCashoutBlockMessage(reason: CashoutRequestBlockReason): string {
 
 export default function CashoutScreen(): React.ReactElement {
   const router = useRouter();
-  const { state } = useAuth();
+  const { state, hydrateProfile } = useAuth();
   const { mode } = useThemeMode();
   const t = getTheme(mode);
   const [loading, setLoading] = useState(false);
@@ -63,6 +63,7 @@ export default function CashoutScreen(): React.ReactElement {
 
     try {
       const fresh = await fetchMe();
+      hydrateProfile(fresh);
       const settledBalanceKobo = Number(fresh.verifiedBalanceKobo);
       const nextProjection = buildMerchantBalanceProjection({
         settledBalanceKobo,
