@@ -1,5 +1,6 @@
 import { syncPendingEnvelopes } from "../reconcile";
 import { apiClient } from "../client";
+import { NetworkError } from "../errors";
 import { listPendingByStatus, updateTransactionStatus } from "../../ledger/db";
 import { jest } from "@jest/globals";
 
@@ -80,13 +81,13 @@ describe("syncPendingEnvelopes", () => {
     }));
 
     (listPendingByStatus as jest.Mock).mockReturnValue(pending);
-    
-    // Fail on the first batch
-    (apiClient.post as jest.Mock<any>).mockRejectedValue(new Error("Network fail"));
+
+    // Fail on the first batch.
+    (apiClient.post as jest.Mock<any>).mockRejectedValue(new NetworkError());
 
     const result = await syncPendingEnvelopes();
 
-    expect(result).toEqual({ synced: 0, failed: 0 });
+    expect(result).toEqual({ synced: 0, failed: 0, networkUnavailable: true });
     expect(apiClient.post).toHaveBeenCalledTimes(1); // the first batch
     expect(updateTransactionStatus).not.toHaveBeenCalled();
   });
