@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { Screen } from "../../components/Screen";
+import { useAuth } from "../../src/auth/auth-state";
 import { getRecoveryStatus } from "../../src/api/recovery";
 import { NetworkError } from "../../src/api/errors";
 import { useThemeMode } from "../../src/theme/theme-provider";
@@ -22,12 +23,54 @@ type ExistingRequestState =
 
 export default function DeviceLinkedScreen(): React.ReactElement {
   const router = useRouter();
+  const { resetLocalAppForTesting } = useAuth();
   const { mode } = useThemeMode();
   const t = getTheme(mode);
   const [existingRequestState, setExistingRequestState] =
     useState<ExistingRequestState>({ kind: "checking" });
   const [showOldPhoneMessage, setShowOldPhoneMessage] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
+  const [isResettingLocalApp, setIsResettingLocalApp] = useState(false);
+
+  async function performFullLocalReset(): Promise<void> {
+    if (isResettingLocalApp) {
+      return;
+    }
+
+    setIsResettingLocalApp(true);
+    try {
+      await resetLocalAppForTesting();
+      router.replace("/(auth)/sign-in");
+    } catch {
+      Alert.alert(
+        "Reset failed",
+        "Couldn't reset this device's local app state. Close and reopen the app, then try again.",
+      );
+    } finally {
+      setIsResettingLocalApp(false);
+    }
+  }
+
+  function confirmFullLocalReset(): void {
+    if (isResettingLocalApp) {
+      return;
+    }
+
+    Alert.alert(
+      "TESTING ONLY: reset this app",
+      "Testing only. Clears local Expo/iPhone app data for this device. It does not reset the backend account.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Reset this app",
+          style: "destructive",
+          onPress: () => {
+            void performFullLocalReset();
+          },
+        },
+      ],
+    );
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -140,6 +183,30 @@ export default function DeviceLinkedScreen(): React.ReactElement {
             </Text>
           </View>
         ) : null}
+
+        <View style={[styles.testingResetCard, { backgroundColor: t.cardAlt, borderColor: colors.error }]}>
+          <Text style={styles.testingResetEyebrow}>TESTING ONLY</Text>
+          <Text style={[styles.testingResetTitle, { color: t.text }]}>
+            Testing only: reset this app
+          </Text>
+          <Text style={[styles.testingResetBody, { color: t.textSec }]}>
+            Testing only. Clears local Expo/iPhone app data for this device. It does not reset the backend account.
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            disabled={isResettingLocalApp}
+            onPress={confirmFullLocalReset}
+            style={({ pressed }) => [
+              styles.testingResetButton,
+              isResettingLocalApp && styles.buttonDisabled,
+              pressed && !isResettingLocalApp && styles.buttonPressed,
+            ]}
+          >
+            <Text style={styles.testingResetButtonText}>
+              {isResettingLocalApp ? "Resetting this app..." : "Testing only: reset this app"}
+            </Text>
+          </Pressable>
+        </View>
       </View>
     </Screen>
   );
@@ -249,6 +316,9 @@ const styles = StyleSheet.create({
     opacity: 0.9,
     transform: [{ translateY: 1 }],
   },
+  buttonDisabled: {
+    opacity: 0.7,
+  },
   buttonText: {
     fontFamily: fonts.bold,
     fontSize: fontSizes.button,
@@ -279,5 +349,39 @@ const styles = StyleSheet.create({
     color: colors.primary,
     fontFamily: fonts.bold,
     fontSize: fontSizes.body,
+  },
+  testingResetCard: {
+    borderWidth: borders.standard,
+    borderRadius: radii.lg,
+    padding: spacing.lg,
+    gap: spacing.sm,
+  },
+  testingResetEyebrow: {
+    fontFamily: fonts.pixel,
+    fontSize: fontSizes.sm,
+    color: colors.error,
+  },
+  testingResetTitle: {
+    fontFamily: fonts.bold,
+    fontSize: fontSizes.bodyLg,
+  },
+  testingResetBody: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.body,
+    lineHeight: 22,
+  },
+  testingResetButton: {
+    minHeight: 52,
+    borderRadius: radii.pill,
+    backgroundColor: colors.error,
+    justifyContent: "center",
+    paddingHorizontal: spacing.lg,
+    marginTop: spacing.xs,
+  },
+  testingResetButtonText: {
+    color: colors.primaryText,
+    fontFamily: fonts.bold,
+    fontSize: fontSizes.button,
+    textAlign: "center",
   },
 });

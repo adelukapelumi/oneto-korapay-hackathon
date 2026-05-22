@@ -134,6 +134,13 @@ function createMockDb() {
     if (s.startsWith("DELETE FROM LOCAL_STATE")) {
       ensureTable("local_state");
       const rows = tables.get("local_state")!;
+      if (s.includes("WHERE KEY = ?")) {
+        const key = params[0];
+        const before = rows.length;
+        const kept = rows.filter((r) => r["key"] !== key);
+        rows.splice(0, rows.length, ...kept);
+        return { changes: before - rows.length };
+      }
       const before = rows.length;
       rows.splice(0);
       return { changes: before };
@@ -295,6 +302,7 @@ import {
   listPendingTransactions,
   getLocalState,
   setLocalState,
+  deleteLocalState,
   listPendingByStatus,
   updateTransactionStatus,
   listCachedMerchants,
@@ -631,6 +639,16 @@ describe("getLocalState / setLocalState", () => {
     setLocalState("verified_balance_kobo", "100000");
     setLocalState("verified_balance_kobo", "200000");
     expect(getLocalState("verified_balance_kobo")).toBe("200000");
+  });
+
+  it("deletes one local state value without clearing the others", () => {
+    setLocalState("cached_me_profile_json", "{\"id\":\"u_0123456789abcdef\"}");
+    setLocalState("verified_balance_kobo", "100000");
+
+    deleteLocalState("cached_me_profile_json");
+
+    expect(getLocalState("cached_me_profile_json")).toBeNull();
+    expect(getLocalState("verified_balance_kobo")).toBe("100000");
   });
 });
 

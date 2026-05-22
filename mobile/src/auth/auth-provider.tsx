@@ -21,6 +21,7 @@ import {
   resetLocalAuthAfterMissingUser,
 } from "./bootstrap-recovery";
 import {
+  clearCachedMeProfile,
   isRealMeProfile,
   loadCachedMeProfile,
   persistMeProfile,
@@ -133,6 +134,7 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
       clearTokenFn: clearToken,
       wipeActiveKeypairFn: wipeKeypair,
       wipePendingRecoveryKeypairFn: wipePendingRecoveryKeypair,
+      clearCachedProfileFn: clearCachedMeProfile,
       wipeSqliteLocalDataFn: wipeLocalTestingData,
       wipeInMemoryKeyFn: wipeInMemoryKey,
       clearInMemoryPendingRecoveryKeypairFn: clearPendingRecoveryKeypair,

@@ -1,4 +1,5 @@
 import { clearToken } from "./token-store";
+import { clearCachedMeProfile } from "./profile-cache";
 import {
   wipeKeypair,
   wipePendingRecoveryKeypair,
@@ -13,6 +14,7 @@ export interface ResetLocalAppForTestingDeps {
   readonly clearTokenFn: () => Promise<void>;
   readonly wipeActiveKeypairFn: () => Promise<void>;
   readonly wipePendingRecoveryKeypairFn: () => Promise<void>;
+  readonly clearCachedProfileFn: () => void;
   readonly wipeSqliteLocalDataFn: () => void;
   readonly wipeInMemoryKeyFn?: () => void;
   readonly clearInMemoryPendingRecoveryKeypairFn?: () => void;
@@ -31,6 +33,7 @@ export async function resetLocalAppForTesting(
     clearTokenFn: clearToken,
     wipeActiveKeypairFn: wipeKeypair,
     wipePendingRecoveryKeypairFn: wipePendingRecoveryKeypair,
+    clearCachedProfileFn: clearCachedMeProfile,
     wipeSqliteLocalDataFn: wipeLocalTestingData,
   },
 ): Promise<void> {
@@ -44,5 +47,6 @@ export async function resetLocalAppForTesting(
 
   deps.wipeInMemoryKeyFn?.();
   deps.clearInMemoryPendingRecoveryKeypairFn?.();
+  deps.clearCachedProfileFn();
   deps.wipeSqliteLocalDataFn();
 }
