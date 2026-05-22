@@ -14,11 +14,17 @@ import { logger } from "../lib/logger";
 import { clearToken, getToken, setToken } from "./token-store";
 import { isJwtExpired } from "./jwt-decode";
 import { AuthContext, type AppState, type AuthState } from "./auth-state";
-import { initDb, setLocalState } from "../ledger/db";
+import { initDb } from "../ledger/db";
 import {
   isUserNotFoundError,
   resetLocalAuthAfterMissingUser,
 } from "./bootstrap-recovery";
+import {
+  isRealMeProfile,
+  loadCachedMeProfile,
+  persistMeProfile,
+} from "./profile-cache";
+import { toLockedOrUnauthed, unlockLockedState } from "./auth-transitions";
 
 interface ProviderProps {
   readonly children: React.ReactNode;
@@ -94,8 +100,11 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
           prev.status === "onboarding" ||
           prev.status === "recovery_pending"
             ? prev.user
-            : makePlaceholderMe();
-        return { status: "locked", user, hasJwt: false };
+            : null;
+        return toLockedOrUnauthed(user, {
+          hasJwt: false,
+          jwtFreshAfterUnlock: false,
+        });
       });
     } else {
       setState({ status: "unauthed" });
@@ -104,9 +113,11 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
 
   const signIn = useCallback(
     async (token: string, nextUser: Me) => {
+      if (!isRealMeProfile(nextUser)) {
+        throw new Error("Cannot sign in with an invalid user profile");
+      }
       await setToken(token);
-      setLocalState("verified_balance_kobo", nextUser.verifiedBalanceKobo);
-      setLocalState("last_sync_at", new Date().toISOString());
+      persistMeProfile(nextUser);
       if (!isMounted.current) return;
       const [keypairPresent, pendingRecoveryKeypairPresent] = await Promise.all(
         [hasKeypair(), hasPendingRecoveryKeypair()],
@@ -165,8 +176,12 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
     decryptedPrivateKey.current = privateKey;
     setState((prev) => {
       if (prev.status === "locked") {
-        const fresh = token !== null && !isJwtExpired(token);
-        return { status: "authed", user: prev.user, jwtFresh: fresh };
+        const nextState = unlockLockedState(prev, token);
+        if (nextState.status !== "authed") {
+          privateKey.fill(0);
+          decryptedPrivateKey.current = null;
+        }
+        return nextState;
       }
       return prev;
     });
@@ -223,8 +238,11 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
               prev.status === "onboarding" ||
               prev.status === "recovery_pending"
                 ? prev.user
-                : makePlaceholderMe();
-            return { status: "locked", user, hasJwt: false };
+                : loadCachedMeProfile();
+            return toLockedOrUnauthed(user, {
+              hasJwt: false,
+              jwtFreshAfterUnlock: false,
+            });
           });
         }
       })();
@@ -257,8 +275,7 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
           let user: Me | null = null;
           try {
             user = await fetchMe();
-            setLocalState("verified_balance_kobo", user.verifiedBalanceKobo);
-            setLocalState("last_sync_at", new Date().toISOString());
+            persistMeProfile(user);
           } catch (err) {
             if (isUserNotFoundError(err)) {
               await resetLocalAuthForMissingUser();
@@ -291,8 +308,7 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
           let user: Me | null = null;
           try {
             user = await fetchMe();
-            setLocalState("verified_balance_kobo", user.verifiedBalanceKobo);
-            setLocalState("last_sync_at", new Date().toISOString());
+            persistMeProfile(user);
           } catch (err) {
             if (isUserNotFoundError(err)) {
               await resetLocalAuthForMissingUser();
@@ -319,14 +335,15 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
           // Returning user, no JWT. Locked state with hasJwt=false; the
           // PIN entry screen unlocks the key for offline use, and the
           // home screen will show "sign in again" for online actions.
-          // We don't have a Me object yet - leave it for after unlock,
-          // when fetchMe (or stored profile) provides it.
+          // We need a real profile for offline unlock. Without a cached
+          // profile, force sign-in instead of letting a placeholder identity
+          // reach the payment surface.
           if (!isMounted.current) return;
-          setState({
-            status: "locked",
-            user: makePlaceholderMe(),
+          const cachedUser = loadCachedMeProfile();
+          setState(toLockedOrUnauthed(cachedUser, {
             hasJwt: false,
-          });
+            jwtFreshAfterUnlock: false,
+          }));
           return;
         }
 
@@ -336,16 +353,18 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
         // bug fix from 2.1. Treat the token as fresh-enough for now;
         // the freshness check on unlock will re-evaluate.
         if (token === null) return;
-        let user: Me = makePlaceholderMe();
+        let user: Me | null = null;
+        let jwtFreshAfterUnlock: boolean | undefined;
         try {
           user = await fetchMe();
-          setLocalState("verified_balance_kobo", user.verifiedBalanceKobo);
-          setLocalState("last_sync_at", new Date().toISOString());
+          persistMeProfile(user);
         } catch (err) {
           if (err instanceof NetworkError) {
             logger.info(
               "Offline at boot; treating stored token as valid for now",
             );
+            user = loadCachedMeProfile();
+            jwtFreshAfterUnlock = false;
           } else if (isUserNotFoundError(err)) {
             await resetLocalAuthForMissingUser();
             if (!isMounted.current) return;
@@ -354,15 +373,24 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
           } else {
             // 401 -> interceptor will clear the token; propagate to
             // unauthed via the unauthorized handler. Other errors:
-            // fall through with placeholder user.
+            // use the cached real profile if available.
             logger.info("fetchMe during boot failed (non-network)", err);
+            user = loadCachedMeProfile();
+            jwtFreshAfterUnlock = false;
           }
         }
         if (!isMounted.current) return;
+        if (!isRealMeProfile(user)) {
+          await clearToken();
+          if (!isMounted.current) return;
+          setState({ status: "unauthed" });
+          return;
+        }
         setState({
           status: "locked",
           user,
-          hasJwt: !isJwtExpired(token),
+          hasJwt: jwtFreshAfterUnlock ?? !isJwtExpired(token),
+          jwtFreshAfterUnlock,
         });
       } catch (err) {
         // Unexpected boot error. Don't silently drop into unauthed
@@ -382,6 +410,45 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clearPendingRecoveryKeypair, wipeInMemoryKey]);
 
+  const hydrateProfile = useCallback((nextUser: Me): void => {
+    if (!isRealMeProfile(nextUser)) {
+      throw new Error("Cannot hydrate auth state with an invalid user profile");
+    }
+
+    persistMeProfile(nextUser);
+    if (!isMounted.current) return;
+    setState((prev) => {
+      if (
+        prev.status === "authed" ||
+        prev.status === "onboarding" ||
+        prev.status === "recovery_pending"
+      ) {
+        return { ...prev, user: nextUser };
+      }
+      if (prev.status === "locked") {
+        return { ...prev, user: nextUser };
+      }
+      return prev;
+    });
+  }, []);
+
+  const refreshProfileFromServer = useCallback(async (): Promise<void> => {
+    try {
+      const nextUser = await fetchMe();
+      hydrateProfile(nextUser);
+    } catch (err) {
+      if (isUserNotFoundError(err)) {
+        await resetLocalAuthForMissingUser();
+        if (!isMounted.current) return;
+        setState({ status: "unauthed" });
+        return;
+      }
+      if (!(err instanceof NetworkError)) {
+        logger.info("Profile refresh failed", err);
+      }
+    }
+  }, [hydrateProfile, resetLocalAuthForMissingUser]);
+
   // ----- AppState background lock -----
   useEffect(() => {
     const sub = RNAppState.addEventListener(
@@ -397,6 +464,10 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
           if (since !== null && Date.now() - since > BACKGROUND_LOCK_MS) {
             // Long enough away that we re-prompt for PIN.
             lock();
+            return;
+          }
+          if (state.status === "authed" && state.jwtFresh) {
+            void refreshProfileFromServer();
           }
         }
       },
@@ -404,7 +475,7 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
     return () => {
       sub.remove();
     };
-  }, [lock]);
+  }, [lock, refreshProfileFromServer, state]);
 
   // ----- Periodic JWT freshness re-check while authed -----
   useEffect(() => {
@@ -459,6 +530,7 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
       unlock,
       lock,
       signOut,
+      hydrateProfile,
       reauthenticate,
       getDecryptedPrivateKey,
       getPendingRecoveryKeypair,
@@ -472,6 +544,7 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
       unlock,
       lock,
       signOut,
+      hydrateProfile,
       reauthenticate,
       getDecryptedPrivateKey,
       getPendingRecoveryKeypair,
@@ -481,18 +554,3 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
-// When the locked screen appears we may not yet have a fresh Me object
-// (offline boot). The PIN entry screen doesn't need user fields, but
-// the AuthState shape requires one. After successful unlock + a future
-// fetchMe call, real fields populate.
-function makePlaceholderMe(): Me {
-  return {
-    id: "u_0000000000000000",
-    email: "",
-    phone: null,
-    role: "STUDENT",
-    status: "ACTIVE",
-    verifiedBalanceKobo: "0",
-    createdAt: new Date(0).toISOString(),
-  };
-}

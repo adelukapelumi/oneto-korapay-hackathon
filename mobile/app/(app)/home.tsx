@@ -181,7 +181,7 @@ function maskEmail(email: string): string {
 }
 
 export default function HomeScreen(): React.ReactElement {
-  const { state, reauthenticate } = useAuth();
+  const { state, hydrateProfile, reauthenticate } = useAuth();
   const router = useRouter();
   const { mode } = useThemeMode();
   const t = getTheme(mode);
@@ -276,13 +276,13 @@ export default function HomeScreen(): React.ReactElement {
       const interval = setInterval(() => void refreshData(), 30_000);
       return () => clearInterval(interval);
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [user?.role, jwtFresh, isSyncing]),
+    }, [user?.role, jwtFresh, isSyncing, hydrateProfile]),
   );
 
   async function refreshData(): Promise<void> {
     if (user?.role === "STUDENT") {
       try {
-        const projection = await getStudentBalanceProjection();
+        const projection = await getStudentBalanceProjection(hydrateProfile);
         setStudentBalanceProjection(projection);
       } catch (err) {
         logger.info("Student balance projection refresh failed", err);
@@ -290,6 +290,7 @@ export default function HomeScreen(): React.ReactElement {
     } else {
       try {
         const fresh = await fetchMe();
+        hydrateProfile(fresh);
         const settledBalanceKobo = Number(fresh.verifiedBalanceKobo);
         setBalanceKobo(settledBalanceKobo);
         updateMerchantProjection(settledBalanceKobo);

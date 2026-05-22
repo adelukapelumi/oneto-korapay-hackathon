@@ -45,7 +45,7 @@ function formatNaira(kobo: number): string {
 
 export default function TopupAmountScreen(): React.ReactElement {
   const router = useRouter();
-  const { state } = useAuth();
+  const { state, hydrateProfile } = useAuth();
   const { mode } = useThemeMode();
   const t = getTheme(mode);
   const [amountStr, setAmountStr] = useState("");
@@ -61,9 +61,12 @@ export default function TopupAmountScreen(): React.ReactElement {
   useFocusEffect(
     useCallback(() => {
       fetchMe()
-        .then((fresh) => setBalanceKobo(Number(fresh.verifiedBalanceKobo)))
+        .then((fresh) => {
+          hydrateProfile(fresh);
+          setBalanceKobo(Number(fresh.verifiedBalanceKobo));
+        })
         .catch(() => { });
-    }, []),
+    }, [hydrateProfile]),
   );
 
 
