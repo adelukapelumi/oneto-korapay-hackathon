@@ -233,15 +233,10 @@ export class TopupService {
 
     // At this point the webhook is signed, schema-valid, event/status-consistent,
     // references a pending local top-up, and matches the stored kobo amount.
-    // Credit directly from the webhook so a flaky verification endpoint cannot
-    // strand a real paid top-up in PENDING.
-    return this.creditVerifiedPendingTopup(
-      topup,
-      webhookAmountKobo,
-      webhookVerification,
-      'webhook',
-      webhookPayload,
-    );
+    // We still do not credit from the webhook payload alone: the final money
+    // movement must pass the active Korapay /charges/:reference verification
+    // path used by status polling.
+    return this.finalizePendingTopup(reference, 'webhook', { webhookPayload });
   }
 
   private async finalizePendingTopup(
@@ -265,7 +260,38 @@ export class TopupService {
       return topup;
     }
 
-    const verification = await this.korapayService.verifyTransaction(reference);
+    let verification: KorapayTransactionVerification;
+    try {
+      verification = await this.korapayService.verifyTransaction(reference);
+    } catch (err) {
+      if (source !== 'webhook') {
+        throw err;
+      }
+
+      this.logger.warn(
+        { reference, err },
+        'Top-up webhook active verification failed; keeping top-up pending',
+      );
+
+      await this.prisma.paymentTopup.update({
+        where: { reference },
+        data: {
+          korapayResponse: {
+            source,
+            webhook: options.webhookPayload ?? null,
+            verification: {
+              status: 'verification_error',
+              reference,
+              amount: null,
+              amountPaid: null,
+              currency: null,
+            },
+          } as Prisma.InputJsonValue,
+        },
+      });
+
+      return topup;
+    }
     const normalizedVerificationStatus = this.normalizeKorapayStatus(verification.status);
 
     if (this.isFailedKorapayStatus(normalizedVerificationStatus)) {
