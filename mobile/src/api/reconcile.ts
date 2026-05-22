@@ -1,4 +1,5 @@
 import { apiClient } from "./client";
+import { NetworkError, toTypedError } from "./errors";
 import { listPendingByStatus, updateTransactionStatus } from "../ledger/db";
 
 export interface ReconcileResult {
@@ -10,11 +11,12 @@ export interface ReconcileResult {
 export async function syncPendingEnvelopes(): Promise<{
   synced: number;
   failed: number;
+  networkUnavailable?: true;
 }> {
   const pending = listPendingByStatus("pending_reconciliation", "incoming");
   if (pending.length === 0) return { synced: 0, failed: 0 };
 
-  // Batch in groups of 50 (server max)
+  // Batch in groups of 50 (server max).
   let synced = 0;
   let failed = 0;
 
@@ -35,8 +37,12 @@ export async function syncPendingEnvelopes(): Promise<{
           failed++;
         }
       }
-    } catch {
-      // Network failure — leave as pending, try next time
+    } catch (err) {
+      // Network failure: leave rows pending so a later reconnect can retry.
+      const typed = toTypedError(err);
+      if (typed instanceof NetworkError) {
+        return { synced, failed, networkUnavailable: true };
+      }
       break;
     }
   }

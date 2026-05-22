@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -12,6 +12,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from "expo-router";
 import { useAuth } from "../../src/auth/auth-state";
 import { fetchMe } from "../../src/api/auth";
+import { NetworkError } from "../../src/api/errors";
 import { fetchLedger as fetchServerLedger } from "../../src/api/ledger";
 import { listPendingByStatus, setLocalState } from "../../src/ledger/db";
 import { syncPendingEnvelopes } from "../../src/api/reconcile";
@@ -31,6 +32,11 @@ import {
   type MerchantBalanceProjection,
 } from "../../src/payment/merchant-balance-projection";
 import { formatClaimDeadline } from "../../src/payment/claim-window";
+import {
+  MERCHANT_AUTO_SYNC_COOLDOWN_MS,
+  getMerchantSyncButtonState,
+  shouldRequestMerchantAutoSync,
+} from "../../src/payment/merchant-sync-state";
 import { logger } from "../../src/lib/logger";
 import { useThemeMode } from "../../src/theme/theme-provider";
 import {
@@ -207,8 +213,12 @@ export default function HomeScreen(): React.ReactElement {
   const [ledgerEntries, setLedgerEntries] = useState<TxnItemProps[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isOnline, setIsOnline] = useState(true);
+  const [syncStatusMessage, setSyncStatusMessage] = useState<string | null>(null);
   const [reauthSending, setReauthSending] = useState(false);
   const [reauthError, setReauthError] = useState<string | null>(null);
+  const syncInFlightRef = useRef(false);
+  const lastSyncAttemptAtRef = useRef(0);
 
   const user = state.status === "authed" ? state.user : null;
   const jwtFresh = state.status === "authed" ? state.jwtFresh : false;
@@ -220,6 +230,11 @@ export default function HomeScreen(): React.ReactElement {
     });
     setMerchantBalanceProjection(projection);
     return projection;
+  }
+
+  function markNetworkUnavailable(): void {
+    setIsOnline(false);
+    setSyncStatusMessage("Couldn't sync. Will retry when online.");
   }
 
   useEffect(() => {
@@ -245,38 +260,11 @@ export default function HomeScreen(): React.ReactElement {
         setStudentBalanceProjection(getStoredStudentBalanceProjection());
       }
       void refreshData();
-      if (user.role === "MERCHANT") {
-        const pending = listPendingByStatus(
-          "pending_reconciliation",
-          "incoming",
-        );
-
-        if (pending.length > 0 && jwtFresh && !isSyncing) {
-          void (async () => {
-            setIsSyncing(true);
-            let refreshedBalance = false;
-            try {
-              logger.info("merchant_reconcile_refresh_started");
-              await syncPendingEnvelopes();
-              await refreshData();
-              refreshedBalance = true;
-              logger.info("merchant_reconcile_refresh_completed");
-            } catch (err) {
-              logger.info("Merchant auto-sync on focus failed", err);
-            } finally {
-              if (!refreshedBalance) {
-                updateMerchantProjection(balanceKobo);
-              }
-              setIsSyncing(false);
-            }
-          })();
-        }
-      }
 
       const interval = setInterval(() => void refreshData(), 30_000);
       return () => clearInterval(interval);
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [user?.role, jwtFresh, isSyncing, hydrateProfile]),
+    }, [user?.role, jwtFresh, hydrateProfile]),
   );
 
   async function refreshData(): Promise<void> {
@@ -290,6 +278,8 @@ export default function HomeScreen(): React.ReactElement {
     } else {
       try {
         const fresh = await fetchMe();
+        setIsOnline(true);
+        setSyncStatusMessage(null);
         hydrateProfile(fresh);
         const settledBalanceKobo = Number(fresh.verifiedBalanceKobo);
         setBalanceKobo(settledBalanceKobo);
@@ -298,6 +288,9 @@ export default function HomeScreen(): React.ReactElement {
         setLocalState("last_sync_at", new Date().toISOString());
       } catch (err) {
         logger.info("Balance refresh failed (offline?)", err);
+        if (err instanceof NetworkError) {
+          markNetworkUnavailable();
+        }
         updateMerchantProjection(balanceKobo);
       }
     }
@@ -306,6 +299,9 @@ export default function HomeScreen(): React.ReactElement {
       setLedgerEntries(res.entries.map(mapLedgerEntry));
     } catch (err) {
       logger.info("Ledger fetch failed", err);
+      if (err instanceof NetworkError) {
+        setIsOnline(false);
+      }
     }
   }
 
@@ -315,22 +311,113 @@ export default function HomeScreen(): React.ReactElement {
     setRefreshing(false);
   }
 
-  const handleSync = async (): Promise<void> => {
+  const runMerchantSync = async (source: "auto" | "manual"): Promise<void> => {
+    if (syncInFlightRef.current) return;
+    if (!jwtFresh || !isOnline) return;
+
+    const pending = getPendingIncomingSummary();
+    if (pending.pendingIncomingCount === 0) return;
+    if (
+      source === "auto" &&
+      !shouldRequestMerchantAutoSync({
+        isMerchant: user?.role === "MERCHANT",
+        isOnline,
+        jwtFresh,
+        pendingIncomingCount: pending.pendingIncomingCount,
+        isSyncInFlight: syncInFlightRef.current,
+        lastSyncAttemptAtMs: lastSyncAttemptAtRef.current,
+        nowMs: Date.now(),
+      })
+    ) {
+      return;
+    }
+
+    syncInFlightRef.current = true;
+    lastSyncAttemptAtRef.current = Date.now();
     setIsSyncing(true);
+    setSyncStatusMessage(null);
     let refreshedBalance = false;
     try {
-      logger.info("merchant_reconcile_refresh_started");
-      await syncPendingEnvelopes();
+      logger.info(
+        source === "auto"
+          ? "merchant_reconcile_auto_sync_started"
+          : "merchant_reconcile_manual_sync_started",
+      );
+      const result = await syncPendingEnvelopes();
+      if (result.networkUnavailable) {
+        markNetworkUnavailable();
+        return;
+      }
+      setIsOnline(true);
       await refreshData();
       refreshedBalance = true;
-      logger.info("merchant_reconcile_refresh_completed");
+      logger.info(
+        source === "auto"
+          ? "merchant_reconcile_auto_sync_completed"
+          : "merchant_reconcile_manual_sync_completed",
+      );
     } finally {
       if (!refreshedBalance) {
         updateMerchantProjection(balanceKobo);
       }
       setIsSyncing(false);
+      syncInFlightRef.current = false;
     }
   };
+
+  const handleSync = async (): Promise<void> => {
+    await runMerchantSync("manual");
+  };
+
+  useEffect(() => {
+    if (user?.role !== "MERCHANT") return;
+    const pendingIncomingCount =
+      merchantBalanceProjection?.pendingIncomingCount ??
+      getPendingIncomingSummary().pendingIncomingCount;
+    const nowMs = Date.now();
+
+    if (
+      shouldRequestMerchantAutoSync({
+        isMerchant: true,
+        isOnline,
+        jwtFresh,
+        pendingIncomingCount,
+        isSyncInFlight: syncInFlightRef.current,
+        lastSyncAttemptAtMs: lastSyncAttemptAtRef.current,
+        nowMs,
+      })
+    ) {
+      void runMerchantSync("auto");
+      return;
+    }
+
+    const lastAttemptAtMs = lastSyncAttemptAtRef.current;
+    const isWaitingForCooldown =
+      user?.role === "MERCHANT" &&
+      isOnline &&
+      jwtFresh &&
+      pendingIncomingCount > 0 &&
+      !syncInFlightRef.current &&
+      lastAttemptAtMs > 0 &&
+      nowMs - lastAttemptAtMs < MERCHANT_AUTO_SYNC_COOLDOWN_MS;
+
+    if (!isWaitingForCooldown) return;
+
+    const retryAfterMs =
+      MERCHANT_AUTO_SYNC_COOLDOWN_MS - (nowMs - lastAttemptAtMs) + 50;
+    const timeoutId = setTimeout(() => {
+      void runMerchantSync("auto");
+    }, retryAfterMs);
+    return () => clearTimeout(timeoutId);
+    // runMerchantSync reads current refs/state; the helper above keeps this
+    // effect from looping while airplane mode or campus Wi-Fi is unstable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    user?.role,
+    jwtFresh,
+    isOnline,
+    merchantBalanceProjection?.pendingIncomingCount,
+  ]);
 
   // Re-auth: send OTP to the stored email and navigate to verify screen.
   // No email input shown — the stored email is used automatically.
@@ -595,6 +682,12 @@ export default function HomeScreen(): React.ReactElement {
       settledBalanceKobo: balanceKobo,
       ...getPendingIncomingSummary(),
     });
+  const merchantSyncButtonState = getMerchantSyncButtonState({
+    isOnline,
+    isSyncing,
+    jwtFresh,
+    pendingIncomingCount: merchantProjectionForRender.pendingIncomingCount,
+  });
 
   // MERCHANT VIEW
   // ══════════════════════════════════════════════════════════════════════
@@ -722,21 +815,32 @@ export default function HomeScreen(): React.ReactElement {
               </Text>
             ) : null}
           </View>
-          <Pressable
-            style={({ pressed }) => [
-              styles.syncButton,
-              { backgroundColor: t.text },
-              pressed && styles.buttonPressed,
-              (isSyncing || merchantProjectionForRender.pendingIncomingCount === 0 || !jwtFresh) &&
-              styles.buttonDisabled,
-            ]}
-            onPress={() => void handleSync()}
-            disabled={isSyncing || merchantProjectionForRender.pendingIncomingCount === 0 || !jwtFresh}
-          >
-            <Text style={[styles.syncButtonText, { color: t.bg }]}>
-              {isSyncing ? "Syncing..." : "Sync Now"}
-            </Text>
-          </Pressable>
+          <View style={styles.syncActionArea}>
+            <Pressable
+              style={({ pressed }) => [
+                styles.syncButton,
+                { backgroundColor: merchantSyncButtonState.disabled ? t.cardAlt : t.text },
+                pressed && !merchantSyncButtonState.disabled && styles.buttonPressed,
+                merchantSyncButtonState.disabled && styles.buttonDisabled,
+              ]}
+              onPress={() => void handleSync()}
+              disabled={merchantSyncButtonState.disabled}
+            >
+              <Text
+                style={[
+                  styles.syncButtonText,
+                  { color: merchantSyncButtonState.disabled ? t.textSec : t.bg },
+                ]}
+              >
+                {merchantSyncButtonState.label}
+              </Text>
+            </Pressable>
+            {syncStatusMessage ? (
+              <Text style={[styles.syncStatus, { color: t.textMut }]}>
+                {syncStatusMessage}
+              </Text>
+            ) : null}
+          </View>
         </View>
 
         <View style={styles.quickActions}>
@@ -1150,10 +1254,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
     borderRadius: radii.sm,
+    minWidth: 124,
+  },
+  syncActionArea: {
+    alignItems: "flex-end",
+    flexShrink: 1,
+    marginLeft: spacing.md,
   },
   syncButtonText: {
     fontFamily: fonts.semibold,
     fontSize: fontSizes.body,
+    textAlign: "center",
+  },
+  syncStatus: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.xs,
+    marginTop: spacing.xs,
+    maxWidth: 160,
+    textAlign: "right",
   },
 
   listItem: {
