@@ -13,8 +13,15 @@ export const MAX_OFFLINE_TRANSACTION_KOBO = 200_000;
 export const MAX_USER_BALANCE_KOBO = 5_000_000;
 
 // Envelope timing
-export const ENVELOPE_TTL_SECONDS = 60; // envelope expires 60s after signing
+// Short QR scan/display freshness window.
+// This is not the offline merchant claim window.
+export const ENVELOPE_TTL_SECONDS = 300;
 export const CLOCK_SKEW_TOLERANCE_SECONDS = 120; // accept timestamps up to 2 min in future
+
+// Backend derives the settlement claim deadline from the signed envelope
+// timestamp plus this fixed window. Mobile may display the same deadline,
+// but the backend remains the authority for settlement decisions.
+export const OFFLINE_CLAIM_WINDOW_HOURS = 48;
 
 // Sequence number starting value
 export const INITIAL_SEQUENCE_NUMBER = 1;

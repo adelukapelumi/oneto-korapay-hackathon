@@ -112,7 +112,6 @@ export default function DisplayScreen(): React.ReactElement | null {
       </Screen>
     );
   }
-
   return (
     <Screen
       scroll

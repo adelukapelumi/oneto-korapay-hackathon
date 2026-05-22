@@ -11,7 +11,7 @@ jest.mock("../../ledger/db", () => ({
 
 jest.mock("../sync-outgoing", () => ({
   syncOutgoingPendingFromServerLedger: jest.fn().mockResolvedValue({
-    markedReconciled: 0,
+    markedTerminal: 0,
   }),
 }));
 

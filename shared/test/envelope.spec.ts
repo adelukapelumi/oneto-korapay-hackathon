@@ -17,7 +17,7 @@ import {
 function makeDraft(overrides: Partial<EnvelopeDraft> = {}): EnvelopeDraft {
   const now = Date.now();
   const ts = new Date(now).toISOString();
-  const exp = new Date(now + 60_000).toISOString();
+  const exp = new Date(now + 300_000).toISOString();
   return {
     version: 1,
     senderUserId: "u_0123456789abcdef",
@@ -69,49 +69,49 @@ describe("envelope: ttl schema bounds", () => {
     kp = generateKeypair();
   });
 
-  it("draft with expiresAt exactly timestamp + 60s passes", () => {
+  it("draft with expiresAt exactly timestamp + 300s passes", () => {
     const now = Date.now();
     const draft = makeDraft({
       timestamp: new Date(now).toISOString(),
-      expiresAt: new Date(now + 60_000).toISOString(),
+      expiresAt: new Date(now + 300_000).toISOString(),
     });
     const result = EnvelopeDraftSchema.safeParse(draft);
     expect(result.success).toBe(true);
   });
 
-  it("full TransactionEnvelope with expiresAt exactly timestamp + 60s passes", () => {
+  it("full TransactionEnvelope with expiresAt exactly timestamp + 300s passes", () => {
     const now = Date.now();
     const draft = makeDraft({
       senderPublicKey: kp.publicKeyString,
       timestamp: new Date(now).toISOString(),
-      expiresAt: new Date(now + 60_000).toISOString(),
+      expiresAt: new Date(now + 300_000).toISOString(),
     });
     const envelope = signEnvelope(draft, kp.privateKey);
     const result = TransactionEnvelopeSchema.safeParse(envelope);
     expect(result.success).toBe(true);
   });
 
-  it("draft with expiresAt timestamp + 60_001ms fails", () => {
+  it("draft with expiresAt timestamp + 300_001ms fails", () => {
     const now = Date.now();
     const draft = makeDraft({
       timestamp: new Date(now).toISOString(),
-      expiresAt: new Date(now + 60_001).toISOString(),
+      expiresAt: new Date(now + 300_001).toISOString(),
     });
     const result = EnvelopeDraftSchema.safeParse(draft);
     expect(result.success).toBe(false);
   });
 
-  it("full TransactionEnvelope with expiresAt timestamp + 60_001ms fails", () => {
+  it("full TransactionEnvelope with expiresAt timestamp + 300_001ms fails", () => {
     const now = Date.now();
     const draft = makeDraft({
       senderPublicKey: kp.publicKeyString,
       timestamp: new Date(now).toISOString(),
-      expiresAt: new Date(now + 60_000).toISOString(),
+      expiresAt: new Date(now + 300_000).toISOString(),
     });
     const envelope = signEnvelope(draft, kp.privateKey);
     const mutatedTtlEnvelope: TransactionEnvelope = {
       ...envelope,
-      expiresAt: new Date(now + 60_001).toISOString(),
+      expiresAt: new Date(now + 300_001).toISOString(),
     };
     const result = TransactionEnvelopeSchema.safeParse(mutatedTtlEnvelope);
     expect(result.success).toBe(false);
@@ -131,7 +131,7 @@ describe("envelope: ttl schema bounds", () => {
     const baseDraft = makeDraft({
       senderPublicKey: kp.publicKeyString,
       timestamp: ts,
-      expiresAt: new Date(now + 60_000).toISOString(),
+      expiresAt: new Date(now + 300_000).toISOString(),
     });
     const envelope = signEnvelope(baseDraft, kp.privateKey);
     const equalExpiryEnvelope: TransactionEnvelope = {
@@ -155,7 +155,7 @@ describe("envelope: ttl schema bounds", () => {
     const baseDraft = makeDraft({
       senderPublicKey: kp.publicKeyString,
       timestamp: new Date(now).toISOString(),
-      expiresAt: new Date(now + 60_000).toISOString(),
+      expiresAt: new Date(now + 300_000).toISOString(),
     });
     const envelope = signEnvelope(baseDraft, kp.privateKey);
     const beforeExpiryEnvelope: TransactionEnvelope = {
@@ -225,11 +225,30 @@ describe("envelope: red-team attacks", () => {
     const draft = makeDraft({
       senderPublicKey: kp.publicKeyString,
       timestamp: new Date(farFuture).toISOString(),
-      expiresAt: new Date(farFuture + 60_000).toISOString(),
+      expiresAt: new Date(farFuture + 300_000).toISOString(),
     });
     const envelope = signEnvelope(draft, kp.privateKey);
     const result = verifyEnvelope(envelope, kp.publicKeyString, now);
     expect(result.ok).toBe(false);
+  });
+
+  it("accepts an expired QR when reconcile explicitly allows short-TTL expiry to be ignored", () => {
+    const now = Date.now();
+    const draft = makeDraft({
+      senderPublicKey: kp.publicKeyString,
+      timestamp: new Date(now - 10 * 60_000).toISOString(),
+      expiresAt: new Date(now - 5 * 60_000).toISOString(),
+    });
+    const envelope = signEnvelope(draft, kp.privateKey);
+
+    const result = verifyEnvelope(
+      envelope,
+      kp.publicKeyString,
+      now,
+      { allowExpiredEnvelope: true },
+    );
+
+    expect(result.ok).toBe(true);
   });
 
   it("rejects zero amount", () => {

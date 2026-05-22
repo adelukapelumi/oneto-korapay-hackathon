@@ -4,6 +4,7 @@ import {
   TransactionEnvelopeSchema,
   isEnvelopeCurrentlyValid,
 } from "../types/envelope";
+import { CLOCK_SKEW_TOLERANCE_SECONDS } from "../types/limits";
 import { canonicalizeToBytes } from "./canonicalize";
 import { publicKeyFromString } from "./keys";
 import { fromHex } from "./keys";
@@ -28,6 +29,10 @@ export type VerifyFailureReason =
   | "transaction_id_mismatch"
   | "signature_invalid";
 
+export interface VerifyEnvelopeOptions {
+  readonly allowExpiredEnvelope?: boolean;
+}
+
 /**
  * Verify an envelope received from a client.
  *
@@ -41,6 +46,7 @@ export function verifyEnvelope(
   input: unknown,
   registeredPublicKey: PublicKeyString,
   nowMs: number = Date.now(),
+  options: VerifyEnvelopeOptions = {},
 ): VerifyResult {
   // 1. Schema validation. Rejects malformed input, wrong types,
   //    out-of-range values, and balance math violations.
@@ -58,9 +64,20 @@ export function verifyEnvelope(
   }
 
   // 3. Timestamp window check.
-  const timingOk = isEnvelopeCurrentlyValid(envelope, nowMs);
-  if (!timingOk.ok) {
-    return { ok: false, reason: "timestamp_out_of_window" };
+  // Default behaviour enforces short QR freshness (`expiresAt`).
+  // Reconcile can opt out of the expiry check because settlement uses a
+  // separate backend claim window derived from the signed timestamp.
+  if (options.allowExpiredEnvelope) {
+    const timestampMs = new Date(envelope.timestamp).getTime();
+    const futureSkewMs = CLOCK_SKEW_TOLERANCE_SECONDS * 1000;
+    if (timestampMs > nowMs + futureSkewMs) {
+      return { ok: false, reason: "timestamp_out_of_window" };
+    }
+  } else {
+    const timingOk = isEnvelopeCurrentlyValid(envelope, nowMs);
+    if (!timingOk.ok) {
+      return { ok: false, reason: "timestamp_out_of_window" };
+    }
   }
 
   // 4. Transaction ID must match the deterministic hash of the draft.

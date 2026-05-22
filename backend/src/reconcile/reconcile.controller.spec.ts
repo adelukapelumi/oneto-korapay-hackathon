@@ -15,7 +15,7 @@ describe('ReconcileController Rate Limits', () => {
       providers: [
         {
           provide: ReconcileService,
-          useValue: { reconcile: jest.fn() },
+          useValue: { reconcile: jest.fn(), resolveOutgoingStatuses: jest.fn() },
         },
       ],
     })
@@ -42,6 +42,19 @@ describe('ReconcileController Rate Limits', () => {
   it('reconcile route should use UserThrottlerGuard', () => {
     // __guards__ is the metadata key for @UseGuards
     const guards = Reflect.getMetadata('__guards__', controller.reconcile);
+    expect(guards).toContain(UserThrottlerGuard);
+  });
+
+  it('status route should have correct @Throttle limits (30 req/min)', () => {
+    const limit = reflector.get('THROTTLER:LIMITdefault', controller.status);
+    const ttl = reflector.get('THROTTLER:TTLdefault', controller.status);
+
+    expect(limit).toBe(30);
+    expect(ttl).toBe(60000);
+  });
+
+  it('status route should use UserThrottlerGuard', () => {
+    const guards = Reflect.getMetadata('__guards__', controller.status);
     expect(guards).toContain(UserThrottlerGuard);
   });
 });

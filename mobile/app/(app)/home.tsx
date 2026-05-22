@@ -25,6 +25,7 @@ import {
   getStudentBalanceProjection,
   type StudentBalanceProjection,
 } from "../../src/payment/balance-snapshot";
+import { formatClaimDeadline } from "../../src/payment/claim-window";
 import { logger } from "../../src/lib/logger";
 import { useThemeMode } from "../../src/theme/theme-provider";
 import {
@@ -337,6 +338,23 @@ export default function HomeScreen(): React.ReactElement {
       : studentBalanceProjection?.lastSyncedAt
         ? "Using last synced balance"
         : "Last known available balance";
+  const studentPendingOutgoingRows =
+    user.role === "STUDENT"
+      ? listPendingByStatus("pending_reconciliation", "outgoing")
+      : [];
+  const primaryPendingOutgoing =
+    studentPendingOutgoingRows.length === 1 ? studentPendingOutgoingRows[0] : null;
+  let primaryPendingClaimDeadline: string | null = null;
+  if (primaryPendingOutgoing) {
+    try {
+      const parsed = JSON.parse(primaryPendingOutgoing.envelopeJson) as { timestamp?: string };
+      if (typeof parsed.timestamp === "string") {
+        primaryPendingClaimDeadline = formatClaimDeadline(parsed.timestamp);
+      }
+    } catch {
+      primaryPendingClaimDeadline = null;
+    }
+  }
 
   const refreshControl = (
     <RefreshControl
@@ -460,6 +478,16 @@ export default function HomeScreen(): React.ReactElement {
                   <Text style={[styles.balancePendingSummary, { color: t.textSec }]}>
                     {formatNaira(pendingOutgoingKobo)} pending offline payment
                     {pendingOutgoingCount === 1 ? "" : "s"}
+                  </Text>
+                ) : null}
+                {primaryPendingOutgoing ? (
+                  <Text style={[styles.balancePendingDetail, { color: t.textMut }]}>
+                    Reserved for {primaryPendingOutgoing.recipientLabel || "offline payment"}
+                  </Text>
+                ) : null}
+                {primaryPendingClaimDeadline ? (
+                  <Text style={[styles.balancePendingDetail, { color: t.textMut }]}>
+                    Claim deadline: {primaryPendingClaimDeadline}
                   </Text>
                 ) : null}
               </View>
@@ -839,6 +867,11 @@ const styles = StyleSheet.create({
     fontFamily: fonts.medium,
     fontSize: fontSizes.sm,
     marginTop: spacing.sm,
+  },
+  balancePendingDetail: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.sm,
+    marginTop: spacing.xs,
   },
   connectDot: {
     width: 10,

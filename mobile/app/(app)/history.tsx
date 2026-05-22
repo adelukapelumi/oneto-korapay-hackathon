@@ -114,7 +114,12 @@ export default function HistoryScreen(): React.ReactElement {
   const displayTransactions = mergeTransactions(serverEntries);
 
   const renderItem = ({ item }: { item: DisplayTransaction }) => {
+    const isExpiredRelease =
+      item.source === "local" &&
+      item.direction === "outgoing" &&
+      item.terminalReason === "expired_unclaimed";
     const isCredit =
+      isExpiredRelease ||
       (item.source === "server" && item.type === "CREDIT") ||
       (item.source === "local" && item.direction === "incoming");
 
@@ -124,6 +129,8 @@ export default function HistoryScreen(): React.ReactElement {
     const label =
       item.source === "server"
         ? item.description
+        : item.terminalReason === "expired_unclaimed"
+          ? "Payment expired unclaimed"
         : item.recipientLabel || "Offline Transaction";
 
     const dateStr = new Date(item.createdAt).toLocaleString(undefined, {
@@ -144,6 +151,11 @@ export default function HistoryScreen(): React.ReactElement {
     } else if (item.status === "rejected") {
       statusText = "✗ rejected";
       statusColor = colors.error;
+    }
+
+    if (isExpiredRelease) {
+      statusText = "Released";
+      statusColor = colors.primary;
     }
 
     return (

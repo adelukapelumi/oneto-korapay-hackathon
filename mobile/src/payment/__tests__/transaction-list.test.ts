@@ -37,6 +37,7 @@ describe("mergeTransactions", () => {
         recipientLabel: "Merchant",
         createdAt: new Date("2023-01-01T00:00:00Z").toISOString(),
         status: "pending_reconciliation",
+        terminalReason: null,
       },
       {
         id: "tx_456", // Doesn't match
@@ -45,6 +46,7 @@ describe("mergeTransactions", () => {
         recipientLabel: "Merchant 2",
         createdAt: new Date("2023-01-01T12:00:00Z").toISOString(),
         status: "pending_reconciliation",
+        terminalReason: null,
       },
     ]);
 
@@ -89,6 +91,7 @@ describe("mergeTransactions", () => {
         recipientLabel: "Mid",
         createdAt: new Date("2023-01-02T00:00:00Z").toISOString(),
         status: "pending_reconciliation",
+        terminalReason: null,
       },
     ]);
 
@@ -109,6 +112,7 @@ describe("mergeTransactions", () => {
         recipientLabel: "Test",
         createdAt: new Date().toISOString(),
         status: "pending_reconciliation",
+        terminalReason: null,
       },
     ]);
 

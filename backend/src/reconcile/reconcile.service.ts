@@ -7,12 +7,37 @@ import {
   MAX_OFFLINE_TRANSACTION_KOBO,
   MAX_USER_BALANCE_KOBO,
   toPublicKeyString,
+  OFFLINE_CLAIM_WINDOW_HOURS,
 } from '@oneto/shared';
-import { DeviceKeyStatus, Prisma } from '@prisma/client';
+import {
+  DeviceKeyStatus,
+  OfflinePaymentResolutionStatus,
+  Prisma,
+} from '@prisma/client';
 
 export type ReconcileResult =
   | { transactionId: string; status: 'success' }
   | { transactionId: string; status: 'rejected'; reason: string };
+
+export interface OutgoingStatusRequestItem {
+  readonly transactionId: string;
+  readonly signedEnvelope?: unknown;
+}
+
+export type OutgoingPaymentStatus =
+  | 'reconciled'
+  | 'rejected'
+  | 'expired_unclaimed'
+  | 'unknown_pending';
+
+export interface OutgoingStatusResult {
+  readonly transactionId: string;
+  readonly status: OutgoingPaymentStatus;
+  readonly reason?: string;
+  readonly claimDeadlineAt?: string;
+}
+
+const OFFLINE_CLAIM_WINDOW_MS = OFFLINE_CLAIM_WINDOW_HOURS * 60 * 60 * 1000;
 
 @Injectable()
 export class ReconcileService {
@@ -41,6 +66,21 @@ export class ReconcileService {
       } else {
         results.push(internalResult);
       }
+    }
+
+    return results;
+  }
+
+  async resolveOutgoingStatuses(
+    authenticatedUserId: string,
+    transactions: readonly OutgoingStatusRequestItem[],
+  ): Promise<OutgoingStatusResult[]> {
+    const results: OutgoingStatusResult[] = [];
+
+    for (const transaction of transactions) {
+      results.push(
+        await this.resolveOutgoingStatus(authenticatedUserId, transaction),
+      );
     }
 
     return results;
@@ -125,19 +165,16 @@ export class ReconcileService {
         return this.reject(envelope.transactionId, deviceKeyRejectionReason, envelope);
       }
 
-      // e. Check timestamp: Math.abs(nowMs - Date.parse(envelope.timestamp)) <= 120_000.
-      const timestampMs = new Date(envelope.timestamp).getTime();
-      if (Math.abs(nowMs - timestampMs) > 120_000) {
-        return this.reject(envelope.transactionId, 'timestamp_out_of_window', envelope);
-      }
-
-      // f & g & h & i: Use shared verifyEnvelope for consistency.
+      // e & f & g & h & i: Use shared verifyEnvelope for consistency.
+      // Reconcile ignores the short QR display freshness window because the
+      // settlement deadline is a separate backend claim window.
       // senderDeviceKey.publicKey was either created via the validated key
       // registration endpoint or backfilled from that same mirror field.
       const verification = verifyEnvelope(
         envelope,
         toPublicKeyString(senderDeviceKey.publicKey),
         nowMs,
+        { allowExpiredEnvelope: true },
       );
 
 
@@ -145,9 +182,7 @@ export class ReconcileService {
         let reason = 'envelope_rejected';
         switch (verification.reason) {
           case 'timestamp_out_of_window':
-            // Check if it's expired vs future skew
-            const exp = new Date(envelope.expiresAt).getTime();
-            reason = exp <= nowMs ? 'envelope_expired' : 'timestamp_out_of_window';
+            reason = 'timestamp_out_of_window';
             break;
           case 'schema_invalid':
             // shared's schema check covers amount and math
@@ -170,6 +205,31 @@ export class ReconcileService {
         }
 
         return this.reject(envelope.transactionId, reason, envelope);
+      }
+
+      const existingResolution = await this.prisma.offlinePaymentResolution.findUnique({
+        where: { transactionId: envelope.transactionId },
+        select: {
+          senderUserId: true,
+          status: true,
+        },
+      });
+      if (existingResolution && existingResolution.senderUserId === envelope.senderUserId) {
+        if (existingResolution.status === OfflinePaymentResolutionStatus.EXPIRED_UNCLAIMED) {
+          return this.reject(envelope.transactionId, 'late_claim_rejected', envelope);
+        }
+
+        return this.reject(envelope.transactionId, 'terminal_rejection_recorded', envelope);
+      }
+
+      const claimDeadlineMs = this.getClaimDeadlineMs(envelope.timestamp);
+      if (nowMs > claimDeadlineMs) {
+        const expiredOutcome = await this.recordExpiredUnclaimedIfStillPending(envelope);
+        if (expiredOutcome.status === 'reconciled') {
+          return { transactionId: envelope.transactionId, status: 'success' };
+        }
+
+        return this.reject(envelope.transactionId, 'late_claim_rejected', envelope);
       }
 
       // j. Check server balance.
@@ -312,6 +372,116 @@ export class ReconcileService {
     }
   }
 
+  private async resolveOutgoingStatus(
+    authenticatedUserId: string,
+    transaction: OutgoingStatusRequestItem,
+  ): Promise<OutgoingStatusResult> {
+    if (await this.hasSettledDebitForSender(this.prisma, authenticatedUserId, transaction.transactionId)) {
+      return {
+        transactionId: transaction.transactionId,
+        status: 'reconciled',
+      };
+    }
+
+    const existingResolution = await this.prisma.offlinePaymentResolution.findUnique({
+      where: { transactionId: transaction.transactionId },
+      select: {
+        transactionId: true,
+        senderUserId: true,
+        status: true,
+        reason: true,
+        claimDeadlineAt: true,
+      },
+    });
+    if (existingResolution && existingResolution.senderUserId === authenticatedUserId) {
+      return this.mapResolutionToOutgoingStatus(existingResolution);
+    }
+
+    const parseResult = TransactionEnvelopeSchema.safeParse(transaction.signedEnvelope);
+    if (!parseResult.success) {
+      return this.buildRejectedOutgoingStatus(
+        transaction.transactionId,
+        'invalid_envelope',
+      );
+    }
+
+    const envelope = parseResult.data;
+    if (envelope.transactionId !== transaction.transactionId) {
+      return this.buildRejectedOutgoingStatus(
+        transaction.transactionId,
+        'transaction_id_mismatch',
+      );
+    }
+
+    if (envelope.senderUserId !== authenticatedUserId) {
+      return this.buildRejectedOutgoingStatus(
+        transaction.transactionId,
+        'identity_mismatch',
+      );
+    }
+
+    const nowMs = Date.now();
+    const senderDeviceKey = await this.prisma.userDeviceKey.findUnique({
+      where: {
+        userId_publicKey: {
+          userId: envelope.senderUserId,
+          publicKey: envelope.senderPublicKey,
+        },
+      },
+      select: {
+        publicKey: true,
+        status: true,
+        retiredAt: true,
+        verifyUntil: true,
+      },
+    });
+    if (!senderDeviceKey) {
+      return this.buildRejectedOutgoingStatus(
+        envelope.transactionId,
+        'public_key_unknown',
+        this.getClaimDeadlineIso(envelope.timestamp),
+      );
+    }
+
+    const deviceKeyRejectionReason = this.getDeviceKeyRejectionReason(
+      senderDeviceKey,
+      envelope,
+      nowMs,
+    );
+    if (deviceKeyRejectionReason) {
+      return this.buildRejectedOutgoingStatus(
+        envelope.transactionId,
+        deviceKeyRejectionReason,
+        this.getClaimDeadlineIso(envelope.timestamp),
+      );
+    }
+
+    const verification = verifyEnvelope(
+      envelope,
+      toPublicKeyString(senderDeviceKey.publicKey),
+      nowMs,
+      { allowExpiredEnvelope: true },
+    );
+    if (!verification.ok) {
+      return this.buildRejectedOutgoingStatus(
+        envelope.transactionId,
+        verification.reason,
+        this.getClaimDeadlineIso(envelope.timestamp),
+      );
+    }
+
+    const claimDeadlineIso = this.getClaimDeadlineIso(envelope.timestamp);
+    if (nowMs <= this.getClaimDeadlineMs(envelope.timestamp)) {
+      return {
+        transactionId: envelope.transactionId,
+        status: 'unknown_pending',
+        claimDeadlineAt: claimDeadlineIso,
+      };
+    }
+
+    return this.recordExpiredUnclaimedIfStillPending(envelope);
+  }
+
   private reject(
     transactionId: string,
     internalReason: string,
@@ -376,6 +546,137 @@ export class ReconcileService {
     }
 
     return null;
+  }
+
+  private getClaimDeadlineMs(timestamp: string): number {
+    return new Date(timestamp).getTime() + OFFLINE_CLAIM_WINDOW_MS;
+  }
+
+  private getClaimDeadlineIso(timestamp: string): string {
+    return new Date(this.getClaimDeadlineMs(timestamp)).toISOString();
+  }
+
+  private buildRejectedOutgoingStatus(
+    transactionId: string,
+    reason: string,
+    claimDeadlineAt?: string,
+  ): OutgoingStatusResult {
+    return {
+      transactionId,
+      status: 'rejected',
+      reason,
+      claimDeadlineAt,
+    };
+  }
+
+  private mapResolutionToOutgoingStatus(
+    resolution: {
+      transactionId: string;
+      status: OfflinePaymentResolutionStatus;
+      reason: string;
+      claimDeadlineAt: Date;
+    },
+  ): OutgoingStatusResult {
+    if (resolution.status === OfflinePaymentResolutionStatus.EXPIRED_UNCLAIMED) {
+      return {
+        transactionId: resolution.transactionId,
+        status: 'expired_unclaimed',
+        reason: resolution.reason,
+        claimDeadlineAt: resolution.claimDeadlineAt.toISOString(),
+      };
+    }
+
+    return {
+      transactionId: resolution.transactionId,
+      status: 'rejected',
+      reason: resolution.reason,
+      claimDeadlineAt: resolution.claimDeadlineAt.toISOString(),
+    };
+  }
+
+  private async hasSettledDebitForSender(
+    client: PrismaService | Prisma.TransactionClient,
+    senderUserId: string,
+    transactionId: string,
+  ): Promise<boolean> {
+    const existingDebit = await client.ledgerEntry.findFirst({
+      where: {
+        transactionId,
+        userId: senderUserId,
+        type: 'DEBIT',
+      },
+      select: { id: true },
+    });
+
+    return existingDebit !== null;
+  }
+
+  private async recordExpiredUnclaimedIfStillPending(
+    envelope: TransactionEnvelope,
+  ): Promise<OutgoingStatusResult> {
+    return this.prisma.$transaction(async (tx) => {
+      const settledReplay = await this.hasMatchingLedgerEntriesForReplay(tx, envelope);
+      if (settledReplay) {
+        return {
+          transactionId: envelope.transactionId,
+          status: 'reconciled',
+        };
+      }
+
+      const existingResolution = await tx.offlinePaymentResolution.findUnique({
+        where: { transactionId: envelope.transactionId },
+        select: {
+          transactionId: true,
+          senderUserId: true,
+          status: true,
+          reason: true,
+          claimDeadlineAt: true,
+        },
+      });
+      if (existingResolution && existingResolution.senderUserId === envelope.senderUserId) {
+        return this.mapResolutionToOutgoingStatus(existingResolution);
+      }
+
+      try {
+        const createdResolution = await tx.offlinePaymentResolution.create({
+          data: {
+            transactionId: envelope.transactionId,
+            senderUserId: envelope.senderUserId,
+            recipientUserId: envelope.recipientUserId,
+            status: OfflinePaymentResolutionStatus.EXPIRED_UNCLAIMED,
+            reason: 'claim_window_elapsed',
+            claimDeadlineAt: new Date(this.getClaimDeadlineMs(envelope.timestamp)),
+            envelopeJson: envelope as unknown as Prisma.InputJsonValue,
+          },
+          select: {
+            transactionId: true,
+            status: true,
+            reason: true,
+            claimDeadlineAt: true,
+          },
+        });
+
+        return this.mapResolutionToOutgoingStatus(createdResolution);
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+          const concurrentResolution = await tx.offlinePaymentResolution.findUnique({
+            where: { transactionId: envelope.transactionId },
+            select: {
+              transactionId: true,
+              senderUserId: true,
+              status: true,
+              reason: true,
+              claimDeadlineAt: true,
+            },
+          });
+          if (concurrentResolution && concurrentResolution.senderUserId === envelope.senderUserId) {
+            return this.mapResolutionToOutgoingStatus(concurrentResolution);
+          }
+        }
+
+        throw error;
+      }
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   }
 
   private async resolveReconcileUniqueConflict(

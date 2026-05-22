@@ -7,12 +7,17 @@ import {
   EnvelopeDraft,
   MAX_OFFLINE_TRANSACTION_KOBO,
   MAX_USER_BALANCE_KOBO,
+  OFFLINE_CLAIM_WINDOW_HOURS,
   toKobo,
   toUserId,
   toTransactionId,
   TransactionEnvelope,
 } from '@oneto/shared';
-import { DeviceKeyStatus, Prisma } from '@prisma/client';
+import {
+  DeviceKeyStatus,
+  OfflinePaymentResolutionStatus,
+  Prisma,
+} from '@prisma/client';
 
 describe('ReconcileService', () => {
   let service: ReconcileService;
@@ -31,6 +36,11 @@ describe('ReconcileService', () => {
     ledgerEntry: {
       create: jest.fn(),
       findMany: jest.fn(),
+      findFirst: jest.fn(),
+    },
+    offlinePaymentResolution: {
+      findUnique: jest.fn(),
+      create: jest.fn(),
     },
     userDeviceKey: {
       findUnique: jest.fn(),
@@ -50,6 +60,18 @@ describe('ReconcileService', () => {
     service = module.get<ReconcileService>(ReconcileService);
     prisma = module.get<PrismaService>(PrismaService);
     jest.clearAllMocks();
+    mockPrisma.ledgerEntry.findMany.mockResolvedValue([]);
+    mockPrisma.ledgerEntry.findFirst.mockResolvedValue(null);
+    mockPrisma.offlinePaymentResolution.findUnique.mockResolvedValue(null);
+    mockPrisma.offlinePaymentResolution.create.mockImplementation(({ data }: any) =>
+      Promise.resolve({
+        transactionId: data.transactionId,
+        senderUserId: data.senderUserId,
+        status: data.status,
+        reason: data.reason,
+        claimDeadlineAt: data.claimDeadlineAt,
+      }),
+    );
     mockPrisma.userDeviceKey.findUnique.mockImplementation((args: any) => {
       const lookup = args?.where?.userId_publicKey;
       if (!lookup) {
@@ -109,7 +131,7 @@ describe('ReconcileService', () => {
       senderBalanceBeforeKobo: toKobo(1000000),
       senderBalanceAfterKobo: toKobo(1000000 - amount),
       timestamp: new Date(now).toISOString(),
-      expiresAt: new Date(now + 60000).toISOString(),
+      expiresAt: new Date(now + 300000).toISOString(),
       requestNonce: 'a'.repeat(32),
     };
   };
@@ -327,17 +349,22 @@ describe('ReconcileService', () => {
     expect(result).toMatchObject({ status: 'rejected', reason: 'public_key_revoked' });
   });
 
-  it('5. Timestamp too old (past skew)', async () => {
+  it('5. Reconcile accepts an older envelope while still inside the claim window', async () => {
     const draft = createValidEnvelopeDraft(senderId, recipientId, senderKey.publicKeyString);
     draft.timestamp = new Date(Date.now() - 300000).toISOString(); // 5 min ago
-    draft.expiresAt = new Date(Date.now() - 240000).toISOString(); 
+    draft.expiresAt = new Date(Date.now() - 240000).toISOString();
     const envelope = signEnvelope(draft, senderKey.privateKey);
 
-    mockPrisma.user.findUnique.mockResolvedValue(createTestUser(senderId, senderKey.publicKeyString));
+    mockPrisma.user.findUnique.mockImplementation((args: any) => {
+      const where = args?.where;
+      if (where?.id === senderId) return Promise.resolve(createTestUser(senderId, senderKey.publicKeyString));
+      if (where?.id === recipientId) return Promise.resolve(createTestUser(recipientId, 'dummy'));
+      return Promise.resolve(null);
+    });
 
     const result = await service.reconcileOneInternal(recipientId, envelope);
 
-    expect(result).toMatchObject({ status: 'rejected', reason: 'timestamp_out_of_window' });
+    expect(result).toEqual({ transactionId: envelope.transactionId, status: 'success' });
   });
 
   it('6. Timestamp too new (future skew)', async () => {
@@ -353,17 +380,41 @@ describe('ReconcileService', () => {
     expect(result).toMatchObject({ status: 'rejected', reason: 'timestamp_out_of_window' });
   });
 
-  it('7. Expired: expiresAt in the past', async () => {
+  it('7. Reconcile ignores short QR freshness expiry while the claim window is still open', async () => {
     const draft = createValidEnvelopeDraft(senderId, recipientId, senderKey.publicKeyString);
     draft.timestamp = new Date(Date.now() - 20000).toISOString();
-    draft.expiresAt = new Date(Date.now() - 10000).toISOString(); // expired 10s ago, TTL 10s
+    draft.expiresAt = new Date(Date.now() - 10000).toISOString();
     const envelope = signEnvelope(draft, senderKey.privateKey);
 
-    mockPrisma.user.findUnique.mockResolvedValue(createTestUser(senderId, senderKey.publicKeyString));
+    mockPrisma.user.findUnique.mockImplementation((args: any) => {
+      const where = args?.where;
+      if (where?.id === senderId) return Promise.resolve(createTestUser(senderId, senderKey.publicKeyString));
+      if (where?.id === recipientId) return Promise.resolve(createTestUser(recipientId, 'dummy'));
+      return Promise.resolve(null);
+    });
 
     const result = await service.reconcileOneInternal(recipientId, envelope);
 
-    expect(result).toMatchObject({ status: 'rejected', reason: 'envelope_expired' });
+    expect(result).toEqual({ transactionId: envelope.transactionId, status: 'success' });
+  });
+
+  it('7b. Reconcile rejects when the backend claim window has elapsed', async () => {
+    const claimWindowMs = OFFLINE_CLAIM_WINDOW_HOURS * 60 * 60 * 1000;
+    const draft = createValidEnvelopeDraft(senderId, recipientId, senderKey.publicKeyString);
+    draft.timestamp = new Date(Date.now() - claimWindowMs - 60000).toISOString();
+    draft.expiresAt = new Date(Date.now() - claimWindowMs + 240000).toISOString();
+    const envelope = signEnvelope(draft, senderKey.privateKey);
+
+    mockPrisma.user.findUnique.mockImplementation((args: any) => {
+      const where = args?.where;
+      if (where?.id === senderId) return Promise.resolve(createTestUser(senderId, senderKey.publicKeyString));
+      if (where?.id === recipientId) return Promise.resolve(createTestUser(recipientId, 'dummy'));
+      return Promise.resolve(null);
+    });
+
+    const result = await service.reconcileOneInternal(recipientId, envelope);
+
+    expect(result).toMatchObject({ status: 'rejected', reason: 'late_claim_rejected' });
   });
 
   it('8. Amount zero', async () => {
@@ -838,5 +889,153 @@ describe('ReconcileService', () => {
 
     // Restore the original mock implementation
     mockPrisma.$transaction.mockImplementation((callback: any) => callback(mockPrisma));
+  });
+
+  it('accepts merchant reconcile after the short QR freshness window if still inside the 48-hour claim window', async () => {
+    const fixedNow = new Date('2026-05-22T12:00:00.000Z');
+    jest.useFakeTimers().setSystemTime(fixedNow);
+
+    const draft = createValidEnvelopeDraft(senderId, recipientId, senderKey.publicKeyString);
+    draft.timestamp = '2026-05-22T11:50:00.000Z';
+    draft.expiresAt = '2026-05-22T11:55:00.000Z';
+    const envelope = signEnvelope(draft, senderKey.privateKey);
+
+    mockPrisma.user.findUnique.mockImplementation((args: any) => {
+      const where = args?.where;
+      if (where?.id === senderId) return Promise.resolve(createTestUser(senderId, senderKey.publicKeyString));
+      if (where?.id === recipientId) return Promise.resolve(createTestUser(recipientId, 'dummy'));
+      return Promise.resolve(null);
+    });
+
+    const result = await service.reconcileOneInternal(recipientId, envelope);
+
+    expect(result).toEqual({ transactionId: envelope.transactionId, status: 'success' });
+    expect(mockPrisma.offlinePaymentResolution.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects merchant reconcile after the 48-hour claim window and records terminal expiry', async () => {
+    const fixedNow = new Date('2026-05-24T12:00:01.000Z');
+    jest.useFakeTimers().setSystemTime(fixedNow);
+
+    const draft = createValidEnvelopeDraft(senderId, recipientId, senderKey.publicKeyString);
+    draft.timestamp = '2026-05-22T12:00:00.000Z';
+    draft.expiresAt = '2026-05-22T12:05:00.000Z';
+    const envelope = signEnvelope(draft, senderKey.privateKey);
+
+    mockPrisma.user.findUnique.mockImplementation((args: any) => {
+      const where = args?.where;
+      if (where?.id === senderId) return Promise.resolve(createTestUser(senderId, senderKey.publicKeyString));
+      if (where?.id === recipientId) return Promise.resolve(createTestUser(recipientId, 'dummy'));
+      return Promise.resolve(null);
+    });
+    mockPrisma.ledgerEntry.findMany.mockResolvedValue([]);
+    mockPrisma.offlinePaymentResolution.create.mockResolvedValue({
+      transactionId: envelope.transactionId,
+      status: OfflinePaymentResolutionStatus.EXPIRED_UNCLAIMED,
+      reason: 'claim_window_elapsed',
+      claimDeadlineAt: new Date('2026-05-24T12:00:00.000Z'),
+    });
+
+    const result = await service.reconcileOneInternal(recipientId, envelope);
+
+    expect(result).toMatchObject({ status: 'rejected', reason: 'late_claim_rejected' });
+    expect(mockPrisma.offlinePaymentResolution.create).toHaveBeenCalled();
+    expect(mockPrisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it('returns unknown_pending for outgoing status checks before the claim deadline', async () => {
+    const fixedNow = new Date('2026-05-22T12:00:00.000Z');
+    jest.useFakeTimers().setSystemTime(fixedNow);
+
+    const draft = createValidEnvelopeDraft(senderId, recipientId, senderKey.publicKeyString);
+    draft.timestamp = '2026-05-22T11:50:00.000Z';
+    draft.expiresAt = '2026-05-22T11:55:00.000Z';
+    const envelope = signEnvelope(draft, senderKey.privateKey);
+
+    const result = await service.resolveOutgoingStatuses(senderId, [
+      { transactionId: envelope.transactionId, signedEnvelope: envelope },
+    ]);
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        transactionId: envelope.transactionId,
+        status: 'unknown_pending',
+      }),
+    ]);
+  });
+
+  it('returns expired_unclaimed for outgoing status checks after the claim deadline and records a terminal resolution', async () => {
+    const fixedNow = new Date('2026-05-24T12:00:01.000Z');
+    jest.useFakeTimers().setSystemTime(fixedNow);
+
+    const draft = createValidEnvelopeDraft(senderId, recipientId, senderKey.publicKeyString);
+    draft.timestamp = '2026-05-22T12:00:00.000Z';
+    draft.expiresAt = '2026-05-22T12:05:00.000Z';
+    const envelope = signEnvelope(draft, senderKey.privateKey);
+
+    mockPrisma.ledgerEntry.findMany.mockResolvedValue([]);
+    mockPrisma.offlinePaymentResolution.create.mockResolvedValue({
+      transactionId: envelope.transactionId,
+      status: OfflinePaymentResolutionStatus.EXPIRED_UNCLAIMED,
+      reason: 'claim_window_elapsed',
+      claimDeadlineAt: new Date('2026-05-24T12:00:00.000Z'),
+    });
+
+    const result = await service.resolveOutgoingStatuses(senderId, [
+      { transactionId: envelope.transactionId, signedEnvelope: envelope },
+    ]);
+
+    expect(result).toEqual([
+      {
+        transactionId: envelope.transactionId,
+        status: 'expired_unclaimed',
+        reason: 'claim_window_elapsed',
+        claimDeadlineAt: '2026-05-24T12:00:00.000Z',
+      },
+    ]);
+    expect(mockPrisma.offlinePaymentResolution.create).toHaveBeenCalled();
+  });
+
+  it('rejects outgoing status checks for envelopes that do not belong to the authenticated student', async () => {
+    const draft = createValidEnvelopeDraft(senderId, recipientId, senderKey.publicKeyString);
+    const envelope = signEnvelope(draft, senderKey.privateKey);
+
+    const result = await service.resolveOutgoingStatuses('u_0000000000000099', [
+      { transactionId: envelope.transactionId, signedEnvelope: envelope },
+    ]);
+
+    expect(result).toEqual([
+      {
+        transactionId: envelope.transactionId,
+        status: 'rejected',
+        reason: 'identity_mismatch',
+      },
+    ]);
+  });
+
+  it('rejects later merchant claims once expired_unclaimed has been recorded', async () => {
+    const fixedNow = new Date('2026-05-24T12:05:00.000Z');
+    jest.useFakeTimers().setSystemTime(fixedNow);
+
+    const draft = createValidEnvelopeDraft(senderId, recipientId, senderKey.publicKeyString);
+    draft.timestamp = '2026-05-22T12:00:00.000Z';
+    draft.expiresAt = '2026-05-22T12:05:00.000Z';
+    const envelope = signEnvelope(draft, senderKey.privateKey);
+
+    mockPrisma.user.findUnique.mockImplementation((args: any) => {
+      const where = args?.where;
+      if (where?.id === senderId) return Promise.resolve(createTestUser(senderId, senderKey.publicKeyString));
+      if (where?.id === recipientId) return Promise.resolve(createTestUser(recipientId, 'dummy'));
+      return Promise.resolve(null);
+    });
+    mockPrisma.offlinePaymentResolution.findUnique.mockResolvedValue({
+      senderUserId: senderId,
+      status: OfflinePaymentResolutionStatus.EXPIRED_UNCLAIMED,
+    });
+
+    const result = await service.reconcileOneInternal(recipientId, envelope);
+
+    expect(result).toMatchObject({ status: 'rejected', reason: 'late_claim_rejected' });
+    expect(mockPrisma.user.update).not.toHaveBeenCalled();
   });
 });

@@ -33,6 +33,7 @@ import {
   parseScannedEnvelopePayload,
   type MerchantScanStatus,
 } from "../../../src/payment/merchant-scan";
+import { getClaimDeadlineAtIso } from "../../../src/payment/claim-window";
 import {
   colors,
   fonts,
@@ -279,6 +280,7 @@ export default function ScanEnvelopeScreen() {
         params: {
           senderUserId: envelope.senderUserId,
           amountKobo: String(envelope.amountKobo),
+          claimDeadlineAt: getClaimDeadlineAtIso(envelope.timestamp),
         },
       });
     }, 400);

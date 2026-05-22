@@ -45,6 +45,7 @@ export interface PendingTransaction {
     | "pending_reconciliation"
     | "reconciled"
     | "rejected";
+  readonly terminalReason: string | null;
   readonly createdAt: string; // ISO 8601 UTC
   readonly reconciledAt: string | null; // ISO 8601 UTC, or null
 }
@@ -80,6 +81,7 @@ export function initDb(): void {
       direction TEXT NOT NULL CHECK (direction IN ('outgoing', 'incoming')),
       status TEXT NOT NULL DEFAULT 'pending_reconciliation'
         CHECK (status IN ('pending_reconciliation', 'reconciled', 'rejected')),
+      terminal_reason TEXT,
       created_at TEXT NOT NULL,
       reconciled_at TEXT
     );
@@ -95,6 +97,16 @@ export function initDb(): void {
       updated_at TEXT NOT NULL
     );
   `);
+
+  // Migration 2: older installs created pending_transactions without
+  // terminal_reason. We store terminal rejection classes there so the app can
+  // distinguish "expired_unclaimed" from generic rejections without changing
+  // the existing status enum.
+  try {
+    getDb().runSync(`ALTER TABLE pending_transactions ADD COLUMN terminal_reason TEXT`);
+  } catch {
+    // Column already exists on upgraded installs.
+  }
 }
 
 // ----------------------------------------------------------------
@@ -214,11 +226,12 @@ export function listPendingTransactions(
     sequence_number: number;
     direction: string;
     status: string;
+    terminal_reason: string | null;
     created_at: string;
     reconciled_at: string | null;
   }>(
     `SELECT id, envelope_json, recipient_id, recipient_label,
-            amount_kobo, sequence_number, direction, status,
+            amount_kobo, sequence_number, direction, status, terminal_reason,
             created_at, reconciled_at
      FROM pending_transactions
      ORDER BY created_at DESC
@@ -236,6 +249,7 @@ export function listPendingTransactions(
     sequenceNumber: r.sequence_number,
     direction: r.direction as "outgoing" | "incoming",
     status: r.status as PendingTransaction["status"],
+    terminalReason: r.terminal_reason,
     createdAt: r.created_at,
     reconciledAt: r.reconciled_at,
   }));
@@ -257,11 +271,12 @@ export function listPendingByStatus(
     sequence_number: number;
     direction: string;
     status: string;
+    terminal_reason: string | null;
     created_at: string;
     reconciled_at: string | null;
   }>(
     `SELECT id, envelope_json, recipient_id, recipient_label,
-            amount_kobo, sequence_number, direction, status,
+            amount_kobo, sequence_number, direction, status, terminal_reason,
             created_at, reconciled_at
      FROM pending_transactions
      WHERE status = ? AND direction = ?
@@ -279,6 +294,7 @@ export function listPendingByStatus(
     sequenceNumber: r.sequence_number,
     direction: r.direction as "outgoing" | "incoming",
     status: r.status as PendingTransaction["status"],
+    terminalReason: r.terminal_reason,
     createdAt: r.created_at,
     reconciledAt: r.reconciled_at,
   }));
@@ -290,13 +306,15 @@ export function listPendingByStatus(
 export function updateTransactionStatus(
   transactionId: string,
   newStatus: "reconciled" | "rejected",
+  terminalReason?: string,
 ): void {
   const reconciledAt = new Date().toISOString();
   getDb().runSync(
     `UPDATE pending_transactions
-     SET status = ?, reconciled_at = ?
+     SET status = ?, terminal_reason = ?, reconciled_at = ?
      WHERE id = ?`,
     newStatus,
+    terminalReason ?? null,
     reconciledAt,
     transactionId,
   );
