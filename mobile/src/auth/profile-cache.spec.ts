@@ -1,12 +1,14 @@
 jest.mock("../ledger/db", () => ({
+  deleteLocalState: jest.fn(),
   getLocalState: jest.fn(),
   setLocalState: jest.fn(),
 }));
 
 import type { Me } from "../api/auth";
-import { getLocalState, setLocalState } from "../ledger/db";
+import { deleteLocalState, getLocalState, setLocalState } from "../ledger/db";
 import {
   CACHED_ME_PROFILE_KEY,
+  clearCachedMeProfile,
   isRealMeProfile,
   loadCachedMeProfile,
   persistMeProfile,
@@ -82,5 +84,13 @@ describe("profile cache", () => {
       JSON.stringify(fresh),
     );
     expect(setLocalState).toHaveBeenCalledWith("verified_balance_kobo", "250000");
+  });
+
+  it("clears the cached /me profile and balance sync fields", () => {
+    clearCachedMeProfile();
+
+    expect(deleteLocalState).toHaveBeenCalledWith(CACHED_ME_PROFILE_KEY);
+    expect(deleteLocalState).toHaveBeenCalledWith("verified_balance_kobo");
+    expect(deleteLocalState).toHaveBeenCalledWith("last_sync_at");
   });
 });

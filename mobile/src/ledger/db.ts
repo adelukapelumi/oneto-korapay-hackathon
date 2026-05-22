@@ -406,6 +406,15 @@ export function setLocalState(key: string, value: string): void {
 }
 
 /**
+ * Delete one local state value.
+ * Used by narrow cleanup helpers before the broader testing reset wipes the
+ * full SQLite state.
+ */
+export function deleteLocalState(key: string): void {
+  getDb().runSync(`DELETE FROM local_state WHERE key = ?`, key);
+}
+
+/**
  * Testing-only reset helper for local SQLite persistence.
  * Clears pending envelopes, local balance/sync cache, and cached merchants.
  */

@@ -11,6 +11,10 @@ jest.mock("./token-store", () => ({
   clearToken: jest.fn(),
 }));
 
+jest.mock("./profile-cache", () => ({
+  clearCachedMeProfile: jest.fn(),
+}));
+
 import {
   resetLocalAppForTesting,
   wipeLocalPaymentKeyOnlyForTesting,
@@ -55,6 +59,7 @@ describe("local testing reset helpers", () => {
         calls,
         "in-memory-pending-recovery",
       ),
+      clearCachedProfileFn: syncFn(calls, "cached-profile"),
       wipeSqliteLocalDataFn: syncFn(calls, "sqlite"),
     };
 
@@ -66,6 +71,7 @@ describe("local testing reset helpers", () => {
       "pending-recovery",
       "in-memory-key",
       "in-memory-pending-recovery",
+      "cached-profile",
       "sqlite",
     ]);
     expect(backendUnlinkDeviceKeyFn).not.toHaveBeenCalled();
@@ -79,6 +85,7 @@ describe("local testing reset helpers", () => {
     const wipePendingRecoveryKeypairFn = jest.fn<Promise<void>, []>(() =>
       Promise.resolve(),
     );
+    const clearCachedProfileFn = jest.fn<void, []>();
     const wipeSqliteLocalDataFn = jest.fn<void, []>();
 
     await expect(
@@ -86,6 +93,7 @@ describe("local testing reset helpers", () => {
         clearTokenFn,
         wipeActiveKeypairFn,
         wipePendingRecoveryKeypairFn,
+        clearCachedProfileFn,
         wipeSqliteLocalDataFn,
       }),
     ).rejects.toThrow("secure-store failed");
@@ -93,6 +101,7 @@ describe("local testing reset helpers", () => {
     expect(clearTokenFn).toHaveBeenCalledTimes(1);
     expect(wipeActiveKeypairFn).toHaveBeenCalledTimes(1);
     expect(wipePendingRecoveryKeypairFn).toHaveBeenCalledTimes(1);
+    expect(clearCachedProfileFn).not.toHaveBeenCalled();
     expect(wipeSqliteLocalDataFn).not.toHaveBeenCalled();
   });
 });

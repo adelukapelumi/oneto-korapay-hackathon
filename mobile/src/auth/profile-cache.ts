@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Me } from "../api/auth";
-import { getLocalState, setLocalState } from "../ledger/db";
+import { deleteLocalState, getLocalState, setLocalState } from "../ledger/db";
 
 export const CACHED_ME_PROFILE_KEY = "cached_me_profile_json";
 
@@ -58,4 +58,10 @@ export function loadCachedMeProfile(): Me | null {
   }
 
   return parsed.data;
+}
+
+export function clearCachedMeProfile(): void {
+  deleteLocalState(CACHED_ME_PROFILE_KEY);
+  deleteLocalState("verified_balance_kobo");
+  deleteLocalState("last_sync_at");
 }
