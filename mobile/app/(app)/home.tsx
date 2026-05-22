@@ -25,6 +25,11 @@ import {
   getStudentBalanceProjection,
   type StudentBalanceProjection,
 } from "../../src/payment/balance-snapshot";
+import {
+  buildMerchantBalanceProjection,
+  getPendingIncomingSummary,
+  type MerchantBalanceProjection,
+} from "../../src/payment/merchant-balance-projection";
 import { formatClaimDeadline } from "../../src/payment/claim-window";
 import { logger } from "../../src/lib/logger";
 import { useThemeMode } from "../../src/theme/theme-provider";
@@ -184,6 +189,15 @@ export default function HomeScreen(): React.ReactElement {
   const [balanceKobo, setBalanceKobo] = useState(
     state.status === "authed" ? Number(state.user.verifiedBalanceKobo) : 0,
   );
+  const [merchantBalanceProjection, setMerchantBalanceProjection] =
+    useState<MerchantBalanceProjection | null>(
+      state.status === "authed" && state.user.role === "MERCHANT"
+        ? buildMerchantBalanceProjection({
+            settledBalanceKobo: Number(state.user.verifiedBalanceKobo),
+            ...getPendingIncomingSummary(),
+          })
+        : null,
+    );
   const [studentBalanceProjection, setStudentBalanceProjection] =
     useState<StudentBalanceProjection | null>(
       state.status === "authed" && state.user.role === "STUDENT"
@@ -192,13 +206,21 @@ export default function HomeScreen(): React.ReactElement {
     );
   const [ledgerEntries, setLedgerEntries] = useState<TxnItemProps[]>([]);
   const [refreshing, setRefreshing] = useState(false);
-  const [pendingCount, setPendingCount] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
   const [reauthSending, setReauthSending] = useState(false);
   const [reauthError, setReauthError] = useState<string | null>(null);
 
   const user = state.status === "authed" ? state.user : null;
   const jwtFresh = state.status === "authed" ? state.jwtFresh : false;
+
+  function updateMerchantProjection(settledBalanceKobo: number): MerchantBalanceProjection {
+    const projection = buildMerchantBalanceProjection({
+      settledBalanceKobo,
+      ...getPendingIncomingSummary(),
+    });
+    setMerchantBalanceProjection(projection);
+    return projection;
+  }
 
   useEffect(() => {
     if (!user || user.role !== "STUDENT" || !studentBalanceProjection) {
@@ -228,21 +250,23 @@ export default function HomeScreen(): React.ReactElement {
           "pending_reconciliation",
           "incoming",
         );
-        setPendingCount(pending.length);
 
         if (pending.length > 0 && jwtFresh && !isSyncing) {
           void (async () => {
             setIsSyncing(true);
+            let refreshedBalance = false;
             try {
+              logger.info("merchant_reconcile_refresh_started");
               await syncPendingEnvelopes();
+              await refreshData();
+              refreshedBalance = true;
+              logger.info("merchant_reconcile_refresh_completed");
             } catch (err) {
               logger.info("Merchant auto-sync on focus failed", err);
             } finally {
-              const refreshedPending = listPendingByStatus(
-                "pending_reconciliation",
-                "incoming",
-              );
-              setPendingCount(refreshedPending.length);
+              if (!refreshedBalance) {
+                updateMerchantProjection(balanceKobo);
+              }
               setIsSyncing(false);
             }
           })();
@@ -266,11 +290,14 @@ export default function HomeScreen(): React.ReactElement {
     } else {
       try {
         const fresh = await fetchMe();
-        setBalanceKobo(Number(fresh.verifiedBalanceKobo));
+        const settledBalanceKobo = Number(fresh.verifiedBalanceKobo);
+        setBalanceKobo(settledBalanceKobo);
+        updateMerchantProjection(settledBalanceKobo);
         setLocalState("verified_balance_kobo", fresh.verifiedBalanceKobo);
         setLocalState("last_sync_at", new Date().toISOString());
       } catch (err) {
         logger.info("Balance refresh failed (offline?)", err);
+        updateMerchantProjection(balanceKobo);
       }
     }
     try {
@@ -284,22 +311,24 @@ export default function HomeScreen(): React.ReactElement {
   async function onRefresh(): Promise<void> {
     setRefreshing(true);
     await refreshData();
-    if (user?.role === "MERCHANT") {
-      const pending = listPendingByStatus(
-        "pending_reconciliation",
-        "incoming",
-      );
-      setPendingCount(pending.length);
-    }
     setRefreshing(false);
   }
 
   const handleSync = async (): Promise<void> => {
     setIsSyncing(true);
-    await syncPendingEnvelopes();
-    const pending = listPendingByStatus("pending_reconciliation", "incoming");
-    setPendingCount(pending.length);
-    setIsSyncing(false);
+    let refreshedBalance = false;
+    try {
+      logger.info("merchant_reconcile_refresh_started");
+      await syncPendingEnvelopes();
+      await refreshData();
+      refreshedBalance = true;
+      logger.info("merchant_reconcile_refresh_completed");
+    } finally {
+      if (!refreshedBalance) {
+        updateMerchantProjection(balanceKobo);
+      }
+      setIsSyncing(false);
+    }
   };
 
   // Re-auth: send OTP to the stored email and navigate to verify screen.
@@ -559,6 +588,13 @@ export default function HomeScreen(): React.ReactElement {
   }
 
   // ══════════════════════════════════════════════════════════════════════
+  const merchantProjectionForRender =
+    merchantBalanceProjection ??
+    buildMerchantBalanceProjection({
+      settledBalanceKobo: balanceKobo,
+      ...getPendingIncomingSummary(),
+    });
+
   // MERCHANT VIEW
   // ══════════════════════════════════════════════════════════════════════
   return (
@@ -636,12 +672,27 @@ export default function HomeScreen(): React.ReactElement {
           </View>
           <View style={styles.balanceHeader}>
             <View>
-              <Text style={[styles.balanceLabel, { color: t.textSec }]}>Total Balance</Text>
+              <Text style={[styles.balanceLabel, { color: t.textSec }]}>Settled Balance</Text>
               <Text style={[styles.balanceAmount, { color: t.text }]}>
-                {formatNaira(balanceKobo)}
+                {formatNaira(merchantProjectionForRender.settledBalanceKobo)}
               </Text>
               <Text style={[styles.balanceUpdated, { color: t.textMut }]}>
-                {jwtFresh ? "✓ Updated just now" : "Last known balance"}
+                {jwtFresh ? "✓ Updated just now" : "Last known settled balance"}
+              </Text>
+              {merchantProjectionForRender.hasPendingSync ? (
+                <>
+                  <Text style={[styles.balancePendingSummary, { color: t.textSec }]}>
+                    Pending Verification: {formatNaira(merchantProjectionForRender.pendingIncomingKobo)}
+                  </Text>
+                  <Text style={[styles.balancePendingDetail, { color: t.textMut }]}>
+                    from {merchantProjectionForRender.pendingIncomingCount} payment
+                    {merchantProjectionForRender.pendingIncomingCount === 1 ? "" : "s"}.
+                    {" "}Sync to make these payments available for cashout.
+                  </Text>
+                </>
+              ) : null}
+              <Text style={[styles.balancePendingSummary, { color: t.textSec }]}>
+                Available for Cashout: {formatNaira(merchantProjectionForRender.cashoutableBalanceKobo)}
               </Text>
             </View>
             <View
@@ -660,19 +711,26 @@ export default function HomeScreen(): React.ReactElement {
 
         <View style={[styles.syncCard, { backgroundColor: t.card, borderColor: t.border }, t.shadow]}>
           <View>
-            <Text style={[styles.syncTitle, { color: t.textSec }]}>Pending Syncs</Text>
-            <Text style={[styles.syncCount, { color: t.text }]}>{pendingCount} payments</Text>
+            <Text style={[styles.syncTitle, { color: t.textSec }]}>Pending Verification</Text>
+            <Text style={[styles.syncCount, { color: t.text }]}>
+              {merchantProjectionForRender.pendingIncomingCount} payments
+            </Text>
+            {merchantProjectionForRender.hasPendingSync ? (
+              <Text style={[styles.syncAmount, { color: t.textSec }]}>
+                {formatNaira(merchantProjectionForRender.pendingIncomingKobo)} pending sync
+              </Text>
+            ) : null}
           </View>
           <Pressable
             style={({ pressed }) => [
               styles.syncButton,
               { backgroundColor: t.text },
               pressed && styles.buttonPressed,
-              (isSyncing || pendingCount === 0 || !jwtFresh) &&
+              (isSyncing || merchantProjectionForRender.pendingIncomingCount === 0 || !jwtFresh) &&
               styles.buttonDisabled,
             ]}
             onPress={() => void handleSync()}
-            disabled={isSyncing || pendingCount === 0 || !jwtFresh}
+            disabled={isSyncing || merchantProjectionForRender.pendingIncomingCount === 0 || !jwtFresh}
           >
             <Text style={[styles.syncButtonText, { color: t.bg }]}>
               {isSyncing ? "Syncing..." : "Sync Now"}
@@ -1080,6 +1138,11 @@ const styles = StyleSheet.create({
   syncCount: {
     fontFamily: fonts.bold,
     fontSize: fontSizes.cardTitle,
+    marginTop: spacing.xs,
+  },
+  syncAmount: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.sm,
     marginTop: spacing.xs,
   },
   syncButton: {
