@@ -1,56 +1,77 @@
-import { fetchLedger } from "../api/ledger";
+import { fetchOutgoingStatuses } from "../api/outgoing-status";
 import { listPendingByStatus, updateTransactionStatus } from "../ledger/db";
 import { logger } from "../lib/logger";
 
 /**
- * Sync local outgoing pending transactions against server-confirmed ledger rows.
+ * Sync local outgoing pending transactions against backend terminal statuses.
  *
- * If a local outgoing pending transactionId appears in /me/ledger, we mark it
- * reconciled locally so spendable balance no longer subtracts it twice.
+ * The backend is authoritative for whether a locally reserved outgoing payment
+ * is now reconciled, expired_unclaimed, rejected, or still unknown_pending.
  *
  * Idempotent: only rows still in pending_reconciliation are considered.
  * Offline-safe: on network/schema failure, no local status changes are made.
  */
 export async function syncOutgoingPendingFromServerLedger(): Promise<{
-  markedReconciled: number;
+  markedTerminal: number;
 }> {
   const pendingOutgoing = listPendingByStatus(
     "pending_reconciliation",
     "outgoing",
   );
   if (pendingOutgoing.length === 0) {
-    return { markedReconciled: 0 };
+    return { markedTerminal: 0 };
   }
 
   try {
-    const serverTransactionIds = new Set<string>();
-    let cursor: string | undefined;
+    let markedTerminal = 0;
 
-    // Fetch up to 3 pages (max 300 rows) to keep sync bounded on mobile.
-    for (let page = 0; page < 3; page++) {
-      const response = await fetchLedger(cursor, 100);
-      for (const entry of response.entries) {
-        serverTransactionIds.add(entry.transactionId);
+    for (let i = 0; i < pendingOutgoing.length; i += 50) {
+      const batch = pendingOutgoing.slice(i, i + 50);
+      const transactions = batch.flatMap((tx) => {
+        try {
+          return [{
+            transactionId: tx.id,
+            signedEnvelope: JSON.parse(tx.envelopeJson),
+          }];
+        } catch (error: unknown) {
+          logger.warn("Outgoing status sync skipped malformed local envelope", {
+            transactionId: tx.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return [];
+        }
+      });
+
+      if (transactions.length === 0) {
+        continue;
       }
 
-      if (!response.nextCursor) {
-        break;
+      const statuses = await fetchOutgoingStatuses(transactions);
+      for (const status of statuses) {
+        if (status.status === "reconciled") {
+          updateTransactionStatus(status.transactionId, "reconciled");
+          markedTerminal++;
+        } else if (status.status === "expired_unclaimed") {
+          updateTransactionStatus(
+            status.transactionId,
+            "rejected",
+            "expired_unclaimed",
+          );
+          markedTerminal++;
+        } else if (status.status === "rejected") {
+          updateTransactionStatus(
+            status.transactionId,
+            "rejected",
+            status.reason,
+          );
+          markedTerminal++;
+        }
       }
-      cursor = response.nextCursor;
     }
 
-    let markedReconciled = 0;
-    for (const tx of pendingOutgoing) {
-      if (serverTransactionIds.has(tx.id)) {
-        updateTransactionStatus(tx.id, "reconciled");
-        markedReconciled++;
-      }
-    }
-
-    return { markedReconciled };
+    return { markedTerminal };
   } catch (error: unknown) {
-    logger.info("Outgoing pending sync skipped (offline or ledger unavailable)", error);
-    return { markedReconciled: 0 };
+    logger.info("Outgoing pending sync skipped (offline or status unavailable)", error);
+    return { markedTerminal: 0 };
   }
 }
-

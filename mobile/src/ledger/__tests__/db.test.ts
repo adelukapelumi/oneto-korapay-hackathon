@@ -75,6 +75,7 @@ function createMockDb() {
         sequence_number: sequence_number as number,
         direction: direction as string,
         status: "pending_reconciliation",
+        terminal_reason: null,
         created_at: created_at as string,
         reconciled_at: null,
       });
@@ -98,13 +99,19 @@ function createMockDb() {
     if (s.startsWith("UPDATE PENDING_TRANSACTIONS")) {
       ensureTable("pending_transactions");
       const rows = tables.get("pending_transactions")!;
-      const [newStatus, reconciledAt, transactionId] = params;
+      const [newStatus, terminalReason, reconciledAt, transactionId] = params;
       const row = rows.find((r) => r["id"] === transactionId);
       if (row) {
         row["status"] = newStatus as string;
+        row["terminal_reason"] = (terminalReason ?? null) as string | null;
         row["reconciled_at"] = reconciledAt as string;
         return { changes: 1 };
       }
+      return { changes: 0 };
+    }
+
+    if (s.startsWith("ALTER TABLE PENDING_TRANSACTIONS ADD COLUMN TERMINAL_REASON")) {
+      ensureTable("pending_transactions");
       return { changes: 0 };
     }
 
@@ -688,7 +695,31 @@ describe("updateTransactionStatus", () => {
 
     const rows = mockDbInstance.tables.get("pending_transactions")!;
     expect(rows[0]!["status"]).toBe("reconciled");
+    expect(rows[0]!["terminal_reason"]).toBeNull();
     expect(rows[0]!["reconciled_at"]).not.toBeNull();
+  });
+
+  it("stores terminal reason for backend-confirmed expiry", () => {
+    insertPendingTransaction({
+      id: "tx_0000000000000002",
+      envelopeJson: makeEnvelopeJson(),
+      recipientId: "u_abcdef0123456789",
+      recipientLabel: undefined,
+      amountKobo: 10_000,
+      sequenceNumber: 1,
+      direction: "outgoing",
+      createdAt: "2026-05-01T10:00:00.000Z",
+    });
+
+    updateTransactionStatus(
+      "tx_0000000000000002",
+      "rejected",
+      "expired_unclaimed",
+    );
+
+    const rows = mockDbInstance.tables.get("pending_transactions")!;
+    expect(rows[0]!["status"]).toBe("rejected");
+    expect(rows[0]!["terminal_reason"]).toBe("expired_unclaimed");
   });
 });
 

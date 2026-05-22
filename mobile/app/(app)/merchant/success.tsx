@@ -21,7 +21,11 @@ import {
 } from "../../../src/theme/tokens";
 
 export default function SuccessScreen() {
-  const { senderUserId, amountKobo } = useLocalSearchParams<{ senderUserId: string, amountKobo: string }>();
+  const { senderUserId, amountKobo, claimDeadlineAt } = useLocalSearchParams<{
+    senderUserId: string,
+    amountKobo: string,
+    claimDeadlineAt: string,
+  }>();
   const router = useRouter();
   const { state } = useAuth();
   const { mode } = useThemeMode();
@@ -29,6 +33,14 @@ export default function SuccessScreen() {
 
   const naira = (parseInt(amountKobo || "0", 10) / 100).toFixed(2);
   const truncatedSender = senderUserId ? `${senderUserId.substring(0, 8)}...` : "Customer";
+  const claimDeadlineText = claimDeadlineAt
+    ? new Date(claimDeadlineAt).toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      })
+    : null;
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(0.8)).current;
@@ -88,6 +100,11 @@ export default function SuccessScreen() {
           <Text style={[styles.subtitle, { color: t.textSec }]}>
             Student payment received from {truncatedSender}
           </Text>
+          {claimDeadlineText ? (
+            <Text style={[styles.deadlineText, { color: t.textSec }]}>
+              Payment captured. Sync before {claimDeadlineText} to secure settlement.
+            </Text>
+          ) : null}
 
           {state.status === "authed" && state.jwtFresh && (
             <View style={styles.syncBadge}>
@@ -179,6 +196,12 @@ const styles = StyleSheet.create({
   subtitle: {
     fontFamily: fonts.regular,
     fontSize: fontSizes.body,
+  },
+  deadlineText: {
+    fontFamily: fonts.medium,
+    fontSize: fontSizes.sm,
+    textAlign: "center",
+    marginTop: spacing.xs,
   },
   syncBadge: {
     marginTop: spacing.md,

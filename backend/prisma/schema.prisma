@@ -35,6 +35,11 @@ enum DeviceKeyStatus {
   REVOKED
 }
 
+enum OfflinePaymentResolutionStatus {
+  EXPIRED_UNCLAIMED
+  REJECTED
+}
+
 enum KeyRecoveryStatus {
   PENDING
   APPROVED
@@ -74,6 +79,7 @@ model User {
   ledgerEntries       LedgerEntry[]
   processedSequences ProcessedSequence[]
   deviceKeys         UserDeviceKey[]
+  offlinePaymentResolutions OfflinePaymentResolution[] @relation("SenderOfflinePaymentResolutions")
   keyRecoveryRequests KeyRecoveryRequest[] @relation("UserKeyRecoveryRequests")
   reviewedKeyRecoveryRequests KeyRecoveryRequest[] @relation("ReviewedKeyRecoveryRequests")
   merchantProfile    MerchantProfile?
@@ -172,6 +178,25 @@ model ProcessedSequence {
 
   @@unique([userId, sequenceNumber])
   @@index([userId, createdAt])
+}
+
+model OfflinePaymentResolution {
+  id              String                         @id @default(cuid())
+  transactionId   String                         @unique
+  senderUserId    String
+  recipientUserId String
+  status          OfflinePaymentResolutionStatus
+  reason          String
+  claimDeadlineAt DateTime
+  envelopeJson    Json?
+  createdAt       DateTime                       @default(now())
+  updatedAt       DateTime                       @updatedAt
+
+  sender          User                           @relation("SenderOfflinePaymentResolutions", fields: [senderUserId], references: [id])
+
+  @@index([senderUserId, status])
+  @@index([recipientUserId, status])
+  @@index([claimDeadlineAt])
 }
 
 model MerchantProfile {

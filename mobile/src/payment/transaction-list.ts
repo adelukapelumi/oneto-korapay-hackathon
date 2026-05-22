@@ -21,6 +21,7 @@ export type DisplayTransaction =
       recipientLabel: string | null;
       createdAt: string;
       status: "pending_reconciliation" | "reconciled" | "rejected";
+      terminalReason: string | null;
     };
 
 /**
@@ -59,6 +60,7 @@ export function mergeTransactions(
       recipientLabel: tx.recipientLabel,
       createdAt: tx.createdAt,
       status: tx.status,
+      terminalReason: tx.terminalReason,
     }));
 
   return [...serverDisplay, ...localDisplay].sort(
