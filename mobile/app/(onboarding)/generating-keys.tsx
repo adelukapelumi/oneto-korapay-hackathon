@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
   Animated,
   Easing,
   Pressable,
@@ -9,7 +8,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 import { generateKeypair } from "@oneto/shared";
 import {
   moveKeypairToPendingRecovery,
@@ -21,6 +20,7 @@ import {
 } from "../../src/api/keys";
 import { NetworkError } from "../../src/api/errors";
 import { useAuth } from "../../src/auth/auth-state";
+import { consumePendingOnboardingPin } from "../../src/auth/onboarding-pin-memory";
 import { logger } from "../../src/lib/logger";
 import { useThemeMode } from "../../src/theme/theme-provider";
 import {
@@ -49,8 +49,6 @@ export default function GeneratingKeysScreen(): React.ReactElement {
   const router = useRouter();
   const { mode } = useThemeMode();
   const t = getTheme(mode);
-  const params = useLocalSearchParams<{ pin?: string }>();
-  const pin = typeof params.pin === "string" ? params.pin : "";
   const [phase, setPhase] = useState<Phase>({
     kind: "working",
     message: "Generating keypair…",
@@ -92,8 +90,12 @@ export default function GeneratingKeysScreen(): React.ReactElement {
     if (startedRef.current) return;
     startedRef.current = true;
 
+    const pin = consumePendingOnboardingPin();
     if (!pin || pin.length !== 6) {
-      setPhase({ kind: "error", message: "Missing PIN. Go back and try again." });
+      setPhase({
+        kind: "error",
+        message: "Your secure setup session expired. Please create your PIN again.",
+      });
       return;
     }
 
@@ -162,7 +164,7 @@ export default function GeneratingKeysScreen(): React.ReactElement {
         });
       }
     })();
-  }, [pin, completeOnboarding, router, stagePendingRecoveryKeypair]);
+  }, [completeOnboarding, router, stagePendingRecoveryKeypair]);
 
   const spinInterpolation = spinAnim.interpolate({
     inputRange: [0, 1],
@@ -183,12 +185,11 @@ export default function GeneratingKeysScreen(): React.ReactElement {
               pressed && styles.buttonPressed,
             ]}
             onPress={() => {
-              startedRef.current = false;
-              setPhase({ kind: "working", message: "Retrying…" });
+              router.replace("/(onboarding)/pin-setup");
             }}
             accessibilityRole="button"
           >
-            <Text style={styles.buttonText}>Try again</Text>
+            <Text style={styles.buttonText}>Back to PIN setup</Text>
           </Pressable>
         </View>
       </SafeAreaView>

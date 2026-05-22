@@ -9,6 +9,7 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Screen } from "../../components/Screen";
+import { setPendingOnboardingPin } from "../../src/auth/onboarding-pin-memory";
 import { useThemeMode } from "../../src/theme/theme-provider";
 import { useCompactLayout } from "../../src/ui/responsive";
 import {
@@ -77,11 +78,9 @@ export default function PinSetupScreen(): React.ReactElement {
       return;
     }
 
-    // Both steps passed — navigate once, cleanly.
-    router.replace({
-      pathname: "/(onboarding)/generating-keys",
-      params: { pin },
-    });
+    // Both steps passed. Keep the PIN out of route params/history/dev tooling.
+    setPendingOnboardingPin(pin);
+    router.replace("/(onboarding)/generating-keys");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pin]);
 
