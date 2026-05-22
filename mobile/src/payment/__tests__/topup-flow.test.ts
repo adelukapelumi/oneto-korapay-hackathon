@@ -1,4 +1,10 @@
-import { requestTopup, TopupAmountError, MIN_TOPUP_KOBO, MAX_TOPUP_KOBO } from "../topup-flow";
+import {
+  requestTopup,
+  TopupAmountError,
+  MIN_TOPUP_KOBO,
+  MAX_TOPUP_KOBO,
+  TOPUP_AMOUNT_ROUTE,
+} from "../topup-flow";
 import { initiateTopup } from "../../api/topup";
 
 jest.mock("../../api/topup");
@@ -8,6 +14,10 @@ describe("requestTopup", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  it("keeps the top-up amount route aligned with the existing Expo route", () => {
+    expect(TOPUP_AMOUNT_ROUTE).toBe("/(app)/topup/amount");
   });
 
   it("should reject if amount is below minimum", async () => {

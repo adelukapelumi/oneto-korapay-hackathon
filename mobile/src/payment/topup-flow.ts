@@ -1,5 +1,7 @@
 import { initiateTopup } from "../api/topup";
 
+export const TOPUP_AMOUNT_ROUTE = "/(app)/topup/amount" as const;
+
 // Backend DTO constraints from topup.controller.ts
 export const MIN_TOPUP_KOBO = 10_000;        // ₦100
 export const MAX_TOPUP_KOBO = 100_000_000;   // ₦1,000,000

@@ -27,6 +27,7 @@ import {
   getStudentBalanceProjection,
   type StudentBalanceProjection,
 } from "../../../src/payment/balance-snapshot";
+import { TOPUP_AMOUNT_ROUTE } from "../../../src/payment/topup-flow";
 import { logger } from "../../../src/lib/logger";
 import { PaymentRequest } from "@oneto/shared";
 import { BackButton } from "../../../components/BackButton";
@@ -279,6 +280,7 @@ export default function ConfirmPaymentScreen(): React.ReactElement | null {
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
       >
         {/* Payment Card */}
         <View style={[styles.paymentCard, { backgroundColor: t.card, borderColor: t.border }, t.shadow]}>
@@ -412,7 +414,7 @@ export default function ConfirmPaymentScreen(): React.ReactElement | null {
                 t.shadow,
                 pressed && styles.buttonPressed,
               ]}
-              onPress={() => router.push("/(app)/topup/amount")}
+              onPress={() => router.push(TOPUP_AMOUNT_ROUTE)}
             >
               <Text style={styles.topUpButtonText}>Top Up to Continue</Text>
             </Pressable>
