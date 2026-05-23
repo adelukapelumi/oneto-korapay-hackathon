@@ -44,6 +44,10 @@ const KorapayVerifyTransactionResponseSchema = z.object({
     status: z.string(),
     amount: z.union([z.string(), z.number()]).optional(),
     amount_paid: z.union([z.string(), z.number()]).optional(),
+    fee: z.union([z.string(), z.number()]).optional(),
+    transaction_fee: z.union([z.string(), z.number()]).optional(),
+    processor_fee: z.union([z.string(), z.number()]).optional(),
+    merchant_bears_cost: z.boolean().optional(),
     currency: z.string().optional(),
   }).passthrough().optional(),
 }).passthrough();
@@ -53,6 +57,10 @@ export interface KorapayTransactionVerification {
   reference?: string;
   amount?: string | number;
   amountPaid?: string | number;
+  fee?: string | number;
+  transactionFee?: string | number;
+  processorFee?: string | number;
+  merchantBearsCost?: boolean;
   currency?: string;
 }
 
@@ -107,6 +115,7 @@ export class KorapayService {
       amount: amountNgn,
       reference: params.reference,
       currency: 'NGN',
+      merchant_bears_cost: false,
       customer: {
         email: params.customerEmail,
         name: params.customerName || 'Oneto User',
@@ -231,6 +240,10 @@ export class KorapayService {
         reference: parsed.data.data.reference,
         amount: parsed.data.data.amount,
         amountPaid: parsed.data.data.amount_paid,
+        fee: parsed.data.data.fee,
+        transactionFee: parsed.data.data.transaction_fee,
+        processorFee: parsed.data.data.processor_fee,
+        merchantBearsCost: parsed.data.data.merchant_bears_cost,
         currency: parsed.data.data.currency,
       };
     } catch (error) {

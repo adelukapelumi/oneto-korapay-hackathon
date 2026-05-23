@@ -7,6 +7,7 @@ import * as crypto from 'crypto';
 import { KorapayWebhookSchema, type KorapayWebhookPayload } from './korapay-webhook.schema';
 
 export type TopupStatus = 'PENDING' | 'SUCCESS' | 'FAILED' | 'EXPIRED';
+type TopupFeeBearer = 'STUDENT' | 'ONETO' | 'UNKNOWN';
 
 export interface TopupStatusResponse {
   reference: string;
@@ -16,6 +17,7 @@ export interface TopupStatusResponse {
 
 const SUCCESSFUL_KORAPAY_STATUSES = new Set(['success', 'successful']);
 const FAILED_KORAPAY_STATUSES = new Set(['failed', 'failure']);
+const STUDENT_TOPUP_FEE_BEARER: TopupFeeBearer = 'STUDENT';
 type TopupFinalizationSource = 'webhook' | 'status_poll';
 
 interface TopupRecordSnapshot {
@@ -91,6 +93,8 @@ export class TopupService {
         reference,
         userId,
         amountKobo: BigInt(amountKobo),
+        creditedAmountKobo: BigInt(amountKobo),
+        feeBearer: STUDENT_TOPUP_FEE_BEARER,
         status: 'PENDING',
         korapayResponse: {} as Prisma.InputJsonValue,
       },
@@ -152,16 +156,27 @@ export class TopupService {
       }
 
       try {
+        const webhookFinancials = this.buildTopupFinancialFields(
+          pendingTopup?.amountKobo ?? amountKobo,
+          undefined,
+          validated,
+        );
+
         await this.prisma.paymentTopup.upsert({
           where: { reference },
           update: {
             status: 'FAILED',
+            ...webhookFinancials,
             korapayResponse: validated as unknown as Prisma.InputJsonValue,
           },
           create: {
             reference,
             userId: pendingTopup?.userId ?? 'UNKNOWN',
             amountKobo,
+            creditedAmountKobo: pendingTopup?.amountKobo ?? amountKobo,
+            feeBearer: STUDENT_TOPUP_FEE_BEARER,
+            processorFeeKobo: webhookFinancials.processorFeeKobo,
+            grossPaidKobo: webhookFinancials.grossPaidKobo,
             status: 'FAILED',
             korapayResponse: validated as unknown as Prisma.InputJsonValue,
           },
@@ -217,6 +232,7 @@ export class TopupService {
       await this.prisma.paymentTopup.update({
         where: { reference },
         data: {
+          ...this.buildTopupFinancialFields(topup.amountKobo, undefined, webhookPayload),
           status: 'FAILED',
           korapayResponse: {
             ...this.buildTopupAuditPayload('webhook', webhookVerification, webhookPayload),
@@ -276,6 +292,7 @@ export class TopupService {
       await this.prisma.paymentTopup.update({
         where: { reference },
         data: {
+          ...this.buildTopupFinancialFields(topup.amountKobo, undefined, options.webhookPayload),
           korapayResponse: {
             source,
             webhook: options.webhookPayload ?? null,
@@ -299,6 +316,7 @@ export class TopupService {
         where: { reference },
         data: {
           status: 'FAILED',
+          ...this.buildTopupFinancialFields(topup.amountKobo, verification, options.webhookPayload),
           korapayResponse: this.buildTopupAuditPayload(source, verification, options.webhookPayload) as Prisma.InputJsonValue,
         },
       });
@@ -313,6 +331,7 @@ export class TopupService {
       await this.prisma.paymentTopup.update({
         where: { reference },
         data: {
+          ...this.buildTopupFinancialFields(topup.amountKobo, verification, options.webhookPayload),
           korapayResponse: this.buildTopupAuditPayload(source, verification, options.webhookPayload) as Prisma.InputJsonValue,
         },
       });
@@ -320,13 +339,13 @@ export class TopupService {
       return topup;
     }
 
-    const verifiedAmountKobo = this.extractVerifiedAmountKobo(verification);
-    if (topup.amountKobo !== verifiedAmountKobo) {
+    const verifiedCreditAmountKobo = this.extractVerifiedCreditAmountKobo(verification);
+    if (topup.amountKobo !== verifiedCreditAmountKobo) {
       this.logger.error(
         {
           reference,
           expectedAmountKobo: topup.amountKobo.toString(),
-          receivedAmountKobo: verifiedAmountKobo.toString(),
+          receivedAmountKobo: verifiedCreditAmountKobo.toString(),
           source,
         },
         'Top-up verification amount mismatch; refusing to credit balance',
@@ -336,6 +355,7 @@ export class TopupService {
         where: { reference },
         data: {
           status: 'FAILED',
+          ...this.buildTopupFinancialFields(topup.amountKobo, verification, options.webhookPayload),
           korapayResponse: {
             ...this.buildTopupAuditPayload(source, verification, options.webhookPayload),
             internal_failure: 'amount_mismatch',
@@ -349,7 +369,7 @@ export class TopupService {
       };
     }
 
-    return this.creditVerifiedPendingTopup(topup, verifiedAmountKobo, verification, source, options.webhookPayload);
+    return this.creditVerifiedPendingTopup(topup, verifiedCreditAmountKobo, verification, source, options.webhookPayload);
   }
 
   private async creditVerifiedPendingTopup(
@@ -385,6 +405,7 @@ export class TopupService {
               where: { reference: topup.reference },
               data: {
                 status: 'FAILED',
+                ...this.buildTopupFinancialFields(latestTopup.amountKobo, verification, webhookPayload),
                 korapayResponse: {
                   ...this.buildTopupAuditPayload(source, verification, webhookPayload),
                   internal_failure: 'amount_mismatch',
@@ -424,6 +445,7 @@ export class TopupService {
               where: { reference: topup.reference },
               data: {
                 status: 'FAILED',
+                ...this.buildTopupFinancialFields(latestTopup.amountKobo, verification, webhookPayload),
                 korapayResponse: {
                   ...this.buildTopupAuditPayload(source, verification, webhookPayload),
                   internal_failure: 'balance_cap_exceeded',
@@ -468,6 +490,7 @@ export class TopupService {
             where: { reference: topup.reference },
             data: {
               status: 'SUCCESS',
+              ...this.buildTopupFinancialFields(verifiedAmountKobo, verification, webhookPayload),
               korapayResponse: this.buildTopupAuditPayload(source, verification, webhookPayload) as Prisma.InputJsonValue,
             },
           });
@@ -582,27 +605,15 @@ export class TopupService {
     return parsed;
   }
 
-  private extractVerifiedAmountKobo(verification: KorapayTransactionVerification): bigint {
-    const candidates = [verification.amountPaid, verification.amount];
-
-    for (const candidate of candidates) {
-      if (candidate === undefined || candidate === null) {
-        continue;
-      }
-
-      const raw = typeof candidate === 'number' ? candidate.toString() : candidate.trim();
-      if (!/^\d+(\.\d{1,2})?$/.test(raw)) {
-        continue;
-      }
-
-      const [wholePart, decimalPart = ''] = raw.split('.');
-      const parsed = BigInt(`${wholePart}${decimalPart.padEnd(2, '0')}`);
-      if (parsed > BigInt(0)) {
-        return parsed;
-      }
+  private extractVerifiedCreditAmountKobo(verification: KorapayTransactionVerification): bigint {
+    if (verification.amount === undefined || verification.amount === null) {
+      throw new BadRequestException('Missing amount in verification payload');
     }
 
-    throw new BadRequestException('Missing amount in verification payload');
+    // Korapay `amount` is the charge amount requested by Oneto. When
+    // merchant_bears_cost=false, `amount_paid` can include the student's
+    // processor fee and must not be used as the Oneto credit amount.
+    return this.parseMajorAmountToKobo(verification.amount, 'verification');
   }
 
   private toWebhookVerificationSnapshot(webhookPayload: KorapayWebhookPayload): KorapayTransactionVerification {
@@ -610,12 +621,20 @@ export class TopupService {
       typeof webhookPayload.data.currency === 'string'
         ? webhookPayload.data.currency
         : undefined;
+    const merchantBearsCostValue = (webhookPayload.data as Record<string, unknown>).merchant_bears_cost;
 
     return {
       status: webhookPayload.data.status ?? '',
       reference: this.resolveWebhookReference(webhookPayload.data),
       amount: webhookPayload.data.amount,
-      amountPaid: webhookPayload.data.amount,
+      amountPaid: this.readKorapayAmountLikeField(webhookPayload.data, 'amount_paid') ?? webhookPayload.data.amount,
+      fee: this.readKorapayAmountLikeField(webhookPayload.data, 'fee'),
+      transactionFee: this.readKorapayAmountLikeField(webhookPayload.data, 'transaction_fee'),
+      processorFee: this.readKorapayAmountLikeField(webhookPayload.data, 'processor_fee'),
+      merchantBearsCost:
+        typeof merchantBearsCostValue === 'boolean'
+          ? merchantBearsCostValue
+          : undefined,
       currency,
     };
   }
@@ -641,6 +660,20 @@ export class TopupService {
     verification: KorapayTransactionVerification,
     webhookPayload?: KorapayWebhookPayload,
   ): Record<string, unknown> {
+    const creditAmountKobo =
+      verification.amount === undefined
+        ? null
+        : this.parseOptionalMajorAmountToKobo(verification.amount, 'verification amount')?.toString() ?? null;
+    const grossPaidKobo =
+      this.extractGrossPaidKobo(verification, webhookPayload)?.toString() ?? null;
+    const processorFeeKobo =
+      this.extractProcessorFeeKobo(
+        verification,
+        webhookPayload,
+        creditAmountKobo === null ? null : BigInt(creditAmountKobo),
+        grossPaidKobo === null ? null : BigInt(grossPaidKobo),
+      )?.toString() ?? null;
+
     return {
       source,
       webhook: webhookPayload ?? null,
@@ -649,8 +682,146 @@ export class TopupService {
         reference: verification.reference ?? null,
         amount: verification.amount ?? null,
         amountPaid: verification.amountPaid ?? null,
+        fee: verification.fee ?? null,
+        transactionFee: verification.transactionFee ?? null,
+        processorFee: verification.processorFee ?? null,
+        merchantBearsCost: verification.merchantBearsCost ?? null,
         currency: verification.currency ?? null,
       },
+      accounting: {
+        feeBearer: STUDENT_TOPUP_FEE_BEARER,
+        creditAmountKobo,
+        grossPaidKobo,
+        processorFeeKobo,
+      },
     };
+  }
+
+  private buildTopupFinancialFields(
+    creditedAmountKobo: bigint,
+    verification?: KorapayTransactionVerification,
+    webhookPayload?: KorapayWebhookPayload,
+  ): {
+    creditedAmountKobo: bigint;
+    feeBearer: TopupFeeBearer;
+    processorFeeKobo?: bigint;
+    grossPaidKobo?: bigint;
+  } {
+    const grossPaidKobo = verification
+      ? this.extractGrossPaidKobo(verification, webhookPayload)
+      : this.extractGrossPaidKoboFromWebhook(webhookPayload);
+    const processorFeeKobo = verification
+      ? this.extractProcessorFeeKobo(verification, webhookPayload, creditedAmountKobo, grossPaidKobo)
+      : this.extractProcessorFeeKoboFromWebhook(webhookPayload, creditedAmountKobo, grossPaidKobo);
+
+    return {
+      creditedAmountKobo,
+      feeBearer: STUDENT_TOPUP_FEE_BEARER,
+      processorFeeKobo: processorFeeKobo ?? undefined,
+      grossPaidKobo: grossPaidKobo ?? undefined,
+    };
+  }
+
+  private extractGrossPaidKobo(
+    verification: KorapayTransactionVerification,
+    webhookPayload?: KorapayWebhookPayload,
+  ): bigint | null {
+    return (
+      this.parseOptionalMajorAmountToKobo(verification.amountPaid, 'verification amount_paid') ??
+      this.extractGrossPaidKoboFromWebhook(webhookPayload)
+    );
+  }
+
+  private extractGrossPaidKoboFromWebhook(webhookPayload?: KorapayWebhookPayload): bigint | null {
+    return this.parseOptionalMajorAmountToKobo(
+      this.readKorapayAmountLikeField(webhookPayload?.data, 'amount_paid'),
+      'webhook amount_paid',
+    );
+  }
+
+  private extractProcessorFeeKobo(
+    verification: KorapayTransactionVerification,
+    webhookPayload: KorapayWebhookPayload | undefined,
+    creditedAmountKobo: bigint | null,
+    grossPaidKobo: bigint | null,
+  ): bigint | null {
+    const explicitFee =
+      this.parseOptionalMajorAmountToKobo(verification.processorFee, 'verification processor_fee') ??
+      this.parseOptionalMajorAmountToKobo(verification.transactionFee, 'verification transaction_fee') ??
+      this.parseOptionalMajorAmountToKobo(verification.fee, 'verification fee') ??
+      this.extractProcessorFeeKoboFromWebhook(webhookPayload, creditedAmountKobo, grossPaidKobo);
+
+    if (explicitFee !== null) {
+      return explicitFee;
+    }
+
+    if (creditedAmountKobo !== null && grossPaidKobo !== null && grossPaidKobo >= creditedAmountKobo) {
+      return grossPaidKobo - creditedAmountKobo;
+    }
+
+    return null;
+  }
+
+  private extractProcessorFeeKoboFromWebhook(
+    webhookPayload: KorapayWebhookPayload | undefined,
+    creditedAmountKobo: bigint | null,
+    grossPaidKobo: bigint | null,
+  ): bigint | null {
+    const data = webhookPayload?.data;
+    const explicitFee =
+      this.parseOptionalMajorAmountToKobo(
+        this.readKorapayAmountLikeField(data, 'processor_fee'),
+        'webhook processor_fee',
+      ) ??
+      this.parseOptionalMajorAmountToKobo(
+        this.readKorapayAmountLikeField(data, 'transaction_fee'),
+        'webhook transaction_fee',
+      ) ??
+      this.parseOptionalMajorAmountToKobo(this.readKorapayAmountLikeField(data, 'fee'), 'webhook fee');
+
+    if (explicitFee !== null) {
+      return explicitFee;
+    }
+
+    if (creditedAmountKobo !== null && grossPaidKobo !== null && grossPaidKobo >= creditedAmountKobo) {
+      return grossPaidKobo - creditedAmountKobo;
+    }
+
+    return null;
+  }
+
+  private parseOptionalMajorAmountToKobo(
+    amount: string | number | undefined | null,
+    source: string,
+  ): bigint | null {
+    if (amount === undefined || amount === null) {
+      return null;
+    }
+
+    const raw = typeof amount === 'number' ? amount.toString() : amount.trim();
+    if (!/^\d+(\.\d{1,2})?$/.test(raw)) {
+      this.logger.warn({ source, amount }, 'Ignoring invalid optional Korapay amount field');
+      return null;
+    }
+
+    const [wholePart, decimalPart = ''] = raw.split('.');
+    const parsed = BigInt(`${wholePart}${decimalPart.padEnd(2, '0')}`);
+    return parsed >= BigInt(0) ? parsed : null;
+  }
+
+  private readKorapayAmountLikeField(
+    data: KorapayWebhookPayload['data'] | undefined,
+    field: string,
+  ): string | number | undefined {
+    if (!data) {
+      return undefined;
+    }
+
+    const value = (data as Record<string, unknown>)[field];
+    if (typeof value === 'string' || typeof value === 'number') {
+      return value;
+    }
+
+    return undefined;
   }
 }
