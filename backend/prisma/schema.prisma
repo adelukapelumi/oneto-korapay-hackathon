@@ -235,7 +235,7 @@ model Cashout {
   onetoFeeKobo         BigInt?
   korapayPayoutFeeKobo BigInt?
   netPayoutKobo        BigInt?
-  finalPayoutAmountKobo BigInt?
+  payoutAmountBeforeKorapayFeeKobo BigInt?
   status               CashoutStatus @default(PENDING)
   cashoutBankName      String
   cashoutBankCode      String

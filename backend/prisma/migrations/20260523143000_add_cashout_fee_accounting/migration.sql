@@ -4,7 +4,7 @@ ALTER TABLE "Cashout"
   ADD COLUMN "onetoFeeKobo" BIGINT,
   ADD COLUMN "korapayPayoutFeeKobo" BIGINT,
   ADD COLUMN "netPayoutKobo" BIGINT,
-  ADD COLUMN "finalPayoutAmountKobo" BIGINT;
+  ADD COLUMN "payoutAmountBeforeKorapayFeeKobo" BIGINT;
 
 UPDATE "Cashout"
 SET

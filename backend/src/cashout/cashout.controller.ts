@@ -14,7 +14,7 @@ type CashoutResponseShape = {
   onetoFeeKobo?: bigint | null;
   korapayPayoutFeeKobo?: bigint | null;
   netPayoutKobo?: bigint | null;
-  finalPayoutAmountKobo?: bigint | null;
+  payoutAmountBeforeKorapayFeeKobo?: bigint | null;
   status: CashoutStatus;
   requestedAt: Date;
 };
@@ -42,7 +42,7 @@ export class CashoutController {
       onetoFeeKobo: cashout.onetoFeeKobo?.toString() ?? null,
       korapayPayoutFeeKobo: cashout.korapayPayoutFeeKobo?.toString() ?? null,
       netPayoutKobo: cashout.netPayoutKobo?.toString() ?? null,
-      finalPayoutAmountKobo: cashout.finalPayoutAmountKobo?.toString() ?? null,
+      payoutAmountBeforeKorapayFeeKobo: cashout.payoutAmountBeforeKorapayFeeKobo?.toString() ?? null,
       status: cashout.status,
       requestedAt: cashout.requestedAt,
     };

@@ -31,7 +31,7 @@ type CashoutAccountingInput = {
   readonly onetoFeeKobo: bigint;
   readonly korapayPayoutFeeKobo: bigint | null;
   readonly netPayoutKobo: bigint | null;
-  readonly finalPayoutAmountKobo: bigint | null;
+  readonly payoutAmountBeforeKorapayFeeKobo: bigint | null;
 };
 
 @Injectable()
@@ -77,7 +77,7 @@ export class CashoutService {
       onetoFeeKobo: input.onetoFeeKobo.toString(),
       korapayPayoutFeeKobo: input.korapayPayoutFeeKobo?.toString() ?? null,
       netPayoutKobo: input.netPayoutKobo?.toString() ?? null,
-      finalPayoutAmountKobo: input.finalPayoutAmountKobo?.toString() ?? null,
+      payoutAmountBeforeKorapayFeeKobo: input.payoutAmountBeforeKorapayFeeKobo?.toString() ?? null,
     };
   }
 
@@ -242,7 +242,7 @@ export class CashoutService {
         onetoFeeKobo,
         korapayPayoutFeeKobo: null,
         netPayoutKobo: null,
-        finalPayoutAmountKobo: null,
+        payoutAmountBeforeKorapayFeeKobo: null,
         status: CashoutStatus.PENDING,
         cashoutBankName: user.merchantProfile.cashoutBankName,
         cashoutBankCode: user.merchantProfile.cashoutBankCode,
@@ -282,7 +282,8 @@ export class CashoutService {
           const grossAmountKobo = this.getGrossAmountKobo(cashout);
           const onetoFeeBps = cashout.onetoFeeBps ?? ONETO_SERVICE_FEE_BPS;
           const onetoFeeKobo = cashout.onetoFeeKobo ?? this.calculateOnetoFeeKobo(grossAmountKobo);
-          const finalPayoutAmountKobo = cashout.finalPayoutAmountKobo ?? (grossAmountKobo - onetoFeeKobo);
+          const payoutAmountBeforeKorapayFeeKobo =
+            cashout.payoutAmountBeforeKorapayFeeKobo ?? (grossAmountKobo - onetoFeeKobo);
           const korapayPayoutFeeKobo = cashout.korapayPayoutFeeKobo ?? null;
           const netPayoutKobo = this.calculateNetPayoutKobo(
             grossAmountKobo,
@@ -297,7 +298,7 @@ export class CashoutService {
               grossAmountKobo,
               onetoFeeBps,
               onetoFeeKobo,
-              finalPayoutAmountKobo,
+              payoutAmountBeforeKorapayFeeKobo,
               netPayoutKobo,
             },
           });
@@ -331,7 +332,7 @@ export class CashoutService {
             onetoFeeKobo,
             korapayPayoutFeeKobo,
             netPayoutKobo,
-            finalPayoutAmountKobo,
+            payoutAmountBeforeKorapayFeeKobo,
           });
           const newMerchantBalance = merchant.verifiedBalanceKobo - grossAmountKobo;
           await tx.user.update({
@@ -405,16 +406,27 @@ export class CashoutService {
 
     const grossAmountKobo = this.getGrossAmountKobo(cashout);
     const onetoFeeKobo = cashout.onetoFeeKobo ?? this.calculateOnetoFeeKobo(grossAmountKobo);
-    const payoutAmountKobo = cashout.finalPayoutAmountKobo ?? (grossAmountKobo - onetoFeeKobo);
+    const payoutAmountBeforeKorapayFeeKobo =
+      cashout.payoutAmountBeforeKorapayFeeKobo ?? (grossAmountKobo - onetoFeeKobo);
 
     try {
-      // Fee-unknown pilot behavior: Korapay gets the payable transfer amount
-      // after Oneto's service fee. We do not guess Korapay's fee; if the
-      // gateway charges it separately from Oneto's Korapay balance, we record
-      // that fee once Korapay discloses it.
+      // Payout-fee policy assumption for the pilot:
+      // Payout-fee policy assumption for the pilot:
+      // Korapay's documented payout response can return a fee after payout
+      // initiation, but we do not currently have a documented fee quote before
+      // transfer initiation. Approval therefore cannot display an exact final
+      // merchant receivable. We send gross minus Oneto's 2.5% fee to Korapay
+      // and calculate netPayoutKobo only after Korapay returns a fee.
+      //
+      // This treats the Korapay payout fee as merchant-borne only under the
+      // operating assumption that Korapay deducts the fee from the recipient /
+      // transfer amount. If Korapay confirms the fee is charged separately to
+      // Oneto instead, keep korapayPayoutFeeKobo as processor-expense audit
+      // data and do not present it as merchant-borne until a reliable
+      // fee-before-payout method exists.
       const payoutResult = await this.korapayService.initiatePayout({
         reference: korapayReference,
-        amountKobo: this.toSafeNumberKobo(payoutAmountKobo),
+        amountKobo: this.toSafeNumberKobo(payoutAmountBeforeKorapayFeeKobo),
         bankCode: cashout.cashoutBankCode,
         accountNumber: cashout.cashoutAccountNumber,
         accountName: cashout.cashoutAccountName,
@@ -427,7 +439,7 @@ export class CashoutService {
         data: {
           korapayResponse: this.toJsonValue(payoutResult.rawResponse),
           korapayPayoutFeeKobo,
-          finalPayoutAmountKobo: payoutAmountKobo,
+          payoutAmountBeforeKorapayFeeKobo,
           netPayoutKobo: this.calculateNetPayoutKobo(
             grossAmountKobo,
             onetoFeeKobo,
@@ -623,7 +635,7 @@ export class CashoutService {
         onetoFeeKobo: true,
         korapayPayoutFeeKobo: true,
         netPayoutKobo: true,
-        finalPayoutAmountKobo: true,
+        payoutAmountBeforeKorapayFeeKobo: true,
         status: true,
         requestedAt: true,
         completedAt: true,

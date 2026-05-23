@@ -138,7 +138,7 @@ describe('CashoutService', () => {
           onetoFeeKobo: BigInt(125),
           korapayPayoutFeeKobo: null,
           netPayoutKobo: null,
-          finalPayoutAmountKobo: null,
+          payoutAmountBeforeKorapayFeeKobo: null,
           status: CashoutStatus.PENDING,
           cashoutBankName: 'Wema Bank',
           cashoutBankCode: '035',
@@ -182,7 +182,7 @@ describe('CashoutService', () => {
       onetoFeeKobo: BigInt(125),
       korapayPayoutFeeKobo: null,
       netPayoutKobo: null,
-      finalPayoutAmountKobo: null,
+      payoutAmountBeforeKorapayFeeKobo: null,
       status: CashoutStatus.PENDING,
     };
 
@@ -321,7 +321,7 @@ describe('CashoutService', () => {
       onetoFeeKobo: BigInt(125),
       korapayPayoutFeeKobo: null,
       netPayoutKobo: null,
-      finalPayoutAmountKobo: BigInt(4875),
+      payoutAmountBeforeKorapayFeeKobo: BigInt(4875),
       status: CashoutStatus.PROCESSING,
       cashoutBankName: 'Wema Bank',
       cashoutBankCode: '035',
@@ -356,7 +356,7 @@ describe('CashoutService', () => {
         where: { id: cashoutId },
         data: expect.objectContaining({
           korapayPayoutFeeKobo: null,
-          finalPayoutAmountKobo: 4875n,
+          payoutAmountBeforeKorapayFeeKobo: 4875n,
           netPayoutKobo: null,
         }),
       });
@@ -379,7 +379,7 @@ describe('CashoutService', () => {
         where: { id: cashoutId },
         data: expect.objectContaining({
           korapayPayoutFeeKobo: 2_500n,
-          finalPayoutAmountKobo: 4_875n,
+          payoutAmountBeforeKorapayFeeKobo: 4_875n,
           netPayoutKobo: 2_375n,
           korapayResponse: expect.objectContaining({
             data: expect.objectContaining({ fee: '25.00' }),

@@ -561,7 +561,7 @@ describe("AdminService", () => {
         onetoFeeKobo: 125n,
         korapayPayoutFeeKobo: null,
         netPayoutKobo: null,
-        finalPayoutAmountKobo: null,
+        payoutAmountBeforeKorapayFeeKobo: null,
         requestedAt: new Date("2026-05-14T00:00:00.000Z"),
         status: CashoutStatus.PENDING,
         cashoutBankName: "Bank",

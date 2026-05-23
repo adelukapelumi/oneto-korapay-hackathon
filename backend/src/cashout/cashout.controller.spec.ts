@@ -50,7 +50,7 @@ describe('CashoutController', () => {
       onetoFeeKobo: BigInt(125),
       korapayPayoutFeeKobo: null,
       netPayoutKobo: null,
-      finalPayoutAmountKobo: null,
+      payoutAmountBeforeKorapayFeeKobo: null,
       status: CashoutStatus.PENDING,
       requestedAt: new Date(),
     });
@@ -76,7 +76,7 @@ describe('CashoutController', () => {
         onetoFeeKobo: BigInt(125),
         korapayPayoutFeeKobo: BigInt(25),
         netPayoutKobo: BigInt(4850),
-        finalPayoutAmountKobo: BigInt(4875),
+        payoutAmountBeforeKorapayFeeKobo: BigInt(4875),
         status: CashoutStatus.COMPLETED,
         requestedAt: new Date(),
       },

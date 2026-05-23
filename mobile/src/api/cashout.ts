@@ -10,7 +10,7 @@ const CashoutSchema = z.object({
   onetoFeeKobo: z.string().nullable(),
   korapayPayoutFeeKobo: z.string().nullable(),
   netPayoutKobo: z.string().nullable(),
-  finalPayoutAmountKobo: z.string().nullable(),
+  payoutAmountBeforeKorapayFeeKobo: z.string().nullable(),
   status: z.string(),        // PENDING, PROCESSING, COMPLETED, FAILED
   requestedAt: z.string(),
 });

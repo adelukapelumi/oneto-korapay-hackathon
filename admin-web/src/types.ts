@@ -70,7 +70,7 @@ export type PendingCashout = {
   onetoFeeKobo: string | null;
   korapayPayoutFeeKobo: string | null;
   netPayoutKobo: string | null;
-  finalPayoutAmountKobo: string | null;
+  payoutAmountBeforeKorapayFeeKobo: string | null;
   requestedAt: string;
   status: string;
   cashoutBankName: string;

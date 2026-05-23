@@ -152,7 +152,7 @@ export function PendingCashoutsPage() {
                           Oneto fee: {formatOptionalNgnFromKobo(cashout.onetoFeeKobo, "pending")}
                         </span>
                         <span className="table-secondary">
-                          Korapay fee: {formatOptionalNgnFromKobo(cashout.korapayPayoutFeeKobo, "to be confirmed")}
+                          Korapay fee: {formatOptionalNgnFromKobo(cashout.korapayPayoutFeeKobo, "Korapay payout fee pending confirmation.")}
                         </span>
                         <span className="table-secondary">
                           Net payout: {formatOptionalNgnFromKobo(cashout.netPayoutKobo, "pending payout fee")}
@@ -194,6 +194,11 @@ export function PendingCashoutsPage() {
                 minus Oneto's service fee to Korapay, then records Korapay's payout fee when the
                 gateway confirms it.
               </p>
+              <p>
+                Treat Korapay's payout fee as merchant-borne only if the fee is deducted from the
+                transfer amount. If Korapay charges Oneto separately, handle it as a processor
+                expense until a reliable fee-before-payout method exists.
+              </p>
               <ul className="modal-detail-list">
                 <li>
                   <span className="modal-detail-label">Cashout ID</span>
@@ -221,7 +226,7 @@ export function PendingCashoutsPage() {
                 <li>
                   <span className="modal-detail-label">Korapay payout fee</span>
                   <span className="modal-detail-value">
-                    {formatOptionalNgnFromKobo(selectedCashout.korapayPayoutFeeKobo, "to be confirmed")}
+                    {formatOptionalNgnFromKobo(selectedCashout.korapayPayoutFeeKobo, "Korapay payout fee pending confirmation.")}
                   </span>
                 </li>
                 <li>
@@ -231,10 +236,10 @@ export function PendingCashoutsPage() {
                   </span>
                 </li>
                 <li>
-                  <span className="modal-detail-label">Korapay amount</span>
+                  <span className="modal-detail-label">Payout before Korapay fee</span>
                   <span className="modal-detail-value">
                     {formatOptionalNgnFromKobo(
-                      selectedCashout.finalPayoutAmountKobo,
+                      selectedCashout.payoutAmountBeforeKorapayFeeKobo,
                       "set during approval",
                     )}
                   </span>

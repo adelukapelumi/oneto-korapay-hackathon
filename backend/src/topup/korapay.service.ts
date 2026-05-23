@@ -141,6 +141,10 @@ export class KorapayService {
       amount: amountNgn,
       reference: params.reference,
       currency: 'NGN',
+      // Pay-in fee policy: the student bears Korapay's checkout fee.
+      // Oneto credits only `amountKobo` as Oneto Credits; any Korapay
+      // amount_paid/fee above that requested amount is audit data, not value
+      // to credit into the closed-loop ledger.
       merchant_bears_cost: false,
       customer: {
         email: params.customerEmail,

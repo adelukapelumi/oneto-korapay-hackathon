@@ -610,9 +610,10 @@ export class TopupService {
       throw new BadRequestException('Missing amount in verification payload');
     }
 
-    // Korapay `amount` is the charge amount requested by Oneto. When
-    // merchant_bears_cost=false, `amount_paid` can include the student's
-    // processor fee and must not be used as the Oneto credit amount.
+    // Pay-in fee policy: merchant_bears_cost=false means the student pays
+    // Korapay's checkout fee outside Oneto Credits. `amount` is the requested
+    // credit amount and is the only value we credit. `amount_paid` can include
+    // Korapay's fee and must never inflate the user's Oneto balance.
     return this.parseMajorAmountToKobo(verification.amount, 'verification');
   }
 
