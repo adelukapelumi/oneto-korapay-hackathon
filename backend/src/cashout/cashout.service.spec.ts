@@ -2,7 +2,14 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { CashoutService } from './cashout.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { KorapayService } from '../topup/korapay.service';
-import { Prisma, CashoutStatus, Role, Status, LedgerEntryType } from '@prisma/client';
+import {
+  Prisma,
+  CashoutStatus,
+  KorapayPayoutFeeBearer,
+  Role,
+  Status,
+  LedgerEntryType,
+} from '@prisma/client';
 import { ForbiddenException, BadRequestException, ConflictException } from '@nestjs/common';
 
 describe('CashoutService', () => {
@@ -137,8 +144,10 @@ describe('CashoutService', () => {
           onetoFeeBps: 250,
           onetoFeeKobo: BigInt(125),
           korapayPayoutFeeKobo: null,
+          korapayPayoutFeeBearer: KorapayPayoutFeeBearer.UNKNOWN,
+          korapayPayoutFeeDeductedFromRecipient: null,
           netPayoutKobo: null,
-          payoutAmountBeforeKorapayFeeKobo: null,
+          korapayTransferAmountKobo: null,
           status: CashoutStatus.PENDING,
           cashoutBankName: 'Wema Bank',
           cashoutBankCode: '035',
@@ -165,6 +174,8 @@ describe('CashoutService', () => {
           onetoFeeBps: 250,
           onetoFeeKobo: 25_000n,
           korapayPayoutFeeKobo: null,
+          korapayPayoutFeeBearer: KorapayPayoutFeeBearer.UNKNOWN,
+          korapayPayoutFeeDeductedFromRecipient: null,
           netPayoutKobo: null,
         }),
       });
@@ -181,8 +192,10 @@ describe('CashoutService', () => {
       onetoFeeBps: 250,
       onetoFeeKobo: BigInt(125),
       korapayPayoutFeeKobo: null,
+      korapayPayoutFeeBearer: KorapayPayoutFeeBearer.UNKNOWN,
+      korapayPayoutFeeDeductedFromRecipient: null,
       netPayoutKobo: null,
-      payoutAmountBeforeKorapayFeeKobo: null,
+      korapayTransferAmountKobo: null,
       status: CashoutStatus.PENDING,
     };
 
@@ -320,8 +333,10 @@ describe('CashoutService', () => {
       onetoFeeBps: 250,
       onetoFeeKobo: BigInt(125),
       korapayPayoutFeeKobo: null,
+      korapayPayoutFeeBearer: KorapayPayoutFeeBearer.UNKNOWN,
+      korapayPayoutFeeDeductedFromRecipient: null,
       netPayoutKobo: null,
-      payoutAmountBeforeKorapayFeeKobo: BigInt(4875),
+      korapayTransferAmountKobo: BigInt(4875),
       status: CashoutStatus.PROCESSING,
       cashoutBankName: 'Wema Bank',
       cashoutBankCode: '035',
@@ -356,13 +371,15 @@ describe('CashoutService', () => {
         where: { id: cashoutId },
         data: expect.objectContaining({
           korapayPayoutFeeKobo: null,
-          payoutAmountBeforeKorapayFeeKobo: 4875n,
+          korapayPayoutFeeBearer: KorapayPayoutFeeBearer.UNKNOWN,
+          korapayPayoutFeeDeductedFromRecipient: null,
+          korapayTransferAmountKobo: 4875n,
           netPayoutKobo: null,
         }),
       });
     });
 
-    it('stores Korapay payout fee from initiate response and calculates net payout', async () => {
+    it('stores returned Korapay payout fee as Oneto processor expense when recipient deduction is not confirmed', async () => {
       mockKorapay.initiatePayout.mockResolvedValue({
         reference: korapayRef,
         status: 'processing',
@@ -379,11 +396,42 @@ describe('CashoutService', () => {
         where: { id: cashoutId },
         data: expect.objectContaining({
           korapayPayoutFeeKobo: 2_500n,
-          payoutAmountBeforeKorapayFeeKobo: 4_875n,
-          netPayoutKobo: 2_375n,
+          korapayTransferAmountKobo: 4_875n,
+          korapayPayoutFeeBearer: KorapayPayoutFeeBearer.ONETO,
+          korapayPayoutFeeDeductedFromRecipient: false,
+          netPayoutKobo: 4_875n,
           korapayResponse: expect.objectContaining({
             data: expect.objectContaining({ fee: '25.00' }),
           }),
+        }),
+      });
+    });
+
+    it('treats Korapay payout fee as merchant-borne only with explicit recipient-deduction proof', async () => {
+      mockKorapay.initiatePayout.mockResolvedValue({
+        reference: korapayRef,
+        status: 'processing',
+        payoutFeeKobo: 2_500n,
+        rawResponse: {
+          status: true,
+          data: {
+            reference: korapayRef,
+            status: 'processing',
+            fee: '25.00',
+            fee_deducted_from_recipient: true,
+          },
+        },
+      });
+
+      await (service as any).initiateKorapayPayout(cashoutId, korapayRef);
+
+      expect(mockPrisma.cashout.update).toHaveBeenCalledWith({
+        where: { id: cashoutId },
+        data: expect.objectContaining({
+          korapayPayoutFeeKobo: 2_500n,
+          korapayPayoutFeeBearer: KorapayPayoutFeeBearer.MERCHANT,
+          korapayPayoutFeeDeductedFromRecipient: true,
+          netPayoutKobo: 2_375n,
         }),
       });
     });
@@ -452,6 +500,9 @@ describe('CashoutService', () => {
         grossAmountKobo: 5000n,
         onetoFeeKobo: 125n,
         korapayPayoutFeeKobo: null,
+        korapayPayoutFeeBearer: KorapayPayoutFeeBearer.UNKNOWN,
+        korapayPayoutFeeDeductedFromRecipient: null,
+        korapayTransferAmountKobo: 4_875n,
         status: CashoutStatus.PROCESSING,
       });
 
@@ -463,7 +514,7 @@ describe('CashoutService', () => {
       });
     });
 
-    it('transfer.success webhook with fee stores Korapay payout fee and net payout', async () => {
+    it('transfer.success webhook with fee but no deduction proof records fee as Oneto processor expense', async () => {
       const successPayload = {
         event: 'transfer.success',
         data: {
@@ -480,6 +531,9 @@ describe('CashoutService', () => {
         grossAmountKobo: 1_000_000n,
         onetoFeeKobo: 25_000n,
         korapayPayoutFeeKobo: null,
+        korapayPayoutFeeBearer: KorapayPayoutFeeBearer.UNKNOWN,
+        korapayPayoutFeeDeductedFromRecipient: null,
+        korapayTransferAmountKobo: 975_000n,
         status: CashoutStatus.PROCESSING,
       });
 
@@ -490,10 +544,51 @@ describe('CashoutService', () => {
         data: expect.objectContaining({
           status: CashoutStatus.COMPLETED,
           korapayPayoutFeeKobo: 2_500n,
-          netPayoutKobo: 972_500n,
+          korapayPayoutFeeBearer: KorapayPayoutFeeBearer.ONETO,
+          korapayPayoutFeeDeductedFromRecipient: false,
+          korapayTransferAmountKobo: 975_000n,
+          netPayoutKobo: 975_000n,
           korapayResponse: expect.objectContaining({
             data: expect.objectContaining({ fee: '25.00' }),
           }),
+        }),
+      });
+    });
+
+    it('transfer.success webhook with explicit deduction proof calculates merchant-borne net payout', async () => {
+      const successPayload = {
+        event: 'transfer.success',
+        data: {
+          reference: 'ref_123',
+          status: 'success',
+          fee: '25.00',
+          fee_deducted_from_recipient: true,
+        },
+      };
+      mockKorapay.verifyWebhookSignature.mockReturnValue(true);
+      mockKorapay.extractPayoutFeeKobo.mockReturnValue(2_500n);
+      mockPrisma.cashout.findUnique.mockResolvedValue({
+        id: 'c_123',
+        amountKobo: 1_000_000n,
+        grossAmountKobo: 1_000_000n,
+        onetoFeeKobo: 25_000n,
+        korapayPayoutFeeKobo: null,
+        korapayPayoutFeeBearer: KorapayPayoutFeeBearer.UNKNOWN,
+        korapayPayoutFeeDeductedFromRecipient: null,
+        korapayTransferAmountKobo: 975_000n,
+        status: CashoutStatus.PROCESSING,
+      });
+
+      await service.handlePayoutWebhook(successPayload, signature);
+
+      expect(mockPrisma.cashout.updateMany).toHaveBeenCalledWith({
+        where: { id: 'c_123', status: CashoutStatus.PROCESSING },
+        data: expect.objectContaining({
+          status: CashoutStatus.COMPLETED,
+          korapayPayoutFeeKobo: 2_500n,
+          korapayPayoutFeeBearer: KorapayPayoutFeeBearer.MERCHANT,
+          korapayPayoutFeeDeductedFromRecipient: true,
+          netPayoutKobo: 972_500n,
         }),
       });
     });

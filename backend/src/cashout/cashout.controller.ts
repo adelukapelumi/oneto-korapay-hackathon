@@ -4,7 +4,7 @@ import { JwtAuthGuard, type AuthenticatedRequest } from '../auth/jwt-auth.guard'
 import { RolesGuard } from '../auth/role.guard';
 import { UserThrottlerGuard } from '../common/user-throttler.guard';
 import { Throttle } from '@nestjs/throttler';
-import type { CashoutStatus } from '@prisma/client';
+import type { CashoutStatus, KorapayPayoutFeeBearer } from '@prisma/client';
 
 type CashoutResponseShape = {
   id: string;
@@ -13,8 +13,10 @@ type CashoutResponseShape = {
   onetoFeeBps: number;
   onetoFeeKobo?: bigint | null;
   korapayPayoutFeeKobo?: bigint | null;
+  korapayPayoutFeeBearer?: KorapayPayoutFeeBearer | null;
+  korapayPayoutFeeDeductedFromRecipient?: boolean | null;
   netPayoutKobo?: bigint | null;
-  payoutAmountBeforeKorapayFeeKobo?: bigint | null;
+  korapayTransferAmountKobo?: bigint | null;
   status: CashoutStatus;
   requestedAt: Date;
 };
@@ -41,8 +43,11 @@ export class CashoutController {
       onetoFeeBps: cashout.onetoFeeBps,
       onetoFeeKobo: cashout.onetoFeeKobo?.toString() ?? null,
       korapayPayoutFeeKobo: cashout.korapayPayoutFeeKobo?.toString() ?? null,
+      korapayPayoutFeeBearer: cashout.korapayPayoutFeeBearer ?? 'UNKNOWN',
+      korapayPayoutFeeDeductedFromRecipient:
+        cashout.korapayPayoutFeeDeductedFromRecipient ?? null,
       netPayoutKobo: cashout.netPayoutKobo?.toString() ?? null,
-      payoutAmountBeforeKorapayFeeKobo: cashout.payoutAmountBeforeKorapayFeeKobo?.toString() ?? null,
+      korapayTransferAmountKobo: cashout.korapayTransferAmountKobo?.toString() ?? null,
       status: cashout.status,
       requestedAt: cashout.requestedAt,
     };

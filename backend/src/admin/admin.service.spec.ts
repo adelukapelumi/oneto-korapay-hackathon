@@ -3,7 +3,7 @@ import {
   ConflictException,
   NotFoundException,
 } from "@nestjs/common";
-import { CashoutStatus, Role, Status } from "@prisma/client";
+import { CashoutStatus, KorapayPayoutFeeBearer, Role, Status } from "@prisma/client";
 import { AdminService } from "./admin.service";
 import { generateOnetoUserId } from "../common/user-id";
 
@@ -560,8 +560,10 @@ describe("AdminService", () => {
         onetoFeeBps: 250,
         onetoFeeKobo: 125n,
         korapayPayoutFeeKobo: null,
+        korapayPayoutFeeBearer: KorapayPayoutFeeBearer.UNKNOWN,
+        korapayPayoutFeeDeductedFromRecipient: null,
         netPayoutKobo: null,
-        payoutAmountBeforeKorapayFeeKobo: null,
+        korapayTransferAmountKobo: null,
         requestedAt: new Date("2026-05-14T00:00:00.000Z"),
         status: CashoutStatus.PENDING,
         cashoutBankName: "Bank",
@@ -586,6 +588,8 @@ describe("AdminService", () => {
       onetoFeeBps: 250,
       onetoFeeKobo: "125",
       korapayPayoutFeeKobo: null,
+      korapayPayoutFeeBearer: KorapayPayoutFeeBearer.UNKNOWN,
+      korapayPayoutFeeDeductedFromRecipient: null,
       netPayoutKobo: null,
       status: CashoutStatus.PENDING,
     });

@@ -4,6 +4,10 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Stack, useRouter } from "expo-router";
 import { getCashoutStatus, Cashout } from "../../../src/api/cashout";
 import { ApiError } from "../../../src/api/errors";
+import {
+  getFinalMerchantPayoutText,
+  getKorapayPayoutFeeText,
+} from "../../../src/payment/cashout-fee-display";
 import { useThemeMode } from "../../../src/theme/theme-provider";
 import {
   getTheme,
@@ -72,12 +76,8 @@ export default function CashoutHistoryScreen(): React.ReactElement {
     const onetoFeeNaira = item.onetoFeeKobo
       ? (Number(item.onetoFeeKobo) / 100).toFixed(2)
       : null;
-    const korapayFeeText = item.korapayPayoutFeeKobo
-      ? `\u20A6${(Number(item.korapayPayoutFeeKobo) / 100).toFixed(2)}`
-      : "to be confirmed";
-    const netPayoutText = item.netPayoutKobo
-      ? `\u20A6${(Number(item.netPayoutKobo) / 100).toFixed(2)}`
-      : "pending payout fee";
+    const korapayFeeText = getKorapayPayoutFeeText(item);
+    const netPayoutText = getFinalMerchantPayoutText(item);
     const dateStr = new Date(item.requestedAt).toLocaleString(undefined, {
       month: "short",
       day: "numeric",
@@ -102,7 +102,13 @@ export default function CashoutHistoryScreen(): React.ReactElement {
             Korapay fee: {korapayFeeText}
           </Text>
           <Text style={[styles.detail, { color: t.textSec }]}>
-            Net payout: {netPayoutText}
+            Final merchant payout: {netPayoutText}
+          </Text>
+          <Text style={[styles.detail, { color: t.textSec }]}>
+            Amount sent to Korapay:{" "}
+            {item.korapayTransferAmountKobo
+              ? `\u20A6${(Number(item.korapayTransferAmountKobo) / 100).toFixed(2)}`
+              : "set during approval"}
           </Text>
         </View>
         <Text style={[styles.date, { color: t.textSec }]}>{dateStr}</Text>

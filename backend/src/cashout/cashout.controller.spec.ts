@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { CashoutController } from './cashout.controller';
 import { CashoutService } from './cashout.service';
 import { JwtWrapperService } from '../auth/jwt.service';
-import { CashoutStatus } from '@prisma/client';
+import { CashoutStatus, KorapayPayoutFeeBearer } from '@prisma/client';
 import { Reflector } from '@nestjs/core';
 import { UserThrottlerGuard } from '../common/user-throttler.guard';
 
@@ -49,8 +49,10 @@ describe('CashoutController', () => {
       onetoFeeBps: 250,
       onetoFeeKobo: BigInt(125),
       korapayPayoutFeeKobo: null,
+      korapayPayoutFeeBearer: KorapayPayoutFeeBearer.UNKNOWN,
+      korapayPayoutFeeDeductedFromRecipient: null,
       netPayoutKobo: null,
-      payoutAmountBeforeKorapayFeeKobo: null,
+      korapayTransferAmountKobo: null,
       status: CashoutStatus.PENDING,
       requestedAt: new Date(),
     });
@@ -61,6 +63,8 @@ describe('CashoutController', () => {
     expect(result.cashout.onetoFeeBps).toBe(250);
     expect(result.cashout.onetoFeeKobo).toBe('125');
     expect(result.cashout.korapayPayoutFeeKobo).toBeNull();
+    expect(result.cashout.korapayPayoutFeeBearer).toBe('UNKNOWN');
+    expect(result.cashout.korapayPayoutFeeDeductedFromRecipient).toBeNull();
     expect(result.cashout.netPayoutKobo).toBeNull();
     expect(service.requestCashout).toHaveBeenCalledWith('u_merchant');
   });
@@ -75,8 +79,10 @@ describe('CashoutController', () => {
         onetoFeeBps: 250,
         onetoFeeKobo: BigInt(125),
         korapayPayoutFeeKobo: BigInt(25),
-        netPayoutKobo: BigInt(4850),
-        payoutAmountBeforeKorapayFeeKobo: BigInt(4875),
+        korapayPayoutFeeBearer: KorapayPayoutFeeBearer.ONETO,
+        korapayPayoutFeeDeductedFromRecipient: false,
+        netPayoutKobo: BigInt(4875),
+        korapayTransferAmountKobo: BigInt(4875),
         status: CashoutStatus.COMPLETED,
         requestedAt: new Date(),
       },
@@ -87,7 +93,9 @@ describe('CashoutController', () => {
     expect(result.cashouts[0].amountKobo).toBe('5000');
     expect(result.cashouts[0].grossAmountKobo).toBe('5000');
     expect(result.cashouts[0].korapayPayoutFeeKobo).toBe('25');
-    expect(result.cashouts[0].netPayoutKobo).toBe('4850');
+    expect(result.cashouts[0].korapayPayoutFeeBearer).toBe('ONETO');
+    expect(result.cashouts[0].korapayPayoutFeeDeductedFromRecipient).toBe(false);
+    expect(result.cashouts[0].netPayoutKobo).toBe('4875');
   });
 
   it('3. ADMIN can approve cashout', async () => {

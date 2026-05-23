@@ -20,6 +20,13 @@ import {
   type MerchantBalanceProjection,
 } from "../../../src/payment/merchant-balance-projection";
 import { logger } from "../../../src/lib/logger";
+import {
+  KORAPAY_PAYOUT_FEE_PENDING_TEXT,
+  FINAL_PAYOUT_PENDING_TEXT,
+  formatCashoutKobo as formatKobo,
+  getFinalMerchantPayoutText,
+  getKorapayPayoutFeeText,
+} from "../../../src/payment/cashout-fee-display";
 import { BackButton } from "../../../components/BackButton";
 import { useThemeMode } from "../../../src/theme/theme-provider";
 import {
@@ -47,20 +54,6 @@ function getCashoutBlockMessage(reason: CashoutRequestBlockReason): string {
     case "active_cashout":
       return "You already have a cashout pending.";
   }
-}
-
-function formatKobo(amountKobo: number | string | null | undefined): string {
-  if (amountKobo === null || amountKobo === undefined) {
-    return "to be confirmed";
-  }
-
-  const amountNumber =
-    typeof amountKobo === "string" ? Number(amountKobo) : amountKobo;
-  if (!Number.isFinite(amountNumber)) {
-    return "to be confirmed";
-  }
-
-  return `${"\u20A6"}${(amountNumber / 100).toFixed(2)}`;
 }
 
 function calculateOnetoFeePreviewKobo(grossAmountKobo: number): number {
@@ -272,14 +265,18 @@ export default function CashoutScreen(): React.ReactElement {
               </View>
               <View style={styles.breakdownRow}>
                 <Text style={[styles.breakdownLabel, { color: t.textSec }]}>Korapay payout fee</Text>
-                <Text style={[styles.breakdownValue, { color: t.textSec }]}>to be confirmed</Text>
+                <Text style={[styles.breakdownValue, { color: t.textSec }]}>
+                  {KORAPAY_PAYOUT_FEE_PENDING_TEXT}
+                </Text>
               </View>
               <View style={styles.breakdownRow}>
-                <Text style={[styles.breakdownLabel, { color: t.textSec }]}>Net payout</Text>
-                <Text style={[styles.breakdownValue, { color: t.textSec }]}>pending payout fee</Text>
+                <Text style={[styles.breakdownLabel, { color: t.textSec }]}>Final merchant payout</Text>
+                <Text style={[styles.breakdownValue, { color: t.textSec }]}>
+                  {FINAL_PAYOUT_PENDING_TEXT}
+                </Text>
               </View>
               <Text style={[styles.balanceNote, { color: t.textSec }]}>
-                Backend payout starts from {formatKobo(previewPayoutBeforeKorapayFeeKobo)} before Korapay confirms its fee.
+                Amount sent to Korapay starts from {formatKobo(previewPayoutBeforeKorapayFeeKobo)} before Korapay confirms fee handling.
               </Text>
             </View>
           ) : null}
@@ -318,15 +315,19 @@ export default function CashoutScreen(): React.ReactElement {
               <View style={styles.breakdownRow}>
                 <Text style={[styles.breakdownLabel, { color: t.textSec }]}>Korapay payout fee</Text>
                 <Text style={[styles.breakdownValue, { color: t.textSec }]}>
-                  {formatKobo(successData.korapayPayoutFeeKobo)}
+                  {getKorapayPayoutFeeText(successData)}
                 </Text>
               </View>
               <View style={styles.breakdownRow}>
-                <Text style={[styles.breakdownLabel, { color: t.textSec }]}>Net payout</Text>
+                <Text style={[styles.breakdownLabel, { color: t.textSec }]}>Final merchant payout</Text>
                 <Text style={[styles.breakdownValue, { color: t.textSec }]}>
-                  {successData.netPayoutKobo
-                    ? formatKobo(successData.netPayoutKobo)
-                    : "pending payout fee"}
+                  {getFinalMerchantPayoutText(successData)}
+                </Text>
+              </View>
+              <View style={styles.breakdownRow}>
+                <Text style={[styles.breakdownLabel, { color: t.textSec }]}>Amount sent to Korapay</Text>
+                <Text style={[styles.breakdownValue, { color: t.textSec }]}>
+                  {formatKobo(successData.korapayTransferAmountKobo)}
                 </Text>
               </View>
             </View>
