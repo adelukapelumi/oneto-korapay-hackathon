@@ -1,8 +1,5 @@
 import { Redirect, Stack } from "expo-router";
 import { useAuth } from "../../../src/auth/auth-state";
-import {
-  MERCHANT_SCAN_TITLE,
-} from "../../../src/payment/merchant-flow";
 
 export default function MerchantLayout() {
   const { state } = useAuth();
@@ -16,13 +13,13 @@ export default function MerchantLayout() {
   }
 
   return (
-    <Stack>
-      <Stack.Screen name="charge" options={{ title: MERCHANT_SCAN_TITLE }} />
-      <Stack.Screen name="request-qr" options={{ title: MERCHANT_SCAN_TITLE }} />
-      <Stack.Screen name="scan-envelope" options={{ title: MERCHANT_SCAN_TITLE }} />
+    <Stack screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="charge" />
+      <Stack.Screen name="request-qr" />
+      <Stack.Screen name="scan-envelope" />
       <Stack.Screen
         name="success"
-        options={{ title: "Payment Received", headerLeft: () => null }}
+        options={{ headerLeft: () => null }}
       />
     </Stack>
   );
