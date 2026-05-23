@@ -97,10 +97,39 @@ describe('KorapayService', () => {
           amount: 150,
           reference: 'top_123',
           currency: 'NGN',
+          merchant_bears_cost: false,
           customer: { email: 'test@cu.edu.ng', name: 'Test User' },
         }),
       }));
       expect(result.paymentUrl).toBe('https://checkout.korapay.com/xxx');
+    });
+
+    it('sends merchant_bears_cost false so students pay Korapay processing fees', async () => {
+      const fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          status: true,
+          data: { checkout_url: 'https://checkout.korapay.com/xxx', reference: 'top_123' },
+        }),
+      } as Response);
+
+      await service.initiateCheckout({
+        amountKobo: 100_000,
+        reference: 'top_123',
+        customerEmail: 'student@cu.edu.ng',
+      });
+
+      const requestInit = fetchSpy.mock.calls[0]?.[1];
+      if (!requestInit?.body || typeof requestInit.body !== 'string') {
+        throw new Error('Expected JSON checkout payload');
+      }
+
+      expect(JSON.parse(requestInit.body)).toEqual(
+        expect.objectContaining({
+          amount: 1000,
+          merchant_bears_cost: false,
+        }),
+      );
     });
 
     it('rejects an invalid checkout URL returned by Korapay', async () => {
@@ -160,7 +189,11 @@ describe('KorapayService', () => {
             reference: 'top_123',
             status: 'success',
             amount: '500.00',
-            amount_paid: '500.00',
+            amount_paid: '514.00',
+            fee: '14.00',
+            transaction_fee: '14.00',
+            processor_fee: '14.00',
+            merchant_bears_cost: false,
             currency: 'NGN',
           },
         }),
@@ -170,7 +203,11 @@ describe('KorapayService', () => {
         status: 'success',
         reference: 'top_123',
         amount: '500.00',
-        amountPaid: '500.00',
+        amountPaid: '514.00',
+        fee: '14.00',
+        transactionFee: '14.00',
+        processorFee: '14.00',
+        merchantBearsCost: false,
         currency: 'NGN',
       });
       expect(fetchSpy).toHaveBeenCalledWith(

@@ -73,18 +73,32 @@ describe('TopupService', () => {
   }
 
   function mockSuccessfulVerification(
-    overrides?: Partial<{ reference: string; status: string; amount: string; amountPaid: string; currency: string }>,
+    overrides?: Partial<{
+      reference: string;
+      status: string;
+      amount: string;
+      amountPaid: string;
+      fee: string;
+      transactionFee: string;
+      processorFee: string;
+      merchantBearsCost: boolean;
+      currency: string;
+    }>,
   ) {
     mockKorapay.verifyTransaction.mockResolvedValue({
       status: overrides?.status ?? 'success',
       reference: overrides?.reference ?? 'top_123',
       amount: overrides?.amount ?? '500.00',
       amountPaid: overrides?.amountPaid ?? '500.00',
+      fee: overrides?.fee,
+      transactionFee: overrides?.transactionFee,
+      processorFee: overrides?.processorFee,
+      merchantBearsCost: overrides?.merchantBearsCost,
       currency: overrides?.currency ?? 'NGN',
     });
   }
 
-  function mockHappyPathUsers(balanceKobo: bigint = BigInt(0)) {
+  function mockHappyPathUsers(balanceKobo: bigint = BigInt(0), creditAmountKobo: bigint = BigInt(50_000)) {
     mockPrisma.user.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) => {
       if (where.id === 'u_123') {
         return { id: 'u_123', email: 'test@cu.edu.ng', verifiedBalanceKobo: balanceKobo };
@@ -97,10 +111,10 @@ describe('TopupService', () => {
 
     mockPrisma.user.update.mockImplementation(async ({ where }: { where: { id: string } }) => {
       if (where.id === 'u_123') {
-        return { verifiedBalanceKobo: balanceKobo + BigInt(50_000) };
+        return { verifiedBalanceKobo: balanceKobo + creditAmountKobo };
       }
       if (where.id === 'u_operating') {
-        return { verifiedBalanceKobo: BigInt(-50_000) };
+        return { verifiedBalanceKobo: -creditAmountKobo };
       }
       return {};
     });
@@ -120,6 +134,8 @@ describe('TopupService', () => {
           data: expect.objectContaining({
             userId: 'u_123',
             amountKobo: BigInt(50_000),
+            creditedAmountKobo: BigInt(50_000),
+            feeBearer: 'STUDENT',
             status: 'PENDING',
           }),
         }),
@@ -226,6 +242,117 @@ describe('TopupService', () => {
             userId: 'u_operating',
             type: LedgerEntryType.DEBIT,
             amountKobo: BigInt(50_000),
+          }),
+        }),
+      );
+    });
+
+    it('credits exactly the requested ₦1,000 when the student pays Korapay fees on top', async () => {
+      mockPrisma.paymentTopup.findFirst.mockResolvedValue({
+        reference: 'top_123',
+        status: 'PENDING',
+        amountKobo: BigInt(100_000),
+      });
+      mockPrisma.paymentTopup.findUnique.mockResolvedValue(
+        buildPendingTopup({ amountKobo: BigInt(100_000) }),
+      );
+      mockSuccessfulVerification({
+        amount: '1000.00',
+        amountPaid: '1014.00',
+        fee: '14.00',
+        merchantBearsCost: false,
+      });
+      mockHappyPathUsers(BigInt(0), BigInt(100_000));
+
+      await expect(service.getStatusForUser('u_123', 'top_123')).resolves.toEqual({
+        reference: 'top_123',
+        status: 'SUCCESS',
+        amountKobo: '100000',
+      });
+
+      expect(mockPrisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'u_123' },
+          data: { verifiedBalanceKobo: { increment: BigInt(100_000) } },
+        }),
+      );
+      expect(mockPrisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'u_operating' },
+          data: { verifiedBalanceKobo: { decrement: BigInt(100_000) } },
+        }),
+      );
+      expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            type: LedgerEntryType.CREDIT,
+            amountKobo: BigInt(100_000),
+          }),
+        }),
+      );
+      expect(mockPrisma.paymentTopup.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { reference: 'top_123' },
+          data: expect.objectContaining({
+            status: 'SUCCESS',
+            creditedAmountKobo: BigInt(100_000),
+            feeBearer: 'STUDENT',
+            processorFeeKobo: BigInt(1_400),
+            grossPaidKobo: BigInt(101_400),
+            korapayResponse: expect.objectContaining({
+              verification: expect.objectContaining({
+                amount: '1000.00',
+                amountPaid: '1014.00',
+                fee: '14.00',
+                merchantBearsCost: false,
+              }),
+              accounting: expect.objectContaining({
+                creditAmountKobo: '100000',
+                grossPaidKobo: '101400',
+                processorFeeKobo: '1400',
+                feeBearer: 'STUDENT',
+              }),
+            }),
+          }),
+        }),
+      );
+    });
+
+    it('fails closed when Korapay charge amount is ₦900 for a ₦1,000 pending top-up even if gross paid is higher', async () => {
+      mockPrisma.paymentTopup.findFirst.mockResolvedValue({
+        reference: 'top_123',
+        status: 'PENDING',
+        amountKobo: BigInt(100_000),
+      });
+      mockPrisma.paymentTopup.findUnique.mockResolvedValue(
+        buildPendingTopup({ amountKobo: BigInt(100_000) }),
+      );
+      mockSuccessfulVerification({
+        amount: '900.00',
+        amountPaid: '1014.00',
+        fee: '14.00',
+        merchantBearsCost: false,
+      });
+
+      await expect(service.getStatusForUser('u_123', 'top_123')).resolves.toEqual({
+        reference: 'top_123',
+        status: 'FAILED',
+        amountKobo: '100000',
+      });
+
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
+      expect(mockPrisma.ledgerEntry.create).not.toHaveBeenCalled();
+      expect(mockPrisma.paymentTopup.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { reference: 'top_123' },
+          data: expect.objectContaining({
+            status: 'FAILED',
+            creditedAmountKobo: BigInt(100_000),
+            processorFeeKobo: BigInt(1_400),
+            grossPaidKobo: BigInt(101_400),
+            korapayResponse: expect.objectContaining({
+              internal_failure: 'amount_mismatch',
+            }),
           }),
         }),
       );
