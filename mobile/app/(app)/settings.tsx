@@ -211,6 +211,12 @@ export default function SettingsScreen(): React.ReactElement {
             theme={t}
           />
           <SettingsRow
+            label="Move Oneto to a new phone"
+            showArrow
+            onPress={() => router.push("/(app)/approve-new-phone")}
+            theme={t}
+          />
+          <SettingsRow
             label="Account Status"
             value={statusDisplay}
             isLast

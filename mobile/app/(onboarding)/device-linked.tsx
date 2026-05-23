@@ -28,7 +28,6 @@ export default function DeviceLinkedScreen(): React.ReactElement {
   const t = getTheme(mode);
   const [existingRequestState, setExistingRequestState] =
     useState<ExistingRequestState>({ kind: "checking" });
-  const [showOldPhoneMessage, setShowOldPhoneMessage] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
   const [isResettingLocalApp, setIsResettingLocalApp] = useState(false);
 
@@ -171,18 +170,9 @@ export default function DeviceLinkedScreen(): React.ReactElement {
           <ActionButton
             label="I still have my old phone"
             tertiary
-            onPress={() => setShowOldPhoneMessage((value) => !value)}
+            onPress={() => router.push("/(onboarding)/move-device")}
           />
         </View>
-
-        {showOldPhoneMessage ? (
-          <View style={[styles.noticeCard, { backgroundColor: t.cardAlt, borderColor: t.border }]}>
-            <Text style={[styles.noticeTitle, { color: t.text }]}>Moving from an old phone is coming next.</Text>
-            <Text style={[styles.noticeBody, { color: t.textSec }]}>
-              For now, use recovery or contact support.
-            </Text>
-          </View>
-        ) : null}
 
         <View style={[styles.testingResetCard, { backgroundColor: t.cardAlt, borderColor: colors.error }]}>
           <Text style={styles.testingResetEyebrow}>TESTING ONLY</Text>
