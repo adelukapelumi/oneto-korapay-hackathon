@@ -1,5 +1,6 @@
 import { syncOutgoingPendingFromServerLedger } from "../sync-outgoing";
 import { fetchOutgoingStatuses } from "../../api/outgoing-status";
+import { NetworkError } from "../../api/errors";
 import { listPendingByStatus, updateTransactionStatus } from "../../ledger/db";
 
 jest.mock("../../api/outgoing-status", () => ({
@@ -31,7 +32,12 @@ describe("syncOutgoingPendingFromServerLedger", () => {
 
     const result = await syncOutgoingPendingFromServerLedger();
 
-    expect(result).toEqual({ markedTerminal: 0 });
+    expect(result).toEqual({
+      pendingBefore: 1,
+      markedTerminal: 0,
+      unknownPending: 1,
+      hasNetworkError: false,
+    });
     expect(updateTransactionStatus).not.toHaveBeenCalled();
   });
 
@@ -50,7 +56,12 @@ describe("syncOutgoingPendingFromServerLedger", () => {
 
     const result = await syncOutgoingPendingFromServerLedger();
 
-    expect(result).toEqual({ markedTerminal: 1 });
+    expect(result).toEqual({
+      pendingBefore: 1,
+      markedTerminal: 1,
+      unknownPending: 0,
+      hasNetworkError: false,
+    });
     expect(updateTransactionStatus).toHaveBeenCalledWith("tx_local_1", "reconciled");
   });
 
@@ -69,7 +80,12 @@ describe("syncOutgoingPendingFromServerLedger", () => {
 
     const result = await syncOutgoingPendingFromServerLedger();
 
-    expect(result).toEqual({ markedTerminal: 1 });
+    expect(result).toEqual({
+      pendingBefore: 1,
+      markedTerminal: 1,
+      unknownPending: 0,
+      hasNetworkError: false,
+    });
     expect(updateTransactionStatus).toHaveBeenCalledWith(
       "tx_local_1",
       "rejected",
@@ -96,7 +112,12 @@ describe("syncOutgoingPendingFromServerLedger", () => {
 
     const result = await syncOutgoingPendingFromServerLedger();
 
-    expect(result).toEqual({ markedTerminal: 1 });
+    expect(result).toEqual({
+      pendingBefore: 1,
+      markedTerminal: 1,
+      unknownPending: 0,
+      hasNetworkError: false,
+    });
     expect(updateTransactionStatus).toHaveBeenCalledWith(
       "tx_local_1",
       "rejected",
@@ -120,8 +141,18 @@ describe("syncOutgoingPendingFromServerLedger", () => {
     const first = await syncOutgoingPendingFromServerLedger();
     const second = await syncOutgoingPendingFromServerLedger();
 
-    expect(first).toEqual({ markedTerminal: 1 });
-    expect(second).toEqual({ markedTerminal: 0 });
+    expect(first).toEqual({
+      pendingBefore: 1,
+      markedTerminal: 1,
+      unknownPending: 0,
+      hasNetworkError: false,
+    });
+    expect(second).toEqual({
+      pendingBefore: 0,
+      markedTerminal: 0,
+      unknownPending: 0,
+      hasNetworkError: false,
+    });
     expect(updateTransactionStatus).toHaveBeenCalledTimes(1);
   });
 
@@ -137,7 +168,12 @@ describe("syncOutgoingPendingFromServerLedger", () => {
 
     const result = await syncOutgoingPendingFromServerLedger();
 
-    expect(result).toEqual({ markedTerminal: 0 });
+    expect(result).toEqual({
+      pendingBefore: 1,
+      markedTerminal: 0,
+      unknownPending: 0,
+      hasNetworkError: false,
+    });
     expect(fetchOutgoingStatuses).not.toHaveBeenCalled();
     expect(updateTransactionStatus).not.toHaveBeenCalled();
   });
@@ -151,11 +187,16 @@ describe("syncOutgoingPendingFromServerLedger", () => {
         envelopeJson: JSON.stringify({ transactionId: "tx_local_1" }),
       },
     ]);
-    (fetchOutgoingStatuses as jest.Mock).mockRejectedValue(new Error("offline"));
+    (fetchOutgoingStatuses as jest.Mock).mockRejectedValue(new NetworkError("offline"));
 
     const result = await syncOutgoingPendingFromServerLedger();
 
-    expect(result).toEqual({ markedTerminal: 0 });
+    expect(result).toEqual({
+      pendingBefore: 1,
+      markedTerminal: 0,
+      unknownPending: 0,
+      hasNetworkError: true,
+    });
     expect(updateTransactionStatus).not.toHaveBeenCalled();
   });
 });

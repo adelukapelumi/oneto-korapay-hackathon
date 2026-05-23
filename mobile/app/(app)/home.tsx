@@ -26,6 +26,12 @@ import {
   getStudentBalanceProjection,
   type StudentBalanceProjection,
 } from "../../src/payment/balance-snapshot";
+import { syncOutgoingPendingFromServerLedger } from "../../src/payment/sync-outgoing";
+import {
+  STUDENT_OUTGOING_AUTO_SYNC_COOLDOWN_MS,
+  getStudentOutgoingSyncStatus,
+  shouldRequestStudentOutgoingAutoSync,
+} from "../../src/payment/student-sync-state";
 import {
   buildMerchantBalanceProjection,
   getPendingIncomingSummary,
@@ -180,6 +186,15 @@ export default function HomeScreen(): React.ReactElement {
   const [isSyncing, setIsSyncing] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
   const [syncStatusMessage, setSyncStatusMessage] = useState<string | null>(null);
+  const [studentOutgoingSyncMeta, setStudentOutgoingSyncMeta] = useState<{
+    readonly markedTerminal: number;
+    readonly hasNetworkError: boolean;
+    readonly checkedAtMs: number | null;
+  }>({
+    markedTerminal: 0,
+    hasNetworkError: false,
+    checkedAtMs: null,
+  });
   const [reauthSending, setReauthSending] = useState(false);
   const [reauthError, setReauthError] = useState<string | null>(null);
   const syncInFlightRef = useRef(false);
@@ -237,8 +252,26 @@ export default function HomeScreen(): React.ReactElement {
       try {
         const projection = await getStudentBalanceProjection(hydrateProfile);
         setStudentBalanceProjection(projection);
+        if (projection.source === "server") {
+          setIsOnline(true);
+          setStudentOutgoingSyncMeta({
+            markedTerminal: 0,
+            hasNetworkError: false,
+            checkedAtMs: projection.pendingOutgoingCount > 0 ? Date.now() : null,
+          });
+        } else if (projection.pendingOutgoingCount > 0) {
+          setStudentOutgoingSyncMeta({
+            markedTerminal: 0,
+            hasNetworkError: true,
+            checkedAtMs: null,
+          });
+        }
       } catch (err) {
         logger.info("Student balance projection refresh failed", err);
+        setStudentOutgoingSyncMeta((current) => ({
+          ...current,
+          hasNetworkError: true,
+        }));
       }
     } else {
       try {
@@ -269,6 +302,106 @@ export default function HomeScreen(): React.ReactElement {
       }
     }
   }
+
+  const runStudentOutgoingSync = async (source: "auto" | "manual"): Promise<void> => {
+    if (syncInFlightRef.current) return;
+    if (!jwtFresh || !isOnline || user?.role !== "STUDENT") return;
+
+    const pendingOutgoingCount =
+      studentBalanceProjection?.pendingOutgoingCount ??
+      listPendingByStatus("pending_reconciliation", "outgoing").length;
+    if (pendingOutgoingCount === 0) return;
+    if (
+      source === "auto" &&
+      !shouldRequestStudentOutgoingAutoSync({
+        isStudent: true,
+        isOnline,
+        jwtFresh,
+        pendingOutgoingCount,
+        isSyncInFlight: syncInFlightRef.current,
+        lastSyncAttemptAtMs: lastSyncAttemptAtRef.current,
+        nowMs: Date.now(),
+      })
+    ) {
+      return;
+    }
+
+    syncInFlightRef.current = true;
+    lastSyncAttemptAtRef.current = Date.now();
+    setIsSyncing(true);
+    setSyncStatusMessage(null);
+    setStudentOutgoingSyncMeta({
+      markedTerminal: 0,
+      hasNetworkError: false,
+      checkedAtMs: null,
+    });
+
+    try {
+      logger.info("student_outgoing_auto_sync_started", {
+        pendingOutgoingCount,
+        source,
+      });
+      const syncResult = await syncOutgoingPendingFromServerLedger();
+      if (syncResult.hasNetworkError) {
+        setIsOnline(false);
+      }
+
+      const projection = await getStudentBalanceProjection(hydrateProfile, {
+        syncOutgoingPending: false,
+      });
+      setStudentBalanceProjection(projection);
+      setIsOnline(projection.source === "server" && !syncResult.hasNetworkError);
+
+      const ledger = await fetchServerLedger(undefined, 10);
+      setServerLedgerEntries(ledger.entries);
+
+      const checkedAtMs = Date.now();
+      setStudentOutgoingSyncMeta({
+        markedTerminal: syncResult.markedTerminal,
+        hasNetworkError: syncResult.hasNetworkError,
+        checkedAtMs,
+      });
+
+      if (syncResult.unknownPending > 0) {
+        logger.info("student_outgoing_auto_sync_waiting_unknown_pending", {
+          pendingOutgoingCount: projection.pendingOutgoingCount,
+          markedTerminal: syncResult.markedTerminal,
+          source,
+          hasNetworkError: syncResult.hasNetworkError,
+        });
+      }
+      logger.info("student_balance_projection_after_sync", {
+        pendingOutgoingCount: projection.pendingOutgoingCount,
+        markedTerminal: syncResult.markedTerminal,
+        source: projection.source,
+        hasNetworkError: syncResult.hasNetworkError,
+      });
+      logger.info("student_outgoing_auto_sync_completed", {
+        pendingOutgoingCount: projection.pendingOutgoingCount,
+        markedTerminal: syncResult.markedTerminal,
+        source,
+        hasNetworkError: syncResult.hasNetworkError,
+      });
+    } catch (err) {
+      logger.info("student_outgoing_auto_sync_network_unavailable", {
+        pendingOutgoingCount,
+        markedTerminal: 0,
+        source,
+        hasNetworkError: err instanceof NetworkError,
+      });
+      setStudentOutgoingSyncMeta({
+        markedTerminal: 0,
+        hasNetworkError: true,
+        checkedAtMs: null,
+      });
+      if (err instanceof NetworkError) {
+        setIsOnline(false);
+      }
+    } finally {
+      setIsSyncing(false);
+      syncInFlightRef.current = false;
+    }
+  };
 
   async function onRefresh(): Promise<void> {
     setRefreshing(true);
@@ -384,6 +517,55 @@ export default function HomeScreen(): React.ReactElement {
     merchantBalanceProjection?.pendingIncomingCount,
   ]);
 
+  useEffect(() => {
+    if (user?.role !== "STUDENT") return;
+    const pendingOutgoingCount =
+      studentBalanceProjection?.pendingOutgoingCount ??
+      listPendingByStatus("pending_reconciliation", "outgoing").length;
+    const nowMs = Date.now();
+
+    if (
+      shouldRequestStudentOutgoingAutoSync({
+        isStudent: true,
+        isOnline,
+        jwtFresh,
+        pendingOutgoingCount,
+        isSyncInFlight: syncInFlightRef.current,
+        lastSyncAttemptAtMs: lastSyncAttemptAtRef.current,
+        nowMs,
+      })
+    ) {
+      void runStudentOutgoingSync("auto");
+      return;
+    }
+
+    const lastAttemptAtMs = lastSyncAttemptAtRef.current;
+    const isWaitingForCooldown =
+      isOnline &&
+      jwtFresh &&
+      pendingOutgoingCount > 0 &&
+      !syncInFlightRef.current &&
+      lastAttemptAtMs > 0 &&
+      nowMs - lastAttemptAtMs < STUDENT_OUTGOING_AUTO_SYNC_COOLDOWN_MS;
+
+    if (!isWaitingForCooldown) return;
+
+    const retryAfterMs =
+      STUDENT_OUTGOING_AUTO_SYNC_COOLDOWN_MS - (nowMs - lastAttemptAtMs) + 50;
+    const timeoutId = setTimeout(() => {
+      void runStudentOutgoingSync("auto");
+    }, retryAfterMs);
+    return () => clearTimeout(timeoutId);
+    // runStudentOutgoingSync reads current refs/state; the helper above keeps
+    // this effect from looping while the device is regaining connectivity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    user?.role,
+    jwtFresh,
+    isOnline,
+    studentBalanceProjection?.pendingOutgoingCount,
+  ]);
+
   // Re-auth: send OTP to the stored email and navigate to verify screen.
   // No email input shown — the stored email is used automatically.
   const handleReauth = async (): Promise<void> => {
@@ -420,6 +602,14 @@ export default function HomeScreen(): React.ReactElement {
   const pendingOutgoingKobo = studentBalanceProjection?.pendingOutgoingKobo ?? 0;
   const pendingOutgoingCount =
     studentBalanceProjection?.pendingOutgoingCount ?? 0;
+  const studentOutgoingSyncStatus = getStudentOutgoingSyncStatus({
+    pendingOutgoingCount,
+    isOnline,
+    isSyncing,
+    markedTerminal: studentOutgoingSyncMeta.markedTerminal,
+    hasNetworkError: studentOutgoingSyncMeta.hasNetworkError,
+    checkedAtMs: studentOutgoingSyncMeta.checkedAtMs,
+  });
   const studentBalanceStatusText =
     studentBalanceProjection?.source === "server"
       ? "Updated just now"
@@ -576,6 +766,11 @@ export default function HomeScreen(): React.ReactElement {
                 {primaryPendingClaimDeadline ? (
                   <Text style={[styles.balancePendingDetail, { color: t.textMut }]}>
                     Claim deadline: {primaryPendingClaimDeadline}
+                  </Text>
+                ) : null}
+                {studentOutgoingSyncStatus.message ? (
+                  <Text style={[styles.balancePendingDetail, { color: t.textMut }]}>
+                    {studentOutgoingSyncStatus.message}
                   </Text>
                 ) : null}
               </View>
