@@ -21,6 +21,10 @@ export interface StudentBalanceProjection {
 
 export type SpendableBalanceSnapshot = StudentBalanceProjection;
 
+export interface StudentBalanceProjectionOptions {
+  readonly syncOutgoingPending?: boolean;
+}
+
 function parseStoredKobo(value: string | null): number | null {
   if (value === null) {
     return null;
@@ -91,12 +95,15 @@ export function getStoredStudentBalanceProjection(): StudentBalanceProjection | 
 
 export async function getStudentBalanceProjection(
   onFreshProfile?: (me: Me) => void,
+  options: StudentBalanceProjectionOptions = {},
 ): Promise<StudentBalanceProjection> {
   let serverConfirmedBalanceKobo: number | null = null;
   let source: "server" | "local" = "local";
   let lastSyncedAt = getLocalState("last_sync_at");
 
-  await syncOutgoingPendingFromServerLedger();
+  if (options.syncOutgoingPending ?? true) {
+    await syncOutgoingPendingFromServerLedger();
+  }
 
   try {
     const fresh = await fetchMe();

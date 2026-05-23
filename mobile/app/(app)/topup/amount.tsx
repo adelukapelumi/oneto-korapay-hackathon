@@ -1,6 +1,5 @@
 import { useCallback, useState } from "react";
 import { useFocusEffect } from "expo-router";
-import { fetchMe } from "../../../src/api/auth";
 import {
   ActivityIndicator,
   Alert,
@@ -20,6 +19,12 @@ import {
   MAX_TOPUP_KOBO,
   TopupAmountError,
 } from "../../../src/payment/topup-flow";
+import {
+  getStoredStudentBalanceProjection,
+  getStudentBalanceProjection,
+  type StudentBalanceProjection,
+} from "../../../src/payment/balance-snapshot";
+import { buildTopupBalanceDisplay } from "../../../src/payment/topup-balance-state";
 import { ApiError } from "../../../src/api/errors";
 import { BackButton } from "../../../components/BackButton";
 import { useThemeMode } from "../../../src/theme/theme-provider";
@@ -54,16 +59,16 @@ export default function TopupAmountScreen(): React.ReactElement {
 
   const jwtFresh = state.status === "authed" && state.jwtFresh;
   const user = state.status === "authed" ? state.user : null;
-  const [balanceKobo, setBalanceKobo] = useState(
-    user ? Number(user.verifiedBalanceKobo) : 0,
+  const [balanceProjection, setBalanceProjection] =
+    useState<StudentBalanceProjection | null>(
+      user?.role === "STUDENT" ? getStoredStudentBalanceProjection() : null,
   );
 
   useFocusEffect(
     useCallback(() => {
-      fetchMe()
-        .then((fresh) => {
-          hydrateProfile(fresh);
-          setBalanceKobo(Number(fresh.verifiedBalanceKobo));
+      getStudentBalanceProjection(hydrateProfile)
+        .then((projection) => {
+          setBalanceProjection(projection);
         })
         .catch(() => { });
     }, [hydrateProfile]),
@@ -73,7 +78,11 @@ export default function TopupAmountScreen(): React.ReactElement {
   // Parse amount
   const amountNgn = parseFloat(amountStr) || 0;
   const amountKobo = Math.round(amountNgn * 100);
-  const newBalanceKobo = balanceKobo + amountKobo;
+  const topupBalance = buildTopupBalanceDisplay({
+    projection: balanceProjection,
+    fallbackServerBalanceKobo: user ? Number(user.verifiedBalanceKobo) : 0,
+    topupAmountKobo: amountKobo,
+  });
 
   // Validation
   const isValidAmount = amountKobo >= MIN_TOPUP_KOBO && amountKobo <= MAX_TOPUP_KOBO;
@@ -155,7 +164,15 @@ export default function TopupAmountScreen(): React.ReactElement {
         {/* Current Balance Card */}
         <View style={[styles.balanceCard, { backgroundColor: t.card, borderColor: t.border }, t.shadow]}>
           <Text style={[styles.balanceLabel, { color: t.textSec }]}>Current Balance</Text>
-          <Text style={[styles.balanceAmount, { color: t.text }]}>{formatNaira(balanceKobo)}</Text>
+          <Text style={[styles.balanceAmount, { color: t.text }]}>
+            {formatNaira(topupBalance.currentBalanceKobo)}
+          </Text>
+          {topupBalance.pendingOutgoingKobo > 0 ? (
+            <Text style={[styles.balancePendingText, { color: t.textMut }]}>
+              {formatNaira(topupBalance.pendingOutgoingKobo)} pending offline payment
+              {topupBalance.pendingOutgoingCount === 1 ? "" : "s"} already reserved
+            </Text>
+          ) : null}
         </View>
 
         {/* Amount Input */}
@@ -220,7 +237,9 @@ export default function TopupAmountScreen(): React.ReactElement {
         {amountKobo > 0 && (
           <View style={styles.previewCard}>
             <Text style={[styles.previewLabel, { color: t.textSec }]}>New balance</Text>
-            <Text style={styles.previewAmount}>{formatNaira(newBalanceKobo)}</Text>
+            <Text style={styles.previewAmount}>
+              {formatNaira(topupBalance.newBalanceKobo)}
+            </Text>
           </View>
         )}
 
@@ -299,6 +318,12 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.h2Lg,
     marginTop: spacing.xs,
     letterSpacing: -1,
+  },
+  balancePendingText: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.sm,
+    marginTop: spacing.sm,
+    textAlign: "center",
   },
 
   // Input
