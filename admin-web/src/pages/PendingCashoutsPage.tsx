@@ -20,6 +20,10 @@ function formatNgnFromKobo(amountKobo: string) {
   }
 }
 
+function formatOptionalNgnFromKobo(amountKobo: string | null, fallback: string) {
+  return amountKobo === null ? fallback : formatNgnFromKobo(amountKobo);
+}
+
 export function PendingCashoutsPage() {
   const { markAnonymous } = useAuth();
   const [cashouts, setCashouts] = useState<PendingCashout[]>([]);
@@ -143,8 +147,16 @@ export function PendingCashoutsPage() {
                     </td>
                     <td>
                       <div className="table-primary">
-                        <span className="amount-value">{formatNgnFromKobo(cashout.amountKobo)}</span>
-                        <span className="table-secondary">{cashout.amountKobo} kobo</span>
+                        <span className="amount-value">{formatNgnFromKobo(cashout.grossAmountKobo)}</span>
+                        <span className="table-secondary">
+                          Oneto fee: {formatOptionalNgnFromKobo(cashout.onetoFeeKobo, "pending")}
+                        </span>
+                        <span className="table-secondary">
+                          Korapay fee: {formatOptionalNgnFromKobo(cashout.korapayPayoutFeeKobo, "to be confirmed")}
+                        </span>
+                        <span className="table-secondary">
+                          Net payout: {formatOptionalNgnFromKobo(cashout.netPayoutKobo, "pending payout fee")}
+                        </span>
                       </div>
                     </td>
                     <td>{new Date(cashout.requestedAt).toLocaleString()}</td>
@@ -178,9 +190,9 @@ export function PendingCashoutsPage() {
                 .
               </p>
               <p>
-                Once approved, the request moves into the normal payout process using the configured
-                bank details. Do not approve this request until it has been reviewed and the
-                reconciliation report is healthy.
+                Approval debits the merchant by the gross settled balance. The backend sends gross
+                minus Oneto's service fee to Korapay, then records Korapay's payout fee when the
+                gateway confirms it.
               </p>
               <ul className="modal-detail-list">
                 <li>
@@ -194,9 +206,37 @@ export function PendingCashoutsPage() {
                   </span>
                 </li>
                 <li>
-                  <span className="modal-detail-label">Amount</span>
+                  <span className="modal-detail-label">Gross cashout</span>
                   <span className="modal-detail-value">
-                    {formatNgnFromKobo(selectedCashout.amountKobo)}
+                    {formatNgnFromKobo(selectedCashout.grossAmountKobo)}
+                  </span>
+                </li>
+                <li>
+                  <span className="modal-detail-label">Oneto fee</span>
+                  <span className="modal-detail-value">
+                    {formatOptionalNgnFromKobo(selectedCashout.onetoFeeKobo, "pending")} at{" "}
+                    {selectedCashout.onetoFeeBps / 100}%
+                  </span>
+                </li>
+                <li>
+                  <span className="modal-detail-label">Korapay payout fee</span>
+                  <span className="modal-detail-value">
+                    {formatOptionalNgnFromKobo(selectedCashout.korapayPayoutFeeKobo, "to be confirmed")}
+                  </span>
+                </li>
+                <li>
+                  <span className="modal-detail-label">Net payout</span>
+                  <span className="modal-detail-value">
+                    {formatOptionalNgnFromKobo(selectedCashout.netPayoutKobo, "pending payout fee")}
+                  </span>
+                </li>
+                <li>
+                  <span className="modal-detail-label">Korapay amount</span>
+                  <span className="modal-detail-value">
+                    {formatOptionalNgnFromKobo(
+                      selectedCashout.finalPayoutAmountKobo,
+                      "set during approval",
+                    )}
                   </span>
                 </li>
                 <li>

@@ -30,11 +30,37 @@ export interface InitiatePayoutParams {
 
 export interface KorapayPayoutResponse {
   status: boolean;
-  message: string;
+  message?: string;
   data: {
     reference: string;
     status: string;
+    fee?: string | number;
+    transaction_fee?: string | number;
+    processor_fee?: string | number;
+    transfer_fee?: string | number;
+    payout_fee?: string | number;
   };
+}
+
+const KorapayPayoutResponseSchema = z.object({
+  status: z.boolean(),
+  message: z.string().optional(),
+  data: z.object({
+    reference: z.string(),
+    status: z.string(),
+    fee: z.union([z.string(), z.number()]).optional(),
+    transaction_fee: z.union([z.string(), z.number()]).optional(),
+    processor_fee: z.union([z.string(), z.number()]).optional(),
+    transfer_fee: z.union([z.string(), z.number()]).optional(),
+    payout_fee: z.union([z.string(), z.number()]).optional(),
+  }).passthrough(),
+}).passthrough();
+
+export interface KorapayPayoutInitiation {
+  reference: string;
+  status: string;
+  payoutFeeKobo: bigint | null;
+  rawResponse: unknown;
 }
 
 const KorapayVerifyTransactionResponseSchema = z.object({
@@ -159,7 +185,7 @@ export class KorapayService {
     }
   }
 
-  async initiatePayout(params: InitiatePayoutParams): Promise<{ reference: string; status: string }> {
+  async initiatePayout(params: InitiatePayoutParams): Promise<KorapayPayoutInitiation> {
     const amountNgn = Number((params.amountKobo / 100).toFixed(2));
 
     const payload = {
@@ -192,15 +218,18 @@ export class KorapayService {
         throw new InternalServerErrorException('Payout failed');
       }
 
-      const json = (await response.json()) as KorapayPayoutResponse;
-      if (!json.status || !json.data) {
+      const json = await response.json();
+      const parsed = KorapayPayoutResponseSchema.safeParse(json);
+      if (!parsed.success || !parsed.data.status || !parsed.data.data) {
         this.logger.error(`Korapay payout returned invalid response: ${JSON.stringify(json)}`);
         throw new InternalServerErrorException('Invalid payout response');
       }
 
       return {
-        reference: json.data.reference,
-        status: json.data.status,
+        reference: parsed.data.data.reference,
+        status: parsed.data.data.status,
+        payoutFeeKobo: this.extractPayoutFeeKobo(parsed.data.data),
+        rawResponse: json,
       };
     } catch (error) {
       if (error instanceof InternalServerErrorException) {
@@ -209,6 +238,87 @@ export class KorapayService {
       this.logger.error(`Failed to reach Korapay Payout API: ${error}`);
       throw new InternalServerErrorException('Failed to communicate with payment gateway');
     }
+  }
+
+  /**
+   * Korapay money fields arrive as major NGN values in some responses
+   * (for example "25.00" or 25). We convert to integer kobo and return
+   * null when the gateway simply did not disclose a fee.
+   */
+  parseMajorNgnToKobo(value: unknown): bigint | null {
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      const match = /^(\d+)(?:\.(\d{1,2}))?$/.exec(trimmed);
+      if (!match) {
+        return null;
+      }
+
+      const nairaPart = match[1];
+      if (!nairaPart) {
+        return null;
+      }
+
+      const naira = BigInt(nairaPart);
+      const kobo = BigInt((match[2] ?? '').padEnd(2, '0'));
+      return naira * 100n + kobo;
+    }
+
+    if (typeof value === 'number') {
+      if (!Number.isFinite(value) || value < 0) {
+        return null;
+      }
+
+      const scaled = Math.round(value * 100);
+      if (!Number.isSafeInteger(scaled) || Math.abs(value * 100 - scaled) > 1e-9) {
+        return null;
+      }
+
+      return BigInt(scaled);
+    }
+
+    return null;
+  }
+
+  extractPayoutFeeKobo(data: unknown): bigint | null {
+    const parsed = z
+      .object({
+        fee: z.unknown().optional(),
+        transfer_fee: z.unknown().optional(),
+        transaction_fee: z.unknown().optional(),
+        processor_fee: z.unknown().optional(),
+        payout_fee: z.unknown().optional(),
+        transferFee: z.unknown().optional(),
+        transactionFee: z.unknown().optional(),
+        processorFee: z.unknown().optional(),
+        payoutFee: z.unknown().optional(),
+      })
+      .passthrough()
+      .safeParse(data);
+
+    if (!parsed.success) {
+      return null;
+    }
+
+    const candidates = [
+      parsed.data.fee,
+      parsed.data.transfer_fee,
+      parsed.data.transaction_fee,
+      parsed.data.processor_fee,
+      parsed.data.payout_fee,
+      parsed.data.transferFee,
+      parsed.data.transactionFee,
+      parsed.data.processorFee,
+      parsed.data.payoutFee,
+    ];
+
+    for (const candidate of candidates) {
+      const parsedFee = this.parseMajorNgnToKobo(candidate);
+      if (parsedFee !== null) {
+        return parsedFee;
+      }
+    }
+
+    return null;
   }
 
   async verifyTransaction(reference: string): Promise<KorapayTransactionVerification> {

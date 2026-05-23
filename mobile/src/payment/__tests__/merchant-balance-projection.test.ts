@@ -161,7 +161,7 @@ describe("merchant balance projection", () => {
         jwtFresh: true,
         balanceConfirmedOnline: true,
         cashoutableBalanceKobo: 1_000,
-        activeCashout: { amountKobo: 1_000, status: "PENDING" },
+        activeCashout: { amountKobo: 1_000, grossAmountKobo: 1_000, status: "PENDING" },
       }),
     ).toEqual({ canRequestCashout: false, reason: "active_cashout" });
   });
@@ -171,7 +171,7 @@ describe("merchant balance projection", () => {
       getCashoutBalanceDisplay({
         fetchState: "confirmed",
         cashoutableBalanceKobo: 20_000,
-        activeCashout: { amountKobo: 20_000, status: "PROCESSING" },
+        activeCashout: { amountKobo: 20_000, grossAmountKobo: 20_000, status: "PROCESSING" },
       }),
     ).toEqual({ kind: "amount", cashoutableBalanceKobo: 0 });
   });
@@ -232,10 +232,11 @@ describe("merchant balance projection", () => {
         },
         {
           amountKobo: "2500",
+          grossAmountKobo: "2500",
           status: "PENDING",
         },
       ]),
-    ).toEqual({ amountKobo: 2_500, status: "PENDING" });
+    ).toEqual({ amountKobo: 2_500, grossAmountKobo: 2_500, status: "PENDING" });
 
     expect(
       getActiveCashoutSummary([

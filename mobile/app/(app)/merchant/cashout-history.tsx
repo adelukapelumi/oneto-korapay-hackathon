@@ -68,7 +68,16 @@ export default function CashoutHistoryScreen(): React.ReactElement {
   };
 
   const renderItem = ({ item }: { item: Cashout }) => {
-    const amountNaira = (Number(item.amountKobo) / 100).toFixed(2);
+    const grossAmountNaira = (Number(item.grossAmountKobo) / 100).toFixed(2);
+    const onetoFeeNaira = item.onetoFeeKobo
+      ? (Number(item.onetoFeeKobo) / 100).toFixed(2)
+      : null;
+    const korapayFeeText = item.korapayPayoutFeeKobo
+      ? `\u20A6${(Number(item.korapayPayoutFeeKobo) / 100).toFixed(2)}`
+      : "to be confirmed";
+    const netPayoutText = item.netPayoutKobo
+      ? `\u20A6${(Number(item.netPayoutKobo) / 100).toFixed(2)}`
+      : "pending payout fee";
     const dateStr = new Date(item.requestedAt).toLocaleString(undefined, {
       month: "short",
       day: "numeric",
@@ -80,10 +89,21 @@ export default function CashoutHistoryScreen(): React.ReactElement {
     return (
       <View style={[styles.card, { backgroundColor: t.card, borderColor: t.border }]}>
         <View style={styles.cardHeader}>
-          <Text style={[styles.amount, { color: t.text }]}>₦{amountNaira}</Text>
+          <Text style={[styles.amount, { color: t.text }]}>{"\u20A6"}{grossAmountNaira}</Text>
           <View style={[styles.badge, { backgroundColor: statusColors.bg }]}>
             <Text style={[styles.badgeText, { color: statusColors.text }]}>{item.status}</Text>
           </View>
+        </View>
+        <View style={styles.breakdown}>
+          <Text style={[styles.detail, { color: t.textSec }]}>
+            Oneto fee: {onetoFeeNaira ? `\u20A6${onetoFeeNaira}` : "pending"}
+          </Text>
+          <Text style={[styles.detail, { color: t.textSec }]}>
+            Korapay fee: {korapayFeeText}
+          </Text>
+          <Text style={[styles.detail, { color: t.textSec }]}>
+            Net payout: {netPayoutText}
+          </Text>
         </View>
         <Text style={[styles.date, { color: t.textSec }]}>{dateStr}</Text>
       </View>
@@ -214,6 +234,14 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: spacing.xs,
+  },
+  breakdown: {
+    gap: spacing.xs,
+    marginBottom: spacing.sm,
+  },
+  detail: {
+    fontFamily: fonts.medium,
+    fontSize: fontSizes.sm,
   },
   amount: {
     fontFamily: fonts.bold,

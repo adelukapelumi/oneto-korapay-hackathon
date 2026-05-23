@@ -229,7 +229,13 @@ model MerchantProfile {
 model Cashout {
   id                   String        @id @default(cuid())
   merchantUserId       String
-  amountKobo           BigInt
+  amountKobo           BigInt        // Legacy compatibility: equal to grossAmountKobo for new cashouts.
+  grossAmountKobo      BigInt?
+  onetoFeeBps          Int           @default(250)
+  onetoFeeKobo         BigInt?
+  korapayPayoutFeeKobo BigInt?
+  netPayoutKobo        BigInt?
+  finalPayoutAmountKobo BigInt?
   status               CashoutStatus @default(PENDING)
   cashoutBankName      String
   cashoutBankCode      String

@@ -49,6 +49,24 @@ function getCashoutBlockMessage(reason: CashoutRequestBlockReason): string {
   }
 }
 
+function formatKobo(amountKobo: number | string | null | undefined): string {
+  if (amountKobo === null || amountKobo === undefined) {
+    return "to be confirmed";
+  }
+
+  const amountNumber =
+    typeof amountKobo === "string" ? Number(amountKobo) : amountKobo;
+  if (!Number.isFinite(amountNumber)) {
+    return "to be confirmed";
+  }
+
+  return `${"\u20A6"}${(amountNumber / 100).toFixed(2)}`;
+}
+
+function calculateOnetoFeePreviewKobo(grossAmountKobo: number): number {
+  return Math.floor((grossAmountKobo * 250) / 10_000);
+}
+
 export default function CashoutScreen(): React.ReactElement {
   const router = useRouter();
   const { state, hydrateProfile } = useAuth();
@@ -154,6 +172,9 @@ export default function CashoutScreen(): React.ReactElement {
       ? balanceDisplay.cashoutableBalanceKobo
       : balanceProjection.cashoutableBalanceKobo;
   const balanceNaira = (displayCashoutableBalanceKobo / 100).toFixed(2);
+  const previewOnetoFeeKobo = calculateOnetoFeePreviewKobo(displayCashoutableBalanceKobo);
+  const previewPayoutBeforeKorapayFeeKobo =
+    displayCashoutableBalanceKobo - previewOnetoFeeKobo;
   const balanceConfirmedOnline = balanceFetchState === "confirmed";
   const cashoutDecision = getCashoutRequestDecision({
     jwtFresh,
@@ -173,7 +194,8 @@ export default function CashoutScreen(): React.ReactElement {
     try {
       const res = await requestCashout();
       setActiveCashout({
-        amountKobo: Number(res.amountKobo),
+        amountKobo: Number(res.grossAmountKobo),
+        grossAmountKobo: Number(res.grossAmountKobo),
         status: res.status,
       });
       setSuccessData(res);
@@ -234,6 +256,33 @@ export default function CashoutScreen(): React.ReactElement {
               ₦{(balanceProjection.pendingIncomingKobo / 100).toFixed(2)} pending verification is not yet cashoutable.
             </Text>
           ) : null}
+          {balanceConfirmedOnline && !activeCashout ? (
+            <View style={styles.breakdown}>
+              <View style={styles.breakdownRow}>
+                <Text style={[styles.breakdownLabel, { color: t.textSec }]}>Gross cashout</Text>
+                <Text style={[styles.breakdownValue, { color: t.text }]}>
+                  {formatKobo(displayCashoutableBalanceKobo)}
+                </Text>
+              </View>
+              <View style={styles.breakdownRow}>
+                <Text style={[styles.breakdownLabel, { color: t.textSec }]}>Oneto service fee (2.5%)</Text>
+                <Text style={[styles.breakdownValue, { color: t.text }]}>
+                  {formatKobo(previewOnetoFeeKobo)}
+                </Text>
+              </View>
+              <View style={styles.breakdownRow}>
+                <Text style={[styles.breakdownLabel, { color: t.textSec }]}>Korapay payout fee</Text>
+                <Text style={[styles.breakdownValue, { color: t.textSec }]}>to be confirmed</Text>
+              </View>
+              <View style={styles.breakdownRow}>
+                <Text style={[styles.breakdownLabel, { color: t.textSec }]}>Net payout</Text>
+                <Text style={[styles.breakdownValue, { color: t.textSec }]}>pending payout fee</Text>
+              </View>
+              <Text style={[styles.balanceNote, { color: t.textSec }]}>
+                Backend payout starts from {formatKobo(previewPayoutBeforeKorapayFeeKobo)} before Korapay confirms its fee.
+              </Text>
+            </View>
+          ) : null}
         </View>
 
         {error ? (
@@ -251,8 +300,36 @@ export default function CashoutScreen(): React.ReactElement {
             </View>
             <Text style={styles.successLabel}>CASHOUT REQUESTED</Text>
             <Text style={[styles.successAmount, { color: t.text }]}>
-              ₦{(Number(successData.amountKobo) / 100).toFixed(2)}
+              {formatKobo(successData.grossAmountKobo)}
             </Text>
+            <View style={styles.breakdown}>
+              <View style={styles.breakdownRow}>
+                <Text style={[styles.breakdownLabel, { color: t.textSec }]}>Gross cashout</Text>
+                <Text style={[styles.breakdownValue, { color: t.text }]}>
+                  {formatKobo(successData.grossAmountKobo)}
+                </Text>
+              </View>
+              <View style={styles.breakdownRow}>
+                <Text style={[styles.breakdownLabel, { color: t.textSec }]}>Oneto service fee (2.5%)</Text>
+                <Text style={[styles.breakdownValue, { color: t.text }]}>
+                  {formatKobo(successData.onetoFeeKobo)}
+                </Text>
+              </View>
+              <View style={styles.breakdownRow}>
+                <Text style={[styles.breakdownLabel, { color: t.textSec }]}>Korapay payout fee</Text>
+                <Text style={[styles.breakdownValue, { color: t.textSec }]}>
+                  {formatKobo(successData.korapayPayoutFeeKobo)}
+                </Text>
+              </View>
+              <View style={styles.breakdownRow}>
+                <Text style={[styles.breakdownLabel, { color: t.textSec }]}>Net payout</Text>
+                <Text style={[styles.breakdownValue, { color: t.textSec }]}>
+                  {successData.netPayoutKobo
+                    ? formatKobo(successData.netPayoutKobo)
+                    : "pending payout fee"}
+                </Text>
+              </View>
+            </View>
             <View style={styles.statusBadge}>
               <Text style={styles.statusBadgeText}>⏳ {successData.status}</Text>
             </View>
@@ -356,6 +433,27 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
     textAlign: "center",
     lineHeight: 18,
+  },
+  breakdown: {
+    width: "100%",
+    marginTop: spacing.lg,
+    gap: spacing.sm,
+  },
+  breakdownRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: spacing.md,
+  },
+  breakdownLabel: {
+    flex: 1,
+    fontFamily: fonts.medium,
+    fontSize: fontSizes.sm,
+  },
+  breakdownValue: {
+    fontFamily: fonts.semibold,
+    fontSize: fontSizes.sm,
+    textAlign: "right",
   },
   errorBox: {
     backgroundColor: colors.error + "15",

@@ -556,6 +556,12 @@ describe("AdminService", () => {
         id: "c_1",
         merchantUserId: "u_m1",
         amountKobo: 5000n,
+        grossAmountKobo: 5000n,
+        onetoFeeBps: 250,
+        onetoFeeKobo: 125n,
+        korapayPayoutFeeKobo: null,
+        netPayoutKobo: null,
+        finalPayoutAmountKobo: null,
         requestedAt: new Date("2026-05-14T00:00:00.000Z"),
         status: CashoutStatus.PENDING,
         cashoutBankName: "Bank",
@@ -576,6 +582,11 @@ describe("AdminService", () => {
     expect(result[0]).toMatchObject({
       id: "c_1",
       amountKobo: "5000",
+      grossAmountKobo: "5000",
+      onetoFeeBps: 250,
+      onetoFeeKobo: "125",
+      korapayPayoutFeeKobo: null,
+      netPayoutKobo: null,
       status: CashoutStatus.PENDING,
     });
   });

@@ -19,6 +19,12 @@ describe("Cashout API", () => {
           cashout: {
             id: "cash_123",
             amountKobo: "5000",
+            grossAmountKobo: "5000",
+            onetoFeeBps: 250,
+            onetoFeeKobo: "125",
+            korapayPayoutFeeKobo: null,
+            netPayoutKobo: null,
+            finalPayoutAmountKobo: null,
             status: "PENDING",
             requestedAt: "2023-10-10T10:00:00.000Z",
           },
@@ -28,6 +34,10 @@ describe("Cashout API", () => {
       const res = await requestCashout();
       expect(res.id).toBe("cash_123");
       expect(res.amountKobo).toBe("5000");
+      expect(res.grossAmountKobo).toBe("5000");
+      expect(res.onetoFeeKobo).toBe("125");
+      expect(res.korapayPayoutFeeKobo).toBeNull();
+      expect(res.netPayoutKobo).toBeNull();
       expect(res.status).toBe("PENDING");
       expect(mockPost).toHaveBeenCalledWith("/cashout/request");
     });
@@ -58,6 +68,12 @@ describe("Cashout API", () => {
             {
               id: "cash_123",
               amountKobo: "5000",
+              grossAmountKobo: "5000",
+              onetoFeeBps: 250,
+              onetoFeeKobo: "125",
+              korapayPayoutFeeKobo: "25",
+              netPayoutKobo: "4850",
+              finalPayoutAmountKobo: "4875",
               status: "COMPLETED",
               requestedAt: "2023-10-10T10:00:00.000Z",
             },

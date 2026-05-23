@@ -21,11 +21,13 @@ export type CashoutBalanceFetchState =
 
 export interface ActiveCashoutSummary {
   readonly amountKobo: number;
+  readonly grossAmountKobo: number;
   readonly status: string;
 }
 
 export interface CashoutStatusLike {
   readonly amountKobo: string;
+  readonly grossAmountKobo?: string;
   readonly status: string;
 }
 
@@ -106,11 +108,12 @@ export function getActiveCashoutSummary(
     return null;
   }
 
-  const amountKobo = Number(active.amountKobo);
+  const amountKobo = Number(active.grossAmountKobo ?? active.amountKobo);
   assertNonNegativeInteger("active cashout amountKobo", amountKobo);
 
   return {
     amountKobo,
+    grossAmountKobo: amountKobo,
     status: active.status,
   };
 }
