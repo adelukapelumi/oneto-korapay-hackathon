@@ -322,6 +322,66 @@ describe('CashoutService', () => {
     });
   });
 
+  describe('recoverStuckCashouts', () => {
+    it('does not call charge verification for payout references', async () => {
+      const warnSpy = jest
+        .spyOn((service as unknown as { logger: { warn: (...args: unknown[]) => void } }).logger, 'warn')
+        .mockImplementation(() => undefined);
+
+      mockPrisma.cashout.findMany.mockResolvedValue([
+        {
+          id: 'c_stuck',
+          merchantUserId: merchantId,
+          amountKobo: 5_000n,
+          grossAmountKobo: 5_000n,
+          onetoFeeKobo: 125n,
+          korapayReference: 'cashout_ref_123',
+          status: CashoutStatus.PROCESSING,
+        },
+      ]);
+
+      await service.recoverStuckCashouts();
+
+      expect(mockKorapay.verifyTransaction).not.toHaveBeenCalled();
+      expect(mockPrisma.cashout.updateMany).not.toHaveBeenCalled();
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cashoutId: 'c_stuck',
+          korapayReference: 'cashout_ref_123',
+        }),
+        'Cashout payout recovery skipped: payout verification endpoint is not configured',
+      );
+    });
+
+    it('leaves PROCESSING cashout untouched when payout verification is unavailable', async () => {
+      mockKorapay.verifyTransaction.mockResolvedValue({ status: 'not_found' });
+      mockPrisma.cashout.findMany.mockResolvedValue([
+        {
+          id: 'c_processing',
+          merchantUserId: merchantId,
+          amountKobo: 5_000n,
+          korapayReference: 'cashout_ref_missing_from_charges',
+          status: CashoutStatus.PROCESSING,
+        },
+      ]);
+      jest
+        .spyOn((service as unknown as { logger: { warn: (...args: unknown[]) => void } }).logger, 'warn')
+        .mockImplementation(() => undefined);
+
+      await service.recoverStuckCashouts();
+
+      expect(mockKorapay.verifyTransaction).not.toHaveBeenCalled();
+      expect(mockPrisma.cashout.updateMany).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: CashoutStatus.FAILED }),
+        }),
+      );
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
+      expect(mockPrisma.ledgerEntry.create).not.toHaveBeenCalled();
+    });
+  });
+
   describe('initiateKorapayPayout', () => {
     const cashoutId = 'c_123';
     const korapayRef = 'cashout_ref_123';

@@ -211,94 +211,19 @@ export class CashoutService {
       for (const cashout of stuckCashouts) {
         if (!cashout.korapayReference) continue;
 
-        try {
-          const verification = await this.korapayService.verifyTransaction(cashout.korapayReference);
-          const grossAmountKobo = this.getGrossAmountKobo(cashout);
-          
-          if (verification.status === 'success') {
-            const feeFromGateway = this.korapayService.extractPayoutFeeKobo(verification);
-            const korapayPayoutFeeKobo = feeFromGateway ?? cashout.korapayPayoutFeeKobo ?? null;
-            const onetoFeeKobo = cashout.onetoFeeKobo ?? this.calculateOnetoFeeKobo(grossAmountKobo);
-            const korapayTransferAmountKobo =
-              cashout.korapayTransferAmountKobo ?? (grossAmountKobo - onetoFeeKobo);
-            const feeAccounting = this.resolvePayoutFeeAccounting({
-              grossAmountKobo,
-              onetoFeeKobo,
-              korapayTransferAmountKobo,
-              korapayPayoutFeeKobo,
-              existingFeeBearer: cashout.korapayPayoutFeeBearer,
-              existingDeductedFromRecipient: cashout.korapayPayoutFeeDeductedFromRecipient,
-              gatewayPayload: verification,
-            });
-            await this.prisma.cashout.updateMany({
-              where: { id: cashout.id, status: CashoutStatus.PROCESSING },
-              data: {
-                status: CashoutStatus.COMPLETED,
-                completedAt: new Date(),
-                korapayPayoutFeeKobo,
-                korapayPayoutFeeBearer: feeAccounting.korapayPayoutFeeBearer,
-                korapayPayoutFeeDeductedFromRecipient:
-                  feeAccounting.korapayPayoutFeeDeductedFromRecipient,
-                korapayTransferAmountKobo,
-                netPayoutKobo: feeAccounting.netPayoutKobo,
-              },
-            });
-          } else if (verification.status === 'failed' || verification.status === 'not_found') {
-            await this.prisma.$transaction(
-              async (tx) => {
-                const transition = await tx.cashout.updateMany({
-                  where: { id: cashout.id, status: CashoutStatus.PROCESSING },
-                  data: {
-                    status: CashoutStatus.FAILED,
-                    failureReason: verification.status === 'not_found' ? 'payout_initiation_failed_never_reached_gateway' : 'payout_failed_at_gateway_recovered',
-                  },
-                });
-
-                if (transition.count === 0) return;
-
-                const merchant = await tx.user.findUnique({ where: { id: cashout.merchantUserId } });
-                const operating = await tx.user.findUnique({ where: { id: this.OPERATING_USER_ID } });
-
-                if (merchant && operating) {
-                  const reverseRef = `${cashout.korapayReference}_recovery_fail`;
-
-                  await tx.ledgerEntry.create({
-                    data: {
-                      transactionId: reverseRef,
-                      userId: merchant.id,
-                      type: LedgerEntryType.CREDIT,
-                      amountKobo: grossAmountKobo,
-                      balanceAfterKobo: merchant.verifiedBalanceKobo + grossAmountKobo,
-                      description: `Cashout recovery refund ${cashout.korapayReference}`,
-                    },
-                  });
-                  await tx.user.update({
-                    where: { id: merchant.id },
-                    data: { verifiedBalanceKobo: { increment: grossAmountKobo } },
-                  });
-
-                  await tx.ledgerEntry.create({
-                    data: {
-                      transactionId: reverseRef,
-                      userId: operating.id,
-                      type: LedgerEntryType.DEBIT,
-                      amountKobo: grossAmountKobo,
-                      balanceAfterKobo: operating.verifiedBalanceKobo - grossAmountKobo,
-                      description: `Cashout recovery reversal from merchant ${merchant.id}`,
-                    },
-                  });
-                  await tx.user.update({
-                    where: { id: operating.id },
-                    data: { verifiedBalanceKobo: { decrement: grossAmountKobo } },
-                  });
-                }
-              },
-              { isolationLevel: 'Serializable' },
-            );
-          }
-        } catch (err) {
-          this.logger.error(`Failed to recover stuck cashout ${cashout.id}:`, err);
-        }
+        // Korapay /charges/:reference is the pay-in verification path. A payout
+        // reference can legitimately be missing there even if the transfer
+        // succeeded, so using that endpoint here could refund a merchant after
+        // Oneto has already paid them. Until a payout-specific verification
+        // endpoint is wired and tested, webhooks are the source of truth and
+        // stuck PROCESSING cashouts remain PROCESSING for manual review.
+        this.logger.warn(
+          {
+            cashoutId: cashout.id,
+            korapayReference: cashout.korapayReference,
+          },
+          'Cashout payout recovery skipped: payout verification endpoint is not configured',
+        );
       }
     } catch (err) {
       this.logger.error('Error in recoverStuckCashouts sweep:', err);
