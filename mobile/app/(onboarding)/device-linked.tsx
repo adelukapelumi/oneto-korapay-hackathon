@@ -3,7 +3,10 @@ import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from "rea
 import { useRouter } from "expo-router";
 import { Screen } from "../../components/Screen";
 import { useAuth } from "../../src/auth/auth-state";
-import { getRecoveryStatus } from "../../src/api/recovery";
+import {
+  getRecoveryStatus,
+  shouldRedirectToRecoveryStatus,
+} from "../../src/api/recovery";
 import { NetworkError } from "../../src/api/errors";
 import { useThemeMode } from "../../src/theme/theme-provider";
 import {
@@ -78,7 +81,7 @@ export default function DeviceLinkedScreen(): React.ReactElement {
       try {
         const request = await getRecoveryStatus();
         if (cancelled) return;
-        if (request) {
+        if (shouldRedirectToRecoveryStatus(request)) {
           router.replace("/(onboarding)/recovery-pending");
           return;
         }

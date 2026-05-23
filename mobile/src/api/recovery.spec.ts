@@ -3,6 +3,7 @@ import {
   cancelRecoveryRequest,
   createRecoveryRequest,
   getRecoveryStatus,
+  shouldRedirectToRecoveryStatus,
 } from "./recovery";
 import { ApiError, NetworkError } from "./errors";
 
@@ -133,6 +134,14 @@ describe("recovery api", () => {
 
     expect(post).toHaveBeenCalledWith("/recovery/recovery_123/cancel", undefined);
     expect(result.status).toBe("CANCELLED");
+  });
+
+  it("redirects only active recovery statuses to the status screen", () => {
+    expect(shouldRedirectToRecoveryStatus({ ...sampleRequest, status: "PENDING" })).toBe(true);
+    expect(shouldRedirectToRecoveryStatus({ ...sampleRequest, status: "APPROVED" })).toBe(true);
+    expect(shouldRedirectToRecoveryStatus({ ...sampleRequest, status: "CANCELLED" })).toBe(false);
+    expect(shouldRedirectToRecoveryStatus({ ...sampleRequest, status: "REJECTED" })).toBe(false);
+    expect(shouldRedirectToRecoveryStatus(null)).toBe(false);
   });
 
   it("returns typed ApiError and NetworkError failures consistently", async () => {

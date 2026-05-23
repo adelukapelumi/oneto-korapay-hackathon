@@ -59,6 +59,12 @@ export interface CreateRecoveryRequestInput {
   readonly lastTopupAmountKobo?: number;
 }
 
+export function shouldRedirectToRecoveryStatus(
+  request: RecoveryRequest | null,
+): boolean {
+  return request?.status === "PENDING" || request?.status === "APPROVED";
+}
+
 async function parseOrThrow<T>(
   schema: z.ZodSchema<T>,
   data: unknown,
