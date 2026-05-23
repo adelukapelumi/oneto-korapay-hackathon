@@ -5,8 +5,11 @@ jest.mock("../../ledger/db", () => ({
 import { listPendingByStatus } from "../../ledger/db";
 import {
   buildMerchantBalanceProjection,
+  getActiveCashoutSummary,
+  getCashoutBalanceDisplay,
   getCashoutRequestDecision,
   getPendingIncomingSummary,
+  shouldStartCashoutBalanceRefresh,
 } from "../merchant-balance-projection";
 
 const listPendingByStatusMock =
@@ -108,6 +111,17 @@ describe("merchant balance projection", () => {
     ).toEqual({ canRequestCashout: true });
   });
 
+  it("blocks cashout while balance confirmation is in progress", () => {
+    expect(
+      getCashoutRequestDecision({
+        jwtFresh: true,
+        balanceConfirmedOnline: true,
+        cashoutableBalanceKobo: 1_000,
+        isRequestInProgress: true,
+      }),
+    ).toEqual({ canRequestCashout: false, reason: "request_in_progress" });
+  });
+
   it("blocks cashout when backend balance is unconfirmed", () => {
     expect(
       getCashoutRequestDecision({
@@ -139,5 +153,116 @@ describe("merchant balance projection", () => {
         cashoutableBalanceKobo: 0,
       }),
     ).toEqual({ canRequestCashout: false, reason: "zero_balance" });
+  });
+
+  it("blocks another cashout when a backend active cashout exists", () => {
+    expect(
+      getCashoutRequestDecision({
+        jwtFresh: true,
+        balanceConfirmedOnline: true,
+        cashoutableBalanceKobo: 1_000,
+        activeCashout: { amountKobo: 1_000, status: "PENDING" },
+      }),
+    ).toEqual({ canRequestCashout: false, reason: "active_cashout" });
+  });
+
+  it("uses backend active cashout status to show zero available for cashout", () => {
+    expect(
+      getCashoutBalanceDisplay({
+        fetchState: "confirmed",
+        cashoutableBalanceKobo: 20_000,
+        activeCashout: { amountKobo: 20_000, status: "PROCESSING" },
+      }),
+    ).toEqual({ kind: "amount", cashoutableBalanceKobo: 0 });
+  });
+
+  it("renders confirmed backend balance when no active cashout exists", () => {
+    expect(
+      getCashoutBalanceDisplay({
+        fetchState: "confirmed",
+        cashoutableBalanceKobo: 20_000,
+        activeCashout: null,
+      }),
+    ).toEqual({ kind: "amount", cashoutableBalanceKobo: 20_000 });
+  });
+
+  it("renders confirm online while offline and disables request through unconfirmed balance", () => {
+    expect(
+      getCashoutBalanceDisplay({
+        fetchState: "offline_unconfirmed",
+        cashoutableBalanceKobo: 20_000,
+        activeCashout: null,
+      }),
+    ).toEqual({ kind: "confirm_online" });
+    expect(
+      getCashoutRequestDecision({
+        jwtFresh: true,
+        balanceConfirmedOnline: false,
+        cashoutableBalanceKobo: 20_000,
+      }),
+    ).toEqual({ canRequestCashout: false, reason: "balance_unconfirmed" });
+  });
+
+  it("does not leave balance display loading after a fetch error state", () => {
+    expect(
+      getCashoutBalanceDisplay({
+        fetchState: "error",
+        cashoutableBalanceKobo: 20_000,
+        activeCashout: null,
+      }),
+    ).toEqual({ kind: "confirm_online" });
+  });
+
+  it("represents the loading state explicitly while confirmation is in flight", () => {
+    expect(
+      getCashoutBalanceDisplay({
+        fetchState: "loading",
+        cashoutableBalanceKobo: 20_000,
+        activeCashout: null,
+      }),
+    ).toEqual({ kind: "loading" });
+  });
+
+  it("finds active cashouts from backend status and ignores terminal cashouts", () => {
+    expect(
+      getActiveCashoutSummary([
+        {
+          amountKobo: "5000",
+          status: "COMPLETED",
+        },
+        {
+          amountKobo: "2500",
+          status: "PENDING",
+        },
+      ]),
+    ).toEqual({ amountKobo: 2_500, status: "PENDING" });
+
+    expect(
+      getActiveCashoutSummary([
+        {
+          amountKobo: "5000",
+          status: "COMPLETED",
+        },
+        {
+          amountKobo: "2500",
+          status: "FAILED",
+        },
+      ]),
+    ).toBeNull();
+  });
+
+  it("does not start overlapping balance refreshes on re-focus", () => {
+    expect(
+      shouldStartCashoutBalanceRefresh({
+        isAuthed: true,
+        isRefreshInFlight: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldStartCashoutBalanceRefresh({
+        isAuthed: true,
+        isRefreshInFlight: false,
+      }),
+    ).toBe(true);
   });
 });

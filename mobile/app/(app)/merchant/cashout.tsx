@@ -1,16 +1,21 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { View, Text, StyleSheet, Pressable, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Stack, useFocusEffect, useRouter } from "expo-router";
 import { useAuth } from "../../../src/auth/auth-state";
 import { fetchMe } from "../../../src/api/auth";
-import { requestCashout, Cashout } from "../../../src/api/cashout";
-import { ApiError } from "../../../src/api/errors";
+import { getCashoutStatus, requestCashout, Cashout } from "../../../src/api/cashout";
+import { ApiError, NetworkError } from "../../../src/api/errors";
 import { setLocalState } from "../../../src/ledger/db";
 import {
   buildMerchantBalanceProjection,
+  getActiveCashoutSummary,
+  getCashoutBalanceDisplay,
   getCashoutRequestDecision,
   getPendingIncomingSummary,
+  shouldStartCashoutBalanceRefresh,
+  type ActiveCashoutSummary,
+  type CashoutBalanceFetchState,
   type CashoutRequestBlockReason,
   type MerchantBalanceProjection,
 } from "../../../src/payment/merchant-balance-projection";
@@ -39,6 +44,8 @@ function getCashoutBlockMessage(reason: CashoutRequestBlockReason): string {
       return "Your available cashout balance is zero.";
     case "request_in_progress":
       return "Please wait while your cashout balance is being confirmed.";
+    case "active_cashout":
+      return "You already have a cashout pending.";
   }
 }
 
@@ -48,36 +55,54 @@ export default function CashoutScreen(): React.ReactElement {
   const { mode } = useThemeMode();
   const t = getTheme(mode);
   const [loading, setLoading] = useState(false);
-  const [refreshingBalance, setRefreshingBalance] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successData, setSuccessData] = useState<Cashout | null>(null);
   const [projection, setProjection] =
     useState<MerchantBalanceProjection | null>(null);
-  const [balanceConfirmedOnline, setBalanceConfirmedOnline] = useState(false);
+  const [balanceFetchState, setBalanceFetchState] =
+    useState<CashoutBalanceFetchState>("offline_unconfirmed");
+  const [activeCashout, setActiveCashout] =
+    useState<ActiveCashoutSummary | null>(null);
+  const refreshInFlightRef = useRef(false);
+  const isAuthed = state.status === "authed";
 
   const refreshCashoutBalance = useCallback(async () => {
-    if (state.status !== "authed") return;
+    if (
+      !shouldStartCashoutBalanceRefresh({
+        isAuthed,
+        isRefreshInFlight: refreshInFlightRef.current,
+      })
+    ) {
+      return;
+    }
 
-    setRefreshingBalance(true);
+    refreshInFlightRef.current = true;
+    setBalanceFetchState("loading");
     setError(null);
 
     try {
-      const fresh = await fetchMe();
+      const [fresh, cashouts] = await Promise.all([
+        fetchMe(),
+        getCashoutStatus(),
+      ]);
       hydrateProfile(fresh);
       const settledBalanceKobo = Number(fresh.verifiedBalanceKobo);
       const nextProjection = buildMerchantBalanceProjection({
         settledBalanceKobo,
         ...getPendingIncomingSummary(),
       });
+      const nextActiveCashout = getActiveCashoutSummary(cashouts);
 
       setProjection(nextProjection);
-      setBalanceConfirmedOnline(true);
+      setActiveCashout(nextActiveCashout);
+      setBalanceFetchState("confirmed");
       setLocalState("verified_balance_kobo", fresh.verifiedBalanceKobo);
       setLocalState("last_sync_at", new Date().toISOString());
       logger.debug("cashout_balance_rendered", {
         hasPendingSync: nextProjection.hasPendingSync,
         pendingIncomingCount: nextProjection.pendingIncomingCount,
         balanceConfirmedOnline: true,
+        hasActiveCashout: nextActiveCashout !== null,
       });
     } catch (err) {
       logger.info("Cashout balance refresh failed", err);
@@ -87,12 +112,20 @@ export default function CashoutScreen(): React.ReactElement {
           ...getPendingIncomingSummary(),
         }),
       );
-      setBalanceConfirmedOnline(false);
-      setError("Connect to the internet to confirm your cashout balance.");
+      setActiveCashout(null);
+      if (err instanceof NetworkError) {
+        setBalanceFetchState("offline_unconfirmed");
+        setError("Connect to the internet to confirm your cashout balance.");
+      } else {
+        setBalanceFetchState("error");
+        setError(
+          "Could not confirm your cashout balance. Check your connection and try again.",
+        );
+      }
     } finally {
-      setRefreshingBalance(false);
+      refreshInFlightRef.current = false;
     }
-  }, [state]);
+  }, [hydrateProfile, isAuthed]);
 
   useFocusEffect(
     useCallback(() => {
@@ -111,12 +144,23 @@ export default function CashoutScreen(): React.ReactElement {
       settledBalanceKobo: 0,
       ...getPendingIncomingSummary(),
     });
-  const balanceNaira = (balanceProjection.cashoutableBalanceKobo / 100).toFixed(2);
+  const balanceDisplay = getCashoutBalanceDisplay({
+    fetchState: balanceFetchState,
+    cashoutableBalanceKobo: balanceProjection.cashoutableBalanceKobo,
+    activeCashout,
+  });
+  const displayCashoutableBalanceKobo =
+    balanceDisplay.kind === "amount"
+      ? balanceDisplay.cashoutableBalanceKobo
+      : balanceProjection.cashoutableBalanceKobo;
+  const balanceNaira = (displayCashoutableBalanceKobo / 100).toFixed(2);
+  const balanceConfirmedOnline = balanceFetchState === "confirmed";
   const cashoutDecision = getCashoutRequestDecision({
     jwtFresh,
     balanceConfirmedOnline,
-    cashoutableBalanceKobo: balanceProjection.cashoutableBalanceKobo,
-    isRequestInProgress: loading || refreshingBalance,
+    cashoutableBalanceKobo: displayCashoutableBalanceKobo,
+    isRequestInProgress: loading || balanceFetchState === "loading",
+    activeCashout,
   });
 
   const handleRequestCashout = async () => {
@@ -128,6 +172,10 @@ export default function CashoutScreen(): React.ReactElement {
     setError(null);
     try {
       const res = await requestCashout();
+      setActiveCashout({
+        amountKobo: Number(res.amountKobo),
+        status: res.status,
+      });
       setSuccessData(res);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -164,16 +212,21 @@ export default function CashoutScreen(): React.ReactElement {
 
         <View style={[styles.balanceCard, { backgroundColor: t.card, borderColor: t.border }, t.shadow]}>
           <Text style={[styles.balanceLabel, { color: t.textSec }]}>Available for Cashout</Text>
-          {refreshingBalance ? (
+          {balanceDisplay.kind === "loading" ? (
             <ActivityIndicator color={colors.primary} style={styles.balanceSpinner} />
           ) : (
             <Text style={[styles.balanceAmount, { color: t.text }]}>
-              {balanceConfirmedOnline ? `₦${balanceNaira}` : "Confirm online"}
+              {balanceConfirmedOnline ? `${"\u20A6"}${balanceNaira}` : "Confirm online"}
             </Text>
           )}
-          {!balanceConfirmedOnline ? (
+          {balanceFetchState === "offline_unconfirmed" ? (
             <Text style={[styles.balanceNote, { color: t.textSec }]}>
               Connect to the internet to confirm your cashout balance.
+            </Text>
+          ) : null}
+          {activeCashout ? (
+            <Text style={[styles.balanceNote, { color: t.textSec }]}>
+              Cashout pending: {"\u20A6"}{(activeCashout.amountKobo / 100).toFixed(2)} requested.
             </Text>
           ) : null}
           {balanceProjection.hasPendingSync ? (

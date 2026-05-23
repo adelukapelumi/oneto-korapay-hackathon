@@ -13,11 +13,36 @@ export interface PendingIncomingSummary {
   readonly pendingIncomingCount: number;
 }
 
+export type CashoutBalanceFetchState =
+  | "loading"
+  | "confirmed"
+  | "offline_unconfirmed"
+  | "error";
+
+export interface ActiveCashoutSummary {
+  readonly amountKobo: number;
+  readonly status: string;
+}
+
+export interface CashoutStatusLike {
+  readonly amountKobo: string;
+  readonly status: string;
+}
+
+export type CashoutBalanceDisplay =
+  | { readonly kind: "loading" }
+  | { readonly kind: "confirm_online" }
+  | {
+      readonly kind: "amount";
+      readonly cashoutableBalanceKobo: number;
+    };
+
 export type CashoutRequestBlockReason =
   | "jwt_stale"
   | "balance_unconfirmed"
   | "zero_balance"
-  | "request_in_progress";
+  | "request_in_progress"
+  | "active_cashout";
 
 export type CashoutRequestDecision =
   | { readonly canRequestCashout: true }
@@ -70,11 +95,65 @@ export function getPendingIncomingSummary(): PendingIncomingSummary {
   };
 }
 
+export function getActiveCashoutSummary(
+  cashouts: readonly CashoutStatusLike[],
+): ActiveCashoutSummary | null {
+  const active = cashouts.find((cashout) =>
+    ["PENDING", "APPROVED", "PROCESSING"].includes(cashout.status),
+  );
+
+  if (!active) {
+    return null;
+  }
+
+  const amountKobo = Number(active.amountKobo);
+  assertNonNegativeInteger("active cashout amountKobo", amountKobo);
+
+  return {
+    amountKobo,
+    status: active.status,
+  };
+}
+
+export function shouldStartCashoutBalanceRefresh(input: {
+  readonly isAuthed: boolean;
+  readonly isRefreshInFlight: boolean;
+}): boolean {
+  return input.isAuthed && !input.isRefreshInFlight;
+}
+
+export function getCashoutBalanceDisplay(input: {
+  readonly fetchState: CashoutBalanceFetchState;
+  readonly cashoutableBalanceKobo: number;
+  readonly activeCashout: ActiveCashoutSummary | null;
+}): CashoutBalanceDisplay {
+  assertNonNegativeInteger(
+    "cashoutableBalanceKobo",
+    input.cashoutableBalanceKobo,
+  );
+
+  if (input.fetchState === "loading") {
+    return { kind: "loading" };
+  }
+
+  if (input.fetchState !== "confirmed") {
+    return { kind: "confirm_online" };
+  }
+
+  return {
+    kind: "amount",
+    cashoutableBalanceKobo: input.activeCashout
+      ? 0
+      : input.cashoutableBalanceKobo,
+  };
+}
+
 export function getCashoutRequestDecision(input: {
   readonly jwtFresh: boolean;
   readonly balanceConfirmedOnline: boolean;
   readonly cashoutableBalanceKobo: number;
   readonly isRequestInProgress?: boolean;
+  readonly activeCashout?: ActiveCashoutSummary | null;
 }): CashoutRequestDecision {
   assertNonNegativeInteger(
     "cashoutableBalanceKobo",
@@ -89,6 +168,9 @@ export function getCashoutRequestDecision(input: {
   }
   if (!input.balanceConfirmedOnline) {
     return { canRequestCashout: false, reason: "balance_unconfirmed" };
+  }
+  if (input.activeCashout) {
+    return { canRequestCashout: false, reason: "active_cashout" };
   }
   if (input.cashoutableBalanceKobo <= 0) {
     return { canRequestCashout: false, reason: "zero_balance" };
