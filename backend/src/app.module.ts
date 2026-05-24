@@ -12,6 +12,7 @@ import { PrismaModule } from "./prisma/prisma.module";
 import { AuthModule } from "./auth/auth.module";
 import { ReconcileModule } from "./reconcile/reconcile.module";
 import { TopupModule } from "./topup/topup.module";
+import { KorapayModule } from "./korapay/korapay.module";
 import { HealthModule } from "./health/health.module";
 import { SentryModule, SentryGlobalFilter } from '@sentry/nestjs/setup';
 import { APP_FILTER } from '@nestjs/core';
@@ -61,6 +62,7 @@ import { RecoveryModule } from "./recovery/recovery.module";
     AuthModule,
     ReconcileModule,
     TopupModule,
+    KorapayModule,
     MerchantsModule,
     MeModule,
     CashoutModule,
