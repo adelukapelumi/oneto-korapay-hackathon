@@ -234,6 +234,89 @@ describe('KorapayService', () => {
     });
   });
 
+  describe('initiatePayout', () => {
+    it('returns optional payout fee from Korapay response as integer kobo', async () => {
+      const fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          status: true,
+          data: {
+            reference: 'cashout_ref',
+            status: 'processing',
+            fee: '25.00',
+          },
+        }),
+      } as Response);
+
+      await expect(service.initiatePayout({
+        reference: 'cashout_ref',
+        amountKobo: 97500,
+        bankCode: '035',
+        accountNumber: '1234567890',
+        accountName: 'Campus Cafe',
+        narration: 'Cashout cashout_ref',
+      })).resolves.toEqual({
+        reference: 'cashout_ref',
+        status: 'processing',
+        payoutFeeKobo: 2500n,
+        rawResponse: {
+          status: true,
+          data: {
+            reference: 'cashout_ref',
+            status: 'processing',
+            fee: '25.00',
+          },
+        },
+      });
+
+      const requestInit = fetchSpy.mock.calls[0]?.[1];
+      if (!requestInit?.body || typeof requestInit.body !== 'string') {
+        throw new Error('Expected JSON payout payload');
+      }
+      expect(JSON.parse(requestInit.body)).toEqual(
+        expect.objectContaining({
+          reference: 'cashout_ref',
+          destination: expect.objectContaining({
+            amount: 975,
+          }),
+        }),
+      );
+    });
+
+    it('allows payout response without fee and records fee as unknown', async () => {
+      jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          status: true,
+          data: {
+            reference: 'cashout_ref',
+            status: 'processing',
+          },
+        }),
+      } as Response);
+
+      await expect(service.initiatePayout({
+        reference: 'cashout_ref',
+        amountKobo: 97500,
+        bankCode: '035',
+        accountNumber: '1234567890',
+        accountName: 'Campus Cafe',
+        narration: 'Cashout cashout_ref',
+      })).resolves.toMatchObject({
+        reference: 'cashout_ref',
+        status: 'processing',
+        payoutFeeKobo: null,
+      });
+    });
+
+    it('parses string and number major-NGN fee fields safely', () => {
+      expect(service.parseMajorNgnToKobo('25.50')).toBe(2550n);
+      expect(service.parseMajorNgnToKobo(25.5)).toBe(2550n);
+      expect(service.parseMajorNgnToKobo('25.555')).toBeNull();
+      expect(service.extractPayoutFeeKobo({ transfer_fee: '30.00' })).toBe(3000n);
+    });
+  });
+
   describe('fetchWithTimeout', () => {
     it('aborts hanging fetch and rejects with controlled timeout error', async () => {
       jest.useFakeTimers();

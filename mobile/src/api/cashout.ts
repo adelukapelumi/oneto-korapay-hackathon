@@ -5,6 +5,14 @@ import { ApiError, toTypedError } from "./errors";
 const CashoutSchema = z.object({
   id: z.string(),
   amountKobo: z.string(),   // BigInt serialized as string
+  grossAmountKobo: z.string(),
+  onetoFeeBps: z.number(),
+  onetoFeeKobo: z.string().nullable(),
+  korapayPayoutFeeKobo: z.string().nullable(),
+  korapayPayoutFeeBearer: z.string(),
+  korapayPayoutFeeDeductedFromRecipient: z.boolean().nullable(),
+  netPayoutKobo: z.string().nullable(),
+  korapayTransferAmountKobo: z.string().nullable(),
   status: z.string(),        // PENDING, PROCESSING, COMPLETED, FAILED
   requestedAt: z.string(),
 });

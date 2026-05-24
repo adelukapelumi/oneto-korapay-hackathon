@@ -20,6 +20,13 @@ import {
   type MerchantBalanceProjection,
 } from "../../../src/payment/merchant-balance-projection";
 import { logger } from "../../../src/lib/logger";
+import {
+  KORAPAY_PAYOUT_FEE_PENDING_TEXT,
+  FINAL_PAYOUT_PENDING_TEXT,
+  formatCashoutKobo as formatKobo,
+  getFinalMerchantPayoutText,
+  getKorapayPayoutFeeText,
+} from "../../../src/payment/cashout-fee-display";
 import { BackButton } from "../../../components/BackButton";
 import { useThemeMode } from "../../../src/theme/theme-provider";
 import {
@@ -47,6 +54,10 @@ function getCashoutBlockMessage(reason: CashoutRequestBlockReason): string {
     case "active_cashout":
       return "You already have a cashout pending.";
   }
+}
+
+function calculateOnetoFeePreviewKobo(grossAmountKobo: number): number {
+  return Math.floor((grossAmountKobo * 250) / 10_000);
 }
 
 export default function CashoutScreen(): React.ReactElement {
@@ -154,6 +165,9 @@ export default function CashoutScreen(): React.ReactElement {
       ? balanceDisplay.cashoutableBalanceKobo
       : balanceProjection.cashoutableBalanceKobo;
   const balanceNaira = (displayCashoutableBalanceKobo / 100).toFixed(2);
+  const previewOnetoFeeKobo = calculateOnetoFeePreviewKobo(displayCashoutableBalanceKobo);
+  const previewPayoutBeforeKorapayFeeKobo =
+    displayCashoutableBalanceKobo - previewOnetoFeeKobo;
   const balanceConfirmedOnline = balanceFetchState === "confirmed";
   const cashoutDecision = getCashoutRequestDecision({
     jwtFresh,
@@ -173,7 +187,8 @@ export default function CashoutScreen(): React.ReactElement {
     try {
       const res = await requestCashout();
       setActiveCashout({
-        amountKobo: Number(res.amountKobo),
+        amountKobo: Number(res.grossAmountKobo),
+        grossAmountKobo: Number(res.grossAmountKobo),
         status: res.status,
       });
       setSuccessData(res);
@@ -234,6 +249,37 @@ export default function CashoutScreen(): React.ReactElement {
               ₦{(balanceProjection.pendingIncomingKobo / 100).toFixed(2)} pending verification is not yet cashoutable.
             </Text>
           ) : null}
+          {balanceConfirmedOnline && !activeCashout ? (
+            <View style={styles.breakdown}>
+              <View style={styles.breakdownRow}>
+                <Text style={[styles.breakdownLabel, { color: t.textSec }]}>Gross cashout</Text>
+                <Text style={[styles.breakdownValue, { color: t.text }]}>
+                  {formatKobo(displayCashoutableBalanceKobo)}
+                </Text>
+              </View>
+              <View style={styles.breakdownRow}>
+                <Text style={[styles.breakdownLabel, { color: t.textSec }]}>Oneto service fee (2.5%)</Text>
+                <Text style={[styles.breakdownValue, { color: t.text }]}>
+                  {formatKobo(previewOnetoFeeKobo)}
+                </Text>
+              </View>
+              <View style={styles.breakdownRow}>
+                <Text style={[styles.breakdownLabel, { color: t.textSec }]}>Korapay payout fee</Text>
+                <Text style={[styles.breakdownValue, { color: t.textSec }]}>
+                  {KORAPAY_PAYOUT_FEE_PENDING_TEXT}
+                </Text>
+              </View>
+              <View style={styles.breakdownRow}>
+                <Text style={[styles.breakdownLabel, { color: t.textSec }]}>Final merchant payout</Text>
+                <Text style={[styles.breakdownValue, { color: t.textSec }]}>
+                  {FINAL_PAYOUT_PENDING_TEXT}
+                </Text>
+              </View>
+              <Text style={[styles.balanceNote, { color: t.textSec }]}>
+                Amount sent to Korapay starts from {formatKobo(previewPayoutBeforeKorapayFeeKobo)} before Korapay confirms fee handling.
+              </Text>
+            </View>
+          ) : null}
         </View>
 
         {error ? (
@@ -251,8 +297,40 @@ export default function CashoutScreen(): React.ReactElement {
             </View>
             <Text style={styles.successLabel}>CASHOUT REQUESTED</Text>
             <Text style={[styles.successAmount, { color: t.text }]}>
-              ₦{(Number(successData.amountKobo) / 100).toFixed(2)}
+              {formatKobo(successData.grossAmountKobo)}
             </Text>
+            <View style={styles.breakdown}>
+              <View style={styles.breakdownRow}>
+                <Text style={[styles.breakdownLabel, { color: t.textSec }]}>Gross cashout</Text>
+                <Text style={[styles.breakdownValue, { color: t.text }]}>
+                  {formatKobo(successData.grossAmountKobo)}
+                </Text>
+              </View>
+              <View style={styles.breakdownRow}>
+                <Text style={[styles.breakdownLabel, { color: t.textSec }]}>Oneto service fee (2.5%)</Text>
+                <Text style={[styles.breakdownValue, { color: t.text }]}>
+                  {formatKobo(successData.onetoFeeKobo)}
+                </Text>
+              </View>
+              <View style={styles.breakdownRow}>
+                <Text style={[styles.breakdownLabel, { color: t.textSec }]}>Korapay payout fee</Text>
+                <Text style={[styles.breakdownValue, { color: t.textSec }]}>
+                  {getKorapayPayoutFeeText(successData)}
+                </Text>
+              </View>
+              <View style={styles.breakdownRow}>
+                <Text style={[styles.breakdownLabel, { color: t.textSec }]}>Final merchant payout</Text>
+                <Text style={[styles.breakdownValue, { color: t.textSec }]}>
+                  {getFinalMerchantPayoutText(successData)}
+                </Text>
+              </View>
+              <View style={styles.breakdownRow}>
+                <Text style={[styles.breakdownLabel, { color: t.textSec }]}>Amount sent to Korapay</Text>
+                <Text style={[styles.breakdownValue, { color: t.textSec }]}>
+                  {formatKobo(successData.korapayTransferAmountKobo)}
+                </Text>
+              </View>
+            </View>
             <View style={styles.statusBadge}>
               <Text style={styles.statusBadgeText}>⏳ {successData.status}</Text>
             </View>
@@ -356,6 +434,27 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
     textAlign: "center",
     lineHeight: 18,
+  },
+  breakdown: {
+    width: "100%",
+    marginTop: spacing.lg,
+    gap: spacing.sm,
+  },
+  breakdownRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: spacing.md,
+  },
+  breakdownLabel: {
+    flex: 1,
+    fontFamily: fonts.medium,
+    fontSize: fontSizes.sm,
+  },
+  breakdownValue: {
+    fontFamily: fonts.semibold,
+    fontSize: fontSizes.sm,
+    textAlign: "right",
   },
   errorBox: {
     backgroundColor: colors.error + "15",

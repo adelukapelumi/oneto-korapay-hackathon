@@ -2,7 +2,14 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { CashoutService } from './cashout.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { KorapayService } from '../topup/korapay.service';
-import { Prisma, CashoutStatus, Role, Status, LedgerEntryType } from '@prisma/client';
+import {
+  Prisma,
+  CashoutStatus,
+  KorapayPayoutFeeBearer,
+  Role,
+  Status,
+  LedgerEntryType,
+} from '@prisma/client';
 import { ForbiddenException, BadRequestException, ConflictException } from '@nestjs/common';
 
 describe('CashoutService', () => {
@@ -32,6 +39,8 @@ describe('CashoutService', () => {
   const mockKorapay: any = {
     initiatePayout: jest.fn(),
     verifyWebhookSignature: jest.fn(),
+    verifyTransaction: jest.fn(),
+    extractPayoutFeeKobo: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -48,6 +57,7 @@ describe('CashoutService', () => {
     korapay = module.get<KorapayService>(KorapayService);
     jest.clearAllMocks();
     mockPrisma.cashout.updateMany.mockResolvedValue({ count: 1 });
+    mockKorapay.extractPayoutFeeKobo.mockReturnValue(null);
   });
 
   const merchantId = 'u_merchant';
@@ -64,6 +74,7 @@ describe('CashoutService', () => {
       cashoutBankCode: '035',
       cashoutAccountNumber: '1234567890',
       cashoutAccountName: 'Test Merchant',
+      verifiedAt: new Date('2026-05-01T00:00:00.000Z'),
     },
   };
 
@@ -85,6 +96,14 @@ describe('CashoutService', () => {
 
     it('2b. requestCashout: FLAGGED merchant -> ForbiddenException', async () => {
       mockPrisma.user.findUnique.mockResolvedValue({ ...mockMerchant, status: Status.FLAGGED });
+      await expect(service.requestCashout(merchantId)).rejects.toThrow(ForbiddenException);
+    });
+
+    it('2c. requestCashout: unapproved merchant -> ForbiddenException', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({
+        ...mockMerchant,
+        merchantProfile: { ...mockMerchant.merchantProfile, verifiedAt: null },
+      });
       await expect(service.requestCashout(merchantId)).rejects.toThrow(ForbiddenException);
     });
 
@@ -121,12 +140,44 @@ describe('CashoutService', () => {
         data: {
           merchantUserId: merchantId,
           amountKobo: BigInt(5000),
+          grossAmountKobo: BigInt(5000),
+          onetoFeeBps: 250,
+          onetoFeeKobo: BigInt(125),
+          korapayPayoutFeeKobo: null,
+          korapayPayoutFeeBearer: KorapayPayoutFeeBearer.UNKNOWN,
+          korapayPayoutFeeDeductedFromRecipient: null,
+          netPayoutKobo: null,
+          korapayTransferAmountKobo: null,
           status: CashoutStatus.PENDING,
           cashoutBankName: 'Wema Bank',
           cashoutBankCode: '035',
           cashoutAccountNumber: '1234567890',
           cashoutAccountName: 'Test Merchant',
         },
+      });
+    });
+
+    it('requestCashout: NGN 10,000 gross gives NGN 250 Oneto fee with bigint math', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({
+        ...mockMerchant,
+        verifiedBalanceKobo: 1_000_000n,
+      });
+      mockPrisma.cashout.findFirst.mockResolvedValue(null);
+      mockPrisma.cashout.create.mockResolvedValue({ id: 'new_cashout' });
+
+      await service.requestCashout(merchantId);
+
+      expect(mockPrisma.cashout.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          amountKobo: 1_000_000n,
+          grossAmountKobo: 1_000_000n,
+          onetoFeeBps: 250,
+          onetoFeeKobo: 25_000n,
+          korapayPayoutFeeKobo: null,
+          korapayPayoutFeeBearer: KorapayPayoutFeeBearer.UNKNOWN,
+          korapayPayoutFeeDeductedFromRecipient: null,
+          netPayoutKobo: null,
+        }),
       });
     });
   });
@@ -137,6 +188,14 @@ describe('CashoutService', () => {
       id: cashoutId,
       merchantUserId: merchantId,
       amountKobo: BigInt(5000),
+      grossAmountKobo: BigInt(5000),
+      onetoFeeBps: 250,
+      onetoFeeKobo: BigInt(125),
+      korapayPayoutFeeKobo: null,
+      korapayPayoutFeeBearer: KorapayPayoutFeeBearer.UNKNOWN,
+      korapayPayoutFeeDeductedFromRecipient: null,
+      netPayoutKobo: null,
+      korapayTransferAmountKobo: null,
       status: CashoutStatus.PENDING,
     };
 
@@ -263,6 +322,66 @@ describe('CashoutService', () => {
     });
   });
 
+  describe('recoverStuckCashouts', () => {
+    it('does not call charge verification for payout references', async () => {
+      const warnSpy = jest
+        .spyOn((service as unknown as { logger: { warn: (...args: unknown[]) => void } }).logger, 'warn')
+        .mockImplementation(() => undefined);
+
+      mockPrisma.cashout.findMany.mockResolvedValue([
+        {
+          id: 'c_stuck',
+          merchantUserId: merchantId,
+          amountKobo: 5_000n,
+          grossAmountKobo: 5_000n,
+          onetoFeeKobo: 125n,
+          korapayReference: 'cashout_ref_123',
+          status: CashoutStatus.PROCESSING,
+        },
+      ]);
+
+      await service.recoverStuckCashouts();
+
+      expect(mockKorapay.verifyTransaction).not.toHaveBeenCalled();
+      expect(mockPrisma.cashout.updateMany).not.toHaveBeenCalled();
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cashoutId: 'c_stuck',
+          korapayReference: 'cashout_ref_123',
+        }),
+        'Cashout payout recovery skipped: payout verification endpoint is not configured',
+      );
+    });
+
+    it('leaves PROCESSING cashout untouched when payout verification is unavailable', async () => {
+      mockKorapay.verifyTransaction.mockResolvedValue({ status: 'not_found' });
+      mockPrisma.cashout.findMany.mockResolvedValue([
+        {
+          id: 'c_processing',
+          merchantUserId: merchantId,
+          amountKobo: 5_000n,
+          korapayReference: 'cashout_ref_missing_from_charges',
+          status: CashoutStatus.PROCESSING,
+        },
+      ]);
+      jest
+        .spyOn((service as unknown as { logger: { warn: (...args: unknown[]) => void } }).logger, 'warn')
+        .mockImplementation(() => undefined);
+
+      await service.recoverStuckCashouts();
+
+      expect(mockKorapay.verifyTransaction).not.toHaveBeenCalled();
+      expect(mockPrisma.cashout.updateMany).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: CashoutStatus.FAILED }),
+        }),
+      );
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
+      expect(mockPrisma.ledgerEntry.create).not.toHaveBeenCalled();
+    });
+  });
+
   describe('initiateKorapayPayout', () => {
     const cashoutId = 'c_123';
     const korapayRef = 'cashout_ref_123';
@@ -270,6 +389,14 @@ describe('CashoutService', () => {
       id: cashoutId,
       merchantUserId: merchantId,
       amountKobo: BigInt(5000),
+      grossAmountKobo: BigInt(5000),
+      onetoFeeBps: 250,
+      onetoFeeKobo: BigInt(125),
+      korapayPayoutFeeKobo: null,
+      korapayPayoutFeeBearer: KorapayPayoutFeeBearer.UNKNOWN,
+      korapayPayoutFeeDeductedFromRecipient: null,
+      netPayoutKobo: null,
+      korapayTransferAmountKobo: BigInt(4875),
       status: CashoutStatus.PROCESSING,
       cashoutBankName: 'Wema Bank',
       cashoutBankCode: '035',
@@ -286,6 +413,89 @@ describe('CashoutService', () => {
       });
     });
 
+    it('initiates Korapay payout with gross minus Oneto fee while payout fee is unknown', async () => {
+      mockKorapay.initiatePayout.mockResolvedValue({
+        reference: korapayRef,
+        status: 'processing',
+        payoutFeeKobo: null,
+        rawResponse: { status: true, data: { reference: korapayRef, status: 'processing' } },
+      });
+
+      await (service as any).initiateKorapayPayout(cashoutId, korapayRef);
+
+      expect(mockKorapay.initiatePayout).toHaveBeenCalledWith(expect.objectContaining({
+        reference: korapayRef,
+        amountKobo: 4875,
+      }));
+      expect(mockPrisma.cashout.update).toHaveBeenCalledWith({
+        where: { id: cashoutId },
+        data: expect.objectContaining({
+          korapayPayoutFeeKobo: null,
+          korapayPayoutFeeBearer: KorapayPayoutFeeBearer.UNKNOWN,
+          korapayPayoutFeeDeductedFromRecipient: null,
+          korapayTransferAmountKobo: 4875n,
+          netPayoutKobo: null,
+        }),
+      });
+    });
+
+    it('stores returned Korapay payout fee as Oneto processor expense when recipient deduction is not confirmed', async () => {
+      mockKorapay.initiatePayout.mockResolvedValue({
+        reference: korapayRef,
+        status: 'processing',
+        payoutFeeKobo: 2_500n,
+        rawResponse: {
+          status: true,
+          data: { reference: korapayRef, status: 'processing', fee: '25.00' },
+        },
+      });
+
+      await (service as any).initiateKorapayPayout(cashoutId, korapayRef);
+
+      expect(mockPrisma.cashout.update).toHaveBeenCalledWith({
+        where: { id: cashoutId },
+        data: expect.objectContaining({
+          korapayPayoutFeeKobo: 2_500n,
+          korapayTransferAmountKobo: 4_875n,
+          korapayPayoutFeeBearer: KorapayPayoutFeeBearer.ONETO,
+          korapayPayoutFeeDeductedFromRecipient: false,
+          netPayoutKobo: 4_875n,
+          korapayResponse: expect.objectContaining({
+            data: expect.objectContaining({ fee: '25.00' }),
+          }),
+        }),
+      });
+    });
+
+    it('treats Korapay payout fee as merchant-borne only with explicit recipient-deduction proof', async () => {
+      mockKorapay.initiatePayout.mockResolvedValue({
+        reference: korapayRef,
+        status: 'processing',
+        payoutFeeKobo: 2_500n,
+        rawResponse: {
+          status: true,
+          data: {
+            reference: korapayRef,
+            status: 'processing',
+            fee: '25.00',
+            fee_deducted_from_recipient: true,
+          },
+        },
+      });
+
+      await (service as any).initiateKorapayPayout(cashoutId, korapayRef);
+
+      expect(mockPrisma.cashout.update).toHaveBeenCalledWith({
+        where: { id: cashoutId },
+        data: expect.objectContaining({
+          korapayPayoutFeeKobo: 2_500n,
+          korapayPayoutFeeBearer: KorapayPayoutFeeBearer.MERCHANT,
+          korapayPayoutFeeDeductedFromRecipient: true,
+          netPayoutKobo: 2_375n,
+        }),
+      });
+    });
+
     it('Korapay API Immediate Failure: compensating entries, status FAILED', async () => {
       mockKorapay.initiatePayout.mockRejectedValue(new Error('API Down'));
 
@@ -293,10 +503,10 @@ describe('CashoutService', () => {
 
       // Reversal should happen: CREDIT merchant, DEBIT operating
       expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledWith(expect.objectContaining({
-        data: expect.objectContaining({ type: LedgerEntryType.CREDIT, userId: merchantId })
+        data: expect.objectContaining({ type: LedgerEntryType.CREDIT, userId: merchantId, amountKobo: 5000n })
       }));
       expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledWith(expect.objectContaining({
-        data: expect.objectContaining({ type: LedgerEntryType.DEBIT, userId: operatingId })
+        data: expect.objectContaining({ type: LedgerEntryType.DEBIT, userId: operatingId, amountKobo: 5000n })
       }));
       expect(mockPrisma.cashout.update).toHaveBeenCalledWith({
         where: { id: cashoutId },
@@ -315,7 +525,7 @@ describe('CashoutService', () => {
       await cashoutServiceWithPrivateMethod.initiateKorapayPayout(cashoutId, korapayRef);
 
       expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledWith(expect.objectContaining({
-        data: expect.objectContaining({ type: LedgerEntryType.CREDIT, userId: merchantId })
+        data: expect.objectContaining({ type: LedgerEntryType.CREDIT, userId: merchantId, amountKobo: 5000n })
       }));
       expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledWith(expect.objectContaining({
         data: expect.objectContaining({ type: LedgerEntryType.DEBIT, userId: operatingId })
@@ -344,13 +554,102 @@ describe('CashoutService', () => {
 
     it('19. handlePayoutWebhook: transfer.success -> status COMPLETED', async () => {
       mockKorapay.verifyWebhookSignature.mockReturnValue(true);
-      mockPrisma.cashout.findUnique.mockResolvedValue({ id: 'c_123', status: CashoutStatus.PROCESSING });
+      mockPrisma.cashout.findUnique.mockResolvedValue({
+        id: 'c_123',
+        amountKobo: 5000n,
+        grossAmountKobo: 5000n,
+        onetoFeeKobo: 125n,
+        korapayPayoutFeeKobo: null,
+        korapayPayoutFeeBearer: KorapayPayoutFeeBearer.UNKNOWN,
+        korapayPayoutFeeDeductedFromRecipient: null,
+        korapayTransferAmountKobo: 4_875n,
+        status: CashoutStatus.PROCESSING,
+      });
 
       const result = await service.handlePayoutWebhook(payload, signature);
       expect(result.success).toBe(true);
       expect(mockPrisma.cashout.updateMany).toHaveBeenCalledWith({
         where: { id: 'c_123', status: CashoutStatus.PROCESSING },
         data: expect.objectContaining({ status: CashoutStatus.COMPLETED }),
+      });
+    });
+
+    it('transfer.success webhook with fee but no deduction proof records fee as Oneto processor expense', async () => {
+      const successPayload = {
+        event: 'transfer.success',
+        data: {
+          reference: 'ref_123',
+          status: 'success',
+          fee: '25.00',
+        },
+      };
+      mockKorapay.verifyWebhookSignature.mockReturnValue(true);
+      mockKorapay.extractPayoutFeeKobo.mockReturnValue(2_500n);
+      mockPrisma.cashout.findUnique.mockResolvedValue({
+        id: 'c_123',
+        amountKobo: 1_000_000n,
+        grossAmountKobo: 1_000_000n,
+        onetoFeeKobo: 25_000n,
+        korapayPayoutFeeKobo: null,
+        korapayPayoutFeeBearer: KorapayPayoutFeeBearer.UNKNOWN,
+        korapayPayoutFeeDeductedFromRecipient: null,
+        korapayTransferAmountKobo: 975_000n,
+        status: CashoutStatus.PROCESSING,
+      });
+
+      await service.handlePayoutWebhook(successPayload, signature);
+
+      expect(mockPrisma.cashout.updateMany).toHaveBeenCalledWith({
+        where: { id: 'c_123', status: CashoutStatus.PROCESSING },
+        data: expect.objectContaining({
+          status: CashoutStatus.COMPLETED,
+          korapayPayoutFeeKobo: 2_500n,
+          korapayPayoutFeeBearer: KorapayPayoutFeeBearer.ONETO,
+          korapayPayoutFeeDeductedFromRecipient: false,
+          korapayTransferAmountKobo: 975_000n,
+          netPayoutKobo: 975_000n,
+          korapayResponse: expect.objectContaining({
+            data: expect.objectContaining({ fee: '25.00' }),
+          }),
+        }),
+      });
+    });
+
+    it('transfer.success webhook with explicit deduction proof calculates merchant-borne net payout', async () => {
+      const successPayload = {
+        event: 'transfer.success',
+        data: {
+          reference: 'ref_123',
+          status: 'success',
+          fee: '25.00',
+          fee_deducted_from_recipient: true,
+        },
+      };
+      mockKorapay.verifyWebhookSignature.mockReturnValue(true);
+      mockKorapay.extractPayoutFeeKobo.mockReturnValue(2_500n);
+      mockPrisma.cashout.findUnique.mockResolvedValue({
+        id: 'c_123',
+        amountKobo: 1_000_000n,
+        grossAmountKobo: 1_000_000n,
+        onetoFeeKobo: 25_000n,
+        korapayPayoutFeeKobo: null,
+        korapayPayoutFeeBearer: KorapayPayoutFeeBearer.UNKNOWN,
+        korapayPayoutFeeDeductedFromRecipient: null,
+        korapayTransferAmountKobo: 975_000n,
+        status: CashoutStatus.PROCESSING,
+      });
+
+      await service.handlePayoutWebhook(successPayload, signature);
+
+      expect(mockPrisma.cashout.updateMany).toHaveBeenCalledWith({
+        where: { id: 'c_123', status: CashoutStatus.PROCESSING },
+        data: expect.objectContaining({
+          status: CashoutStatus.COMPLETED,
+          korapayPayoutFeeKobo: 2_500n,
+          korapayPayoutFeeBearer: KorapayPayoutFeeBearer.MERCHANT,
+          korapayPayoutFeeDeductedFromRecipient: true,
+          netPayoutKobo: 972_500n,
+        }),
       });
     });
 
@@ -391,7 +690,14 @@ describe('CashoutService', () => {
 
     it('22. handlePayoutWebhook: duplicate webhook (already COMPLETED) -> no-op', async () => {
       mockKorapay.verifyWebhookSignature.mockReturnValue(true);
-      mockPrisma.cashout.findUnique.mockResolvedValue({ id: 'c_123', status: CashoutStatus.COMPLETED });
+      mockPrisma.cashout.findUnique.mockResolvedValue({
+        id: 'c_123',
+        amountKobo: 5000n,
+        grossAmountKobo: 5000n,
+        onetoFeeKobo: 125n,
+        korapayPayoutFeeKobo: null,
+        status: CashoutStatus.COMPLETED,
+      });
       mockPrisma.cashout.updateMany.mockResolvedValue({ count: 0 });
 
       const result = await service.handlePayoutWebhook(payload, signature);
@@ -517,6 +823,10 @@ describe('CashoutService', () => {
       mockKorapay.verifyWebhookSignature.mockReturnValue(true);
       mockPrisma.cashout.findUnique.mockResolvedValue({
         id: 'c_123',
+        amountKobo: 5000n,
+        grossAmountKobo: 5000n,
+        onetoFeeKobo: 125n,
+        korapayPayoutFeeKobo: null,
         status: CashoutStatus.COMPLETED,
       });
       mockPrisma.cashout.updateMany.mockResolvedValue({ count: 0 });

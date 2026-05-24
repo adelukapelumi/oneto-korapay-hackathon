@@ -70,6 +70,12 @@ enum TopupFeeBearer {
   UNKNOWN
 }
 
+enum KorapayPayoutFeeBearer {
+  UNKNOWN
+  MERCHANT
+  ONETO
+}
+
 model User {
   id                  String        @id @default(cuid()) // Legacy fallback only. Envelope-participating users must be created with canonical "u_" IDs in service helpers.
   email               String        @unique
@@ -229,7 +235,15 @@ model MerchantProfile {
 model Cashout {
   id                   String        @id @default(cuid())
   merchantUserId       String
-  amountKobo           BigInt
+  amountKobo           BigInt        // Legacy compatibility: equal to grossAmountKobo for new cashouts.
+  grossAmountKobo      BigInt?
+  onetoFeeBps          Int           @default(250)
+  onetoFeeKobo         BigInt?
+  korapayPayoutFeeKobo BigInt?
+  korapayPayoutFeeBearer KorapayPayoutFeeBearer @default(UNKNOWN)
+  korapayPayoutFeeDeductedFromRecipient Boolean?
+  netPayoutKobo        BigInt?
+  korapayTransferAmountKobo BigInt?
   status               CashoutStatus @default(PENDING)
   cashoutBankName      String
   cashoutBankCode      String

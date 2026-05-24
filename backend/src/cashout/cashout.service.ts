@@ -7,8 +7,50 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { KorapayService } from '../topup/korapay.service';
-import { Prisma, CashoutStatus, LedgerEntryType } from '@prisma/client';
+import { Prisma, CashoutStatus, KorapayPayoutFeeBearer, LedgerEntryType } from '@prisma/client';
 import * as crypto from 'crypto';
+import { z } from 'zod';
+
+const ONETO_SERVICE_FEE_BPS = 250;
+const BASIS_POINTS_DIVISOR = 10_000n;
+
+const PayoutWebhookSchema = z.object({
+  event: z.string(),
+  data: z.object({
+    reference: z.string(),
+    status: z.string(),
+    reason: z.string().optional(),
+  }).passthrough(),
+}).passthrough();
+
+type PayoutWebhookPayload = z.infer<typeof PayoutWebhookSchema>;
+
+type CashoutAccountingInput = {
+  readonly grossAmountKobo: bigint;
+  readonly onetoFeeBps: number;
+  readonly onetoFeeKobo: bigint;
+  readonly korapayPayoutFeeKobo: bigint | null;
+  readonly korapayPayoutFeeBearer: KorapayPayoutFeeBearer;
+  readonly korapayPayoutFeeDeductedFromRecipient: boolean | null;
+  readonly netPayoutKobo: bigint | null;
+  readonly korapayTransferAmountKobo: bigint | null;
+};
+
+type PayoutFeeAccountingInput = {
+  readonly grossAmountKobo: bigint;
+  readonly onetoFeeKobo: bigint;
+  readonly korapayTransferAmountKobo: bigint | null;
+  readonly korapayPayoutFeeKobo: bigint | null;
+  readonly existingFeeBearer?: KorapayPayoutFeeBearer | null;
+  readonly existingDeductedFromRecipient?: boolean | null;
+  readonly gatewayPayload?: unknown;
+};
+
+type PayoutFeeAccountingResult = {
+  readonly korapayPayoutFeeBearer: KorapayPayoutFeeBearer;
+  readonly korapayPayoutFeeDeductedFromRecipient: boolean | null;
+  readonly netPayoutKobo: bigint | null;
+};
 
 @Injectable()
 export class CashoutService {
@@ -24,6 +66,138 @@ export class CashoutService {
     setInterval(() => this.recoverStuckCashouts(), 5 * 60 * 1000).unref();
   }
 
+  private calculateOnetoFeeKobo(grossAmountKobo: bigint): bigint {
+    return (grossAmountKobo * BigInt(ONETO_SERVICE_FEE_BPS)) / BASIS_POINTS_DIVISOR;
+  }
+
+  private calculateNetPayoutKobo(input: {
+    readonly grossAmountKobo: bigint;
+    readonly onetoFeeKobo: bigint;
+    readonly korapayTransferAmountKobo: bigint | null;
+    readonly korapayPayoutFeeKobo: bigint | null;
+    readonly korapayPayoutFeeBearer: KorapayPayoutFeeBearer;
+    readonly korapayPayoutFeeDeductedFromRecipient: boolean | null;
+  }): bigint | null {
+    if (
+      input.korapayPayoutFeeBearer === KorapayPayoutFeeBearer.MERCHANT &&
+      input.korapayPayoutFeeDeductedFromRecipient === true &&
+      input.korapayPayoutFeeKobo !== null
+    ) {
+      const netPayoutKobo =
+        input.grossAmountKobo - input.onetoFeeKobo - input.korapayPayoutFeeKobo;
+      return netPayoutKobo >= 0n ? netPayoutKobo : null;
+    }
+
+    if (input.korapayPayoutFeeBearer === KorapayPayoutFeeBearer.ONETO) {
+      return input.korapayTransferAmountKobo;
+    }
+
+    return null;
+  }
+
+  private hasRecipientFeeDeductionProof(payload: unknown): boolean {
+    const parsed = z
+      .object({
+        data: z.unknown().optional(),
+        fee_deducted_from_recipient: z.boolean().optional(),
+        feeDeductedFromRecipient: z.boolean().optional(),
+        payout_fee_deducted_from_recipient: z.boolean().optional(),
+        payoutFeeDeductedFromRecipient: z.boolean().optional(),
+        recipient_bears_fee: z.boolean().optional(),
+        recipientBearsFee: z.boolean().optional(),
+      })
+      .passthrough()
+      .safeParse(payload);
+
+    if (!parsed.success) {
+      return false;
+    }
+
+    if (
+      parsed.data.fee_deducted_from_recipient === true ||
+      parsed.data.feeDeductedFromRecipient === true ||
+      parsed.data.payout_fee_deducted_from_recipient === true ||
+      parsed.data.payoutFeeDeductedFromRecipient === true ||
+      parsed.data.recipient_bears_fee === true ||
+      parsed.data.recipientBearsFee === true
+    ) {
+      return true;
+    }
+
+    if (parsed.data.data && parsed.data.data !== payload) {
+      return this.hasRecipientFeeDeductionProof(parsed.data.data);
+    }
+
+    return false;
+  }
+
+  private resolvePayoutFeeAccounting(input: PayoutFeeAccountingInput): PayoutFeeAccountingResult {
+    const hasDeductionProof = this.hasRecipientFeeDeductionProof(input.gatewayPayload);
+    const existingFeeBearer =
+      input.existingFeeBearer ?? KorapayPayoutFeeBearer.UNKNOWN;
+    const existingDeductedFromRecipient =
+      input.existingDeductedFromRecipient ?? null;
+
+    const korapayPayoutFeeBearer =
+      input.korapayPayoutFeeKobo === null
+        ? existingFeeBearer
+        : hasDeductionProof
+          ? KorapayPayoutFeeBearer.MERCHANT
+          : KorapayPayoutFeeBearer.ONETO;
+
+    const korapayPayoutFeeDeductedFromRecipient =
+      input.korapayPayoutFeeKobo === null
+        ? existingDeductedFromRecipient
+        : hasDeductionProof;
+
+    return {
+      korapayPayoutFeeBearer,
+      korapayPayoutFeeDeductedFromRecipient,
+      netPayoutKobo: this.calculateNetPayoutKobo({
+        grossAmountKobo: input.grossAmountKobo,
+        onetoFeeKobo: input.onetoFeeKobo,
+        korapayTransferAmountKobo: input.korapayTransferAmountKobo,
+        korapayPayoutFeeKobo: input.korapayPayoutFeeKobo,
+        korapayPayoutFeeBearer,
+        korapayPayoutFeeDeductedFromRecipient,
+      }),
+    };
+  }
+
+  private getGrossAmountKobo(cashout: { amountKobo: bigint; grossAmountKobo?: bigint | null }): bigint {
+    return cashout.grossAmountKobo ?? cashout.amountKobo;
+  }
+
+  private buildCashoutAccountingPayload(input: CashoutAccountingInput): Prisma.InputJsonValue {
+    return {
+      kind: 'merchant_cashout_accounting',
+      grossAmountKobo: input.grossAmountKobo.toString(),
+      onetoFeeBps: input.onetoFeeBps,
+      onetoFeeKobo: input.onetoFeeKobo.toString(),
+      korapayPayoutFeeKobo: input.korapayPayoutFeeKobo?.toString() ?? null,
+      korapayPayoutFeeBearer: input.korapayPayoutFeeBearer,
+      korapayPayoutFeeDeductedFromRecipient: input.korapayPayoutFeeDeductedFromRecipient,
+      netPayoutKobo: input.netPayoutKobo?.toString() ?? null,
+      korapayTransferAmountKobo: input.korapayTransferAmountKobo?.toString() ?? null,
+    };
+  }
+
+  private toJsonValue(value: unknown): Prisma.InputJsonValue {
+    try {
+      return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+    } catch {
+      return { serializationError: 'korapay_payload_not_json_serializable' };
+    }
+  }
+
+  private toSafeNumberKobo(amountKobo: bigint): number {
+    const amount = Number(amountKobo);
+    if (!Number.isSafeInteger(amount) || amount < 0) {
+      throw new Error('cashout_amount_out_of_safe_number_range');
+    }
+    return amount;
+  }
+
   async recoverStuckCashouts() {
     try {
       const fiveMinsAgo = new Date(Date.now() - 5 * 60 * 1000);
@@ -37,70 +211,19 @@ export class CashoutService {
       for (const cashout of stuckCashouts) {
         if (!cashout.korapayReference) continue;
 
-        try {
-          const { status } = await this.korapayService.verifyTransaction(cashout.korapayReference);
-          
-          if (status === 'success') {
-            await this.prisma.cashout.updateMany({
-              where: { id: cashout.id, status: CashoutStatus.PROCESSING },
-              data: { status: CashoutStatus.COMPLETED, completedAt: new Date() },
-            });
-          } else if (status === 'failed' || status === 'not_found') {
-            await this.prisma.$transaction(
-              async (tx) => {
-                const transition = await tx.cashout.updateMany({
-                  where: { id: cashout.id, status: CashoutStatus.PROCESSING },
-                  data: {
-                    status: CashoutStatus.FAILED,
-                    failureReason: status === 'not_found' ? 'payout_initiation_failed_never_reached_gateway' : 'payout_failed_at_gateway_recovered',
-                  },
-                });
-
-                if (transition.count === 0) return;
-
-                const merchant = await tx.user.findUnique({ where: { id: cashout.merchantUserId } });
-                const operating = await tx.user.findUnique({ where: { id: this.OPERATING_USER_ID } });
-
-                if (merchant && operating) {
-                  const reverseRef = `${cashout.korapayReference}_recovery_fail`;
-
-                  await tx.ledgerEntry.create({
-                    data: {
-                      transactionId: reverseRef,
-                      userId: merchant.id,
-                      type: LedgerEntryType.CREDIT,
-                      amountKobo: cashout.amountKobo,
-                      balanceAfterKobo: merchant.verifiedBalanceKobo + cashout.amountKobo,
-                      description: `Cashout recovery refund ${cashout.korapayReference}`,
-                    },
-                  });
-                  await tx.user.update({
-                    where: { id: merchant.id },
-                    data: { verifiedBalanceKobo: { increment: cashout.amountKobo } },
-                  });
-
-                  await tx.ledgerEntry.create({
-                    data: {
-                      transactionId: reverseRef,
-                      userId: operating.id,
-                      type: LedgerEntryType.DEBIT,
-                      amountKobo: cashout.amountKobo,
-                      balanceAfterKobo: operating.verifiedBalanceKobo - cashout.amountKobo,
-                      description: `Cashout recovery reversal from merchant ${merchant.id}`,
-                    },
-                  });
-                  await tx.user.update({
-                    where: { id: operating.id },
-                    data: { verifiedBalanceKobo: { decrement: cashout.amountKobo } },
-                  });
-                }
-              },
-              { isolationLevel: 'Serializable' },
-            );
-          }
-        } catch (err) {
-          this.logger.error(`Failed to recover stuck cashout ${cashout.id}:`, err);
-        }
+        // Korapay /charges/:reference is the pay-in verification path. A payout
+        // reference can legitimately be missing there even if the transfer
+        // succeeded, so using that endpoint here could refund a merchant after
+        // Oneto has already paid them. Until a payout-specific verification
+        // endpoint is wired and tested, webhooks are the source of truth and
+        // stuck PROCESSING cashouts remain PROCESSING for manual review.
+        this.logger.warn(
+          {
+            cashoutId: cashout.id,
+            korapayReference: cashout.korapayReference,
+          },
+          'Cashout payout recovery skipped: payout verification endpoint is not configured',
+        );
       }
     } catch (err) {
       this.logger.error('Error in recoverStuckCashouts sweep:', err);
@@ -117,7 +240,7 @@ export class CashoutService {
       throw new ForbiddenException('Only merchants can request cashout');
     }
 
-    if (user.status === 'FROZEN' || user.status === 'FLAGGED') {
+    if (user.status !== 'ACTIVE') {
       throw new ForbiddenException('Account is restricted');
     }
 
@@ -125,10 +248,16 @@ export class CashoutService {
       throw new BadRequestException('merchant_profile_missing');
     }
 
-    const amountKobo = user.verifiedBalanceKobo;
-    if (amountKobo < this.MIN_CASHOUT_KOBO) {
+    if (user.merchantProfile.verifiedAt === null) {
+      throw new ForbiddenException('merchant_not_approved');
+    }
+
+    const grossAmountKobo = user.verifiedBalanceKobo;
+    if (grossAmountKobo < this.MIN_CASHOUT_KOBO) {
       throw new BadRequestException('insufficient_balance_for_cashout');
     }
+
+    const onetoFeeKobo = this.calculateOnetoFeeKobo(grossAmountKobo);
 
     const existingCashout = await this.prisma.cashout.findFirst({
       where: {
@@ -144,7 +273,15 @@ export class CashoutService {
     return this.prisma.cashout.create({
       data: {
         merchantUserId,
-        amountKobo,
+        amountKobo: grossAmountKobo,
+        grossAmountKobo,
+        onetoFeeBps: ONETO_SERVICE_FEE_BPS,
+        onetoFeeKobo,
+        korapayPayoutFeeKobo: null,
+        korapayPayoutFeeBearer: KorapayPayoutFeeBearer.UNKNOWN,
+        korapayPayoutFeeDeductedFromRecipient: null,
+        netPayoutKobo: null,
+        korapayTransferAmountKobo: null,
         status: CashoutStatus.PENDING,
         cashoutBankName: user.merchantProfile.cashoutBankName,
         cashoutBankCode: user.merchantProfile.cashoutBankCode,
@@ -181,6 +318,36 @@ export class CashoutService {
             },
           });
 
+          const grossAmountKobo = this.getGrossAmountKobo(cashout);
+          const onetoFeeBps = cashout.onetoFeeBps ?? ONETO_SERVICE_FEE_BPS;
+          const onetoFeeKobo = cashout.onetoFeeKobo ?? this.calculateOnetoFeeKobo(grossAmountKobo);
+          const korapayTransferAmountKobo =
+            cashout.korapayTransferAmountKobo ?? (grossAmountKobo - onetoFeeKobo);
+          const korapayPayoutFeeKobo = cashout.korapayPayoutFeeKobo ?? null;
+          const feeAccounting = this.resolvePayoutFeeAccounting({
+            grossAmountKobo,
+            onetoFeeKobo,
+            korapayPayoutFeeKobo,
+            korapayTransferAmountKobo,
+            existingFeeBearer: cashout.korapayPayoutFeeBearer,
+            existingDeductedFromRecipient: cashout.korapayPayoutFeeDeductedFromRecipient,
+          });
+
+          await tx.cashout.update({
+            where: { id: cashout.id },
+            data: {
+              amountKobo: grossAmountKobo,
+              grossAmountKobo,
+              onetoFeeBps,
+              onetoFeeKobo,
+              korapayTransferAmountKobo,
+              korapayPayoutFeeBearer: feeAccounting.korapayPayoutFeeBearer,
+              korapayPayoutFeeDeductedFromRecipient:
+                feeAccounting.korapayPayoutFeeDeductedFromRecipient,
+              netPayoutKobo: feeAccounting.netPayoutKobo,
+            },
+          });
+
           // 2. Fetch merchant and check balance
           const merchant = await tx.user.findUnique({
             where: { id: cashout.merchantUserId },
@@ -190,7 +357,7 @@ export class CashoutService {
             throw new Error('merchant_not_found');
           }
 
-          if (merchant.verifiedBalanceKobo < cashout.amountKobo) {
+          if (merchant.verifiedBalanceKobo < grossAmountKobo) {
             throw new Error('insufficient_balance');
           }
 
@@ -203,8 +370,19 @@ export class CashoutService {
             throw new Error('operating_account_missing');
           }
 
-          // 4. Debit merchant
-          const newMerchantBalance = merchant.verifiedBalanceKobo - cashout.amountKobo;
+          // 4. Debit merchant by the full gross settled balance.
+          const accountingPayload = this.buildCashoutAccountingPayload({
+            grossAmountKobo,
+            onetoFeeBps,
+            onetoFeeKobo,
+            korapayPayoutFeeKobo,
+            korapayPayoutFeeBearer: feeAccounting.korapayPayoutFeeBearer,
+            korapayPayoutFeeDeductedFromRecipient:
+              feeAccounting.korapayPayoutFeeDeductedFromRecipient,
+            netPayoutKobo: feeAccounting.netPayoutKobo,
+            korapayTransferAmountKobo,
+          });
+          const newMerchantBalance = merchant.verifiedBalanceKobo - grossAmountKobo;
           await tx.user.update({
             where: { id: merchant.id },
             data: { verifiedBalanceKobo: newMerchantBalance },
@@ -215,14 +393,15 @@ export class CashoutService {
               transactionId: korapayReference,
               userId: merchant.id,
               type: LedgerEntryType.DEBIT,
-              amountKobo: cashout.amountKobo,
+              amountKobo: grossAmountKobo,
               balanceAfterKobo: newMerchantBalance,
-              description: `Cashout payout ${korapayReference}`,
+              description: `Cashout gross debit ${korapayReference} with Oneto service fee recorded`,
+              envelopeJson: accountingPayload,
             },
           });
 
           // 5. Credit operating account
-          const newOperatingBalance = operatingAccount.verifiedBalanceKobo + cashout.amountKobo;
+          const newOperatingBalance = operatingAccount.verifiedBalanceKobo + grossAmountKobo;
           await tx.user.update({
             where: { id: operatingAccount.id },
             data: { verifiedBalanceKobo: newOperatingBalance },
@@ -233,22 +412,23 @@ export class CashoutService {
               transactionId: korapayReference,
               userId: operatingAccount.id,
               type: LedgerEntryType.CREDIT,
-              amountKobo: cashout.amountKobo,
+              amountKobo: grossAmountKobo,
               balanceAfterKobo: newOperatingBalance,
-              description: `Cashout payout from merchant ${merchant.id}`,
+              description: `Cashout gross credit from merchant ${merchant.id} with Oneto service fee recorded`,
+              envelopeJson: accountingPayload,
             },
           });
         },
         { isolationLevel: 'Serializable' },
       );
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
         throw new BadRequestException('Cashout is not in PENDING status or does not exist');
       }
-      if (err.message === 'insufficient_balance') {
+      if (err instanceof Error && err.message === 'insufficient_balance') {
         throw new BadRequestException('insufficient_balance_for_cashout');
       }
-      if (err.message === 'operating_account_missing' || err.message === 'merchant_not_found') {
+      if (err instanceof Error && (err.message === 'operating_account_missing' || err.message === 'merchant_not_found')) {
         throw new BadRequestException(err.message);
       }
       throw err;
@@ -272,17 +452,57 @@ export class CashoutService {
       return;
     }
 
+    const grossAmountKobo = this.getGrossAmountKobo(cashout);
+    const onetoFeeKobo = cashout.onetoFeeKobo ?? this.calculateOnetoFeeKobo(grossAmountKobo);
+    const korapayTransferAmountKobo =
+      cashout.korapayTransferAmountKobo ?? (grossAmountKobo - onetoFeeKobo);
+
     try {
-      await this.korapayService.initiatePayout({
+      // Korapay's documented payout response can return a fee after payout
+      // initiation, but we do not currently have a documented fee quote before
+      // transfer initiation. Approval therefore cannot display an exact final
+      // merchant receivable. We send gross minus Oneto's 2.5% fee to Korapay
+      // and keep netPayoutKobo unknown while the fee bearer is unknown.
+      //
+      // A returned Korapay fee is not proof the merchant paid it. Until Kora
+      // gives explicit recipient-deduction proof, reported payout fees are
+      // stored as Oneto processor expense/audit data. TODO: switch to
+      // merchant-borne payout fees only after Kora fee deduction is technically
+      // confirmed or a fee quote is known before payout and subtracted here.
+      const payoutResult = await this.korapayService.initiatePayout({
         reference: korapayReference,
-        amountKobo: Number(cashout.amountKobo),
+        amountKobo: this.toSafeNumberKobo(korapayTransferAmountKobo),
         bankCode: cashout.cashoutBankCode,
         accountNumber: cashout.cashoutAccountNumber,
         accountName: cashout.cashoutAccountName,
         narration: `Cashout ${korapayReference}`,
       });
-    } catch (error: any) {
-      this.logger.error(`Korapay payout initiation failed for ${cashoutId}: ${error.message}`);
+
+      const korapayPayoutFeeKobo = payoutResult.payoutFeeKobo ?? cashout.korapayPayoutFeeKobo ?? null;
+      const feeAccounting = this.resolvePayoutFeeAccounting({
+        grossAmountKobo,
+        onetoFeeKobo,
+        korapayTransferAmountKobo,
+        korapayPayoutFeeKobo,
+        existingFeeBearer: cashout.korapayPayoutFeeBearer,
+        existingDeductedFromRecipient: cashout.korapayPayoutFeeDeductedFromRecipient,
+        gatewayPayload: payoutResult.rawResponse,
+      });
+      await this.prisma.cashout.update({
+        where: { id: cashoutId },
+        data: {
+          korapayResponse: this.toJsonValue(payoutResult.rawResponse),
+          korapayPayoutFeeKobo,
+          korapayTransferAmountKobo,
+          korapayPayoutFeeBearer: feeAccounting.korapayPayoutFeeBearer,
+          korapayPayoutFeeDeductedFromRecipient:
+            feeAccounting.korapayPayoutFeeDeductedFromRecipient,
+          netPayoutKobo: feeAccounting.netPayoutKobo,
+        },
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Korapay payout initiation failed for ${cashoutId}: ${message}`);
 
       // Manual reversal of balance reservation since Korapay initiation failed immediately.
       // This pattern remains to ensure ledger consistency.
@@ -299,14 +519,14 @@ export class CashoutService {
                 transactionId: reverseRef,
                 userId: merchant.id,
                 type: LedgerEntryType.CREDIT,
-                amountKobo: cashout.amountKobo,
-                balanceAfterKobo: merchant.verifiedBalanceKobo + cashout.amountKobo,
+                amountKobo: grossAmountKobo,
+                balanceAfterKobo: merchant.verifiedBalanceKobo + grossAmountKobo,
                 description: `Cashout reversal ${korapayReference}`,
               },
             });
             await tx.user.update({
               where: { id: merchant.id },
-              data: { verifiedBalanceKobo: { increment: cashout.amountKobo } },
+              data: { verifiedBalanceKobo: { increment: grossAmountKobo } },
             });
 
             await tx.ledgerEntry.create({
@@ -314,14 +534,14 @@ export class CashoutService {
                 transactionId: reverseRef,
                 userId: operating.id,
                 type: LedgerEntryType.DEBIT,
-                amountKobo: cashout.amountKobo,
-                balanceAfterKobo: operating.verifiedBalanceKobo - cashout.amountKobo,
+                amountKobo: grossAmountKobo,
+                balanceAfterKobo: operating.verifiedBalanceKobo - grossAmountKobo,
                 description: `Cashout reversal to merchant ${merchant.id}`,
               },
             });
             await tx.user.update({
               where: { id: operating.id },
-              data: { verifiedBalanceKobo: { decrement: cashout.amountKobo } },
+              data: { verifiedBalanceKobo: { decrement: grossAmountKobo } },
             });
           }
 
@@ -335,14 +555,20 @@ export class CashoutService {
     }
   }
 
-  async handlePayoutWebhook(payload: any, signature: string) {
-    const isValid = this.korapayService.verifyWebhookSignature(payload.data, signature);
+  async handlePayoutWebhook(payload: unknown, signature: string) {
+    const parsedPayload = PayoutWebhookSchema.safeParse(payload);
+    if (!parsedPayload.success) {
+      throw new BadRequestException('invalid_payout_webhook_payload');
+    }
+
+    const webhookPayload: PayoutWebhookPayload = parsedPayload.data;
+    const isValid = this.korapayService.verifyWebhookSignature(webhookPayload.data, signature);
     if (!isValid) {
       throw new ForbiddenException('Invalid signature');
     }
 
-    const reference = payload.data.reference;
-    const event = payload.event;
+    const reference = webhookPayload.data.reference;
+    const event = webhookPayload.event;
 
     // Fix 3: Webhook event spoofing protection
     const eventStatusMap: Record<string, string> = {
@@ -350,8 +576,8 @@ export class CashoutService {
       'transfer.failed': 'failed',
     };
     const expectedDataStatus = eventStatusMap[event];
-    if (expectedDataStatus && payload.data?.status !== expectedDataStatus) {
-      this.logger.warn({ event, dataStatus: payload.data?.status }, 'Webhook event/status mismatch');
+    if (expectedDataStatus && webhookPayload.data.status !== expectedDataStatus) {
+      this.logger.warn({ event, dataStatus: webhookPayload.data.status }, 'Webhook event/status mismatch');
       return { success: true }; // return 200 to stop Korapay retries, but don't process
     }
 
@@ -365,23 +591,49 @@ export class CashoutService {
     }
 
     if (event === 'transfer.success') {
+      const grossAmountKobo = this.getGrossAmountKobo(cashout);
+      const onetoFeeKobo = cashout.onetoFeeKobo ?? this.calculateOnetoFeeKobo(grossAmountKobo);
+      const korapayTransferAmountKobo =
+        cashout.korapayTransferAmountKobo ?? (grossAmountKobo - onetoFeeKobo);
+      const feeFromGateway = this.korapayService.extractPayoutFeeKobo(webhookPayload.data);
+      const korapayPayoutFeeKobo = feeFromGateway ?? cashout.korapayPayoutFeeKobo ?? null;
+      const feeAccounting = this.resolvePayoutFeeAccounting({
+        grossAmountKobo,
+        onetoFeeKobo,
+        korapayTransferAmountKobo,
+        korapayPayoutFeeKobo,
+        existingFeeBearer: cashout.korapayPayoutFeeBearer,
+        existingDeductedFromRecipient: cashout.korapayPayoutFeeDeductedFromRecipient,
+        gatewayPayload: webhookPayload.data,
+      });
       // Atomic state transition: PROCESSING -> COMPLETED.
       // If count is 0, webhook is duplicate/out-of-order and becomes a no-op.
       await this.prisma.cashout.updateMany({
         where: { id: cashout.id, status: CashoutStatus.PROCESSING },
-        data: { status: CashoutStatus.COMPLETED, completedAt: new Date(), korapayResponse: payload },
+        data: {
+          status: CashoutStatus.COMPLETED,
+          completedAt: new Date(),
+          korapayResponse: this.toJsonValue(webhookPayload),
+          korapayPayoutFeeKobo,
+          korapayPayoutFeeBearer: feeAccounting.korapayPayoutFeeBearer,
+          korapayPayoutFeeDeductedFromRecipient:
+            feeAccounting.korapayPayoutFeeDeductedFromRecipient,
+          korapayTransferAmountKobo,
+          netPayoutKobo: feeAccounting.netPayoutKobo,
+        },
       });
     } else if (event === 'transfer.failed') {
       await this.prisma.$transaction(
         async (tx) => {
+          const grossAmountKobo = this.getGrossAmountKobo(cashout);
           // Atomic state transition: PROCESSING -> FAILED.
           // Only the first matching webhook is allowed to run refund side-effects.
           const transition = await tx.cashout.updateMany({
             where: { id: cashout.id, status: CashoutStatus.PROCESSING },
             data: {
               status: CashoutStatus.FAILED,
-              failureReason: payload.data.reason || 'payout_failed_at_gateway',
-              korapayResponse: payload,
+              failureReason: webhookPayload.data.reason || 'payout_failed_at_gateway',
+              korapayResponse: this.toJsonValue(webhookPayload),
             },
           });
 
@@ -401,14 +653,14 @@ export class CashoutService {
                 transactionId: reverseRef,
                 userId: merchant.id,
                 type: LedgerEntryType.CREDIT,
-                amountKobo: cashout.amountKobo,
-                balanceAfterKobo: merchant.verifiedBalanceKobo + cashout.amountKobo,
+                amountKobo: grossAmountKobo,
+                balanceAfterKobo: merchant.verifiedBalanceKobo + grossAmountKobo,
                 description: `Cashout failure refund ${reference}`,
               },
             });
             await tx.user.update({
               where: { id: merchant.id },
-              data: { verifiedBalanceKobo: { increment: cashout.amountKobo } },
+              data: { verifiedBalanceKobo: { increment: grossAmountKobo } },
             });
 
             await tx.ledgerEntry.create({
@@ -416,14 +668,14 @@ export class CashoutService {
                 transactionId: reverseRef,
                 userId: operating.id,
                 type: LedgerEntryType.DEBIT,
-                amountKobo: cashout.amountKobo,
-                balanceAfterKobo: operating.verifiedBalanceKobo - cashout.amountKobo,
+                amountKobo: grossAmountKobo,
+                balanceAfterKobo: operating.verifiedBalanceKobo - grossAmountKobo,
                 description: `Cashout failure reversal from merchant ${merchant.id}`,
               },
             });
             await tx.user.update({
               where: { id: operating.id },
-              data: { verifiedBalanceKobo: { decrement: cashout.amountKobo } },
+              data: { verifiedBalanceKobo: { decrement: grossAmountKobo } },
             });
           }
         },
@@ -442,6 +694,14 @@ export class CashoutService {
       select: {
         id: true,
         amountKobo: true,
+        grossAmountKobo: true,
+        onetoFeeBps: true,
+        onetoFeeKobo: true,
+        korapayPayoutFeeKobo: true,
+        korapayPayoutFeeBearer: true,
+        korapayPayoutFeeDeductedFromRecipient: true,
+        netPayoutKobo: true,
+        korapayTransferAmountKobo: true,
         status: true,
         requestedAt: true,
         completedAt: true,

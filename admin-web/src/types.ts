@@ -65,6 +65,14 @@ export type PendingCashout = {
   merchantUserId: string;
   merchantBusinessName: string | null;
   amountKobo: string;
+  grossAmountKobo: string;
+  onetoFeeBps: number;
+  onetoFeeKobo: string | null;
+  korapayPayoutFeeKobo: string | null;
+  korapayPayoutFeeBearer: "UNKNOWN" | "MERCHANT" | "ONETO" | string;
+  korapayPayoutFeeDeductedFromRecipient: boolean | null;
+  netPayoutKobo: string | null;
+  korapayTransferAmountKobo: string | null;
   requestedAt: string;
   status: string;
   cashoutBankName: string;
