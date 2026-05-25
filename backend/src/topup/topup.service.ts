@@ -594,47 +594,59 @@ export class TopupService {
       'verification amount_paid',
     );
     const grossPaidKobo = amountPaidKobo ?? this.extractGrossPaidKoboFromWebhook(webhookPayload);
-    const grossAmountCandidateKobo = amountPaidKobo ?? verificationAmountKobo;
-    const processorFeeKobo = this.extractProcessorFeeKobo(
+    const explicitProcessorFeeKobo = this.extractProcessorFeeKobo(
       verification,
       webhookPayload,
     );
 
-    // Case 1: Korapay amount is the exact requested Oneto credit.
-    if (verificationAmountKobo !== null && verificationAmountKobo === pendingAmountKobo) {
-      return pendingAmountKobo;
+    // Rule 1: When Korapay gives both amount_paid and explicit fee, treat that
+    // pair as authoritative for credit determination.
+    if (grossPaidKobo !== null && explicitProcessorFeeKobo !== null) {
+      // Rule 2: If amount is also present and conflicts with amount_paid in a
+      // way that explicit fee cannot explain, fail closed.
+      if (verificationAmountKobo !== null && verificationAmountKobo !== grossPaidKobo) {
+        if (grossPaidKobo < verificationAmountKobo) {
+          return null;
+        }
+        if (grossPaidKobo - verificationAmountKobo !== explicitProcessorFeeKobo) {
+          return null;
+        }
+      }
+
+      if (
+        grossPaidKobo >= explicitProcessorFeeKobo &&
+        grossPaidKobo - explicitProcessorFeeKobo === pendingAmountKobo
+      ) {
+        return pendingAmountKobo;
+      }
+
+      return null;
     }
 
-    // If amount is not the pending credit and Korapay returned both amount and
-    // amount_paid, they must agree before we use fee-based fallback checks.
+    // Rule 2 (no explicit fee): if both amount and amount_paid exist and
+    // conflict, we cannot reconcile safely.
     if (
+      grossPaidKobo !== null &&
       verificationAmountKobo !== null &&
-      amountPaidKobo !== null &&
-      verificationAmountKobo !== amountPaidKobo
+      verificationAmountKobo !== grossPaidKobo
     ) {
       return null;
     }
 
-    // Case 2: Gross paid (amount_paid or amount) equals requested credit + fee.
+    // Rule 3: legacy exact match is only allowed when amount_paid is absent.
     if (
-      processorFeeKobo !== null &&
-      grossAmountCandidateKobo !== null &&
-      grossAmountCandidateKobo === pendingAmountKobo + processorFeeKobo
+      grossPaidKobo === null &&
+      verificationAmountKobo !== null &&
+      verificationAmountKobo === pendingAmountKobo
     ) {
       return pendingAmountKobo;
     }
 
-    // Case 3: amount_paid - fee equals requested credit.
-    if (
-      processorFeeKobo !== null &&
-      grossPaidKobo !== null &&
-      grossPaidKobo >= processorFeeKobo &&
-      grossPaidKobo - processorFeeKobo === pendingAmountKobo
-    ) {
+    // Conservative exact case when amount_paid is present and does not conflict.
+    if (grossPaidKobo !== null && grossPaidKobo === pendingAmountKobo) {
       return pendingAmountKobo;
     }
 
-    // Fail closed for any unrecognized Korapay amount shape.
     return null;
   }
 
