@@ -215,43 +215,10 @@ export class TopupService {
       return topup;
     }
 
-    const webhookAmountKobo = this.parseMajorAmountToKobo(webhookPayload.data.amount, 'webhook');
-    const webhookVerification = this.toWebhookVerificationSnapshot(webhookPayload);
-
-    if (topup.amountKobo !== webhookAmountKobo) {
-      this.logger.error(
-        {
-          reference,
-          expectedAmountKobo: topup.amountKobo.toString(),
-          receivedAmountKobo: webhookAmountKobo.toString(),
-          source: 'webhook',
-        },
-        'Top-up webhook amount mismatch; refusing to credit balance',
-      );
-
-      await this.prisma.paymentTopup.update({
-        where: { reference },
-        data: {
-          ...this.buildTopupFinancialFields(topup.amountKobo, undefined, webhookPayload),
-          status: 'FAILED',
-          korapayResponse: {
-            ...this.buildTopupAuditPayload('webhook', webhookVerification, webhookPayload),
-            internal_failure: 'amount_mismatch',
-          } as Prisma.InputJsonValue,
-        },
-      });
-
-      return {
-        ...topup,
-        status: 'FAILED',
-      };
-    }
-
     // At this point the webhook is signed, schema-valid, event/status-consistent,
-    // references a pending local top-up, and matches the stored kobo amount.
-    // We still do not credit from the webhook payload alone: the final money
-    // movement must pass the active Korapay /charges/:reference verification
-    // path used by status polling.
+    // and references a pending local top-up. We still do not credit from webhook
+    // fields alone: final money movement must pass active /charges/:reference
+    // verification to avoid trusting webhook-only amount semantics.
     return this.finalizePendingTopup(reference, 'webhook', { webhookPayload });
   }
 
@@ -339,13 +306,21 @@ export class TopupService {
       return topup;
     }
 
-    const verifiedCreditAmountKobo = this.extractVerifiedCreditAmountKobo(verification);
-    if (topup.amountKobo !== verifiedCreditAmountKobo) {
+    const verifiedCreditAmountKobo = this.extractVerifiedCreditAmountKobo(
+      topup.amountKobo,
+      verification,
+      options.webhookPayload,
+    );
+    if (verifiedCreditAmountKobo === null) {
       this.logger.error(
         {
           reference,
           expectedAmountKobo: topup.amountKobo.toString(),
-          receivedAmountKobo: verifiedCreditAmountKobo.toString(),
+          verificationAmount: verification.amount ?? null,
+          verificationAmountPaid: verification.amountPaid ?? null,
+          verificationFee: verification.fee ?? null,
+          verificationTransactionFee: verification.transactionFee ?? null,
+          verificationProcessorFee: verification.processorFee ?? null,
           source,
         },
         'Top-up verification amount mismatch; refusing to credit balance',
@@ -605,39 +580,62 @@ export class TopupService {
     return parsed;
   }
 
-  private extractVerifiedCreditAmountKobo(verification: KorapayTransactionVerification): bigint {
-    if (verification.amount === undefined || verification.amount === null) {
-      throw new BadRequestException('Missing amount in verification payload');
+  private extractVerifiedCreditAmountKobo(
+    pendingAmountKobo: bigint,
+    verification: KorapayTransactionVerification,
+    webhookPayload?: KorapayWebhookPayload,
+  ): bigint | null {
+    const verificationAmountKobo = this.parseOptionalMajorAmountToKobo(
+      verification.amount,
+      'verification amount',
+    );
+    const amountPaidKobo = this.parseOptionalMajorAmountToKobo(
+      verification.amountPaid,
+      'verification amount_paid',
+    );
+    const grossPaidKobo = amountPaidKobo ?? this.extractGrossPaidKoboFromWebhook(webhookPayload);
+    const grossAmountCandidateKobo = amountPaidKobo ?? verificationAmountKobo;
+    const processorFeeKobo = this.extractProcessorFeeKobo(
+      verification,
+      webhookPayload,
+    );
+
+    // Case 1: Korapay amount is the exact requested Oneto credit.
+    if (verificationAmountKobo !== null && verificationAmountKobo === pendingAmountKobo) {
+      return pendingAmountKobo;
     }
 
-    // Pay-in fee policy: merchant_bears_cost=false means the student pays
-    // Korapay's checkout fee outside Oneto Credits. `amount` is the requested
-    // credit amount and is the only value we credit. `amount_paid` can include
-    // Korapay's fee and must never inflate the user's Oneto balance.
-    return this.parseMajorAmountToKobo(verification.amount, 'verification');
-  }
+    // If amount is not the pending credit and Korapay returned both amount and
+    // amount_paid, they must agree before we use fee-based fallback checks.
+    if (
+      verificationAmountKobo !== null &&
+      amountPaidKobo !== null &&
+      verificationAmountKobo !== amountPaidKobo
+    ) {
+      return null;
+    }
 
-  private toWebhookVerificationSnapshot(webhookPayload: KorapayWebhookPayload): KorapayTransactionVerification {
-    const currency =
-      typeof webhookPayload.data.currency === 'string'
-        ? webhookPayload.data.currency
-        : undefined;
-    const merchantBearsCostValue = (webhookPayload.data as Record<string, unknown>).merchant_bears_cost;
+    // Case 2: Gross paid (amount_paid or amount) equals requested credit + fee.
+    if (
+      processorFeeKobo !== null &&
+      grossAmountCandidateKobo !== null &&
+      grossAmountCandidateKobo === pendingAmountKobo + processorFeeKobo
+    ) {
+      return pendingAmountKobo;
+    }
 
-    return {
-      status: webhookPayload.data.status ?? '',
-      reference: this.resolveWebhookReference(webhookPayload.data),
-      amount: webhookPayload.data.amount,
-      amountPaid: this.readKorapayAmountLikeField(webhookPayload.data, 'amount_paid') ?? webhookPayload.data.amount,
-      fee: this.readKorapayAmountLikeField(webhookPayload.data, 'fee'),
-      transactionFee: this.readKorapayAmountLikeField(webhookPayload.data, 'transaction_fee'),
-      processorFee: this.readKorapayAmountLikeField(webhookPayload.data, 'processor_fee'),
-      merchantBearsCost:
-        typeof merchantBearsCostValue === 'boolean'
-          ? merchantBearsCostValue
-          : undefined,
-      currency,
-    };
+    // Case 3: amount_paid - fee equals requested credit.
+    if (
+      processorFeeKobo !== null &&
+      grossPaidKobo !== null &&
+      grossPaidKobo >= processorFeeKobo &&
+      grossPaidKobo - processorFeeKobo === pendingAmountKobo
+    ) {
+      return pendingAmountKobo;
+    }
+
+    // Fail closed for any unrecognized Korapay amount shape.
+    return null;
   }
 
   private resolveWebhookReference(
@@ -671,8 +669,6 @@ export class TopupService {
       this.extractProcessorFeeKobo(
         verification,
         webhookPayload,
-        creditAmountKobo === null ? null : BigInt(creditAmountKobo),
-        grossPaidKobo === null ? null : BigInt(grossPaidKobo),
       )?.toString() ?? null;
 
     return {
@@ -712,8 +708,8 @@ export class TopupService {
       ? this.extractGrossPaidKobo(verification, webhookPayload)
       : this.extractGrossPaidKoboFromWebhook(webhookPayload);
     const processorFeeKobo = verification
-      ? this.extractProcessorFeeKobo(verification, webhookPayload, creditedAmountKobo, grossPaidKobo)
-      : this.extractProcessorFeeKoboFromWebhook(webhookPayload, creditedAmountKobo, grossPaidKobo);
+      ? this.extractProcessorFeeKobo(verification, webhookPayload)
+      : this.extractProcessorFeeKoboFromWebhook(webhookPayload);
 
     return {
       creditedAmountKobo,
@@ -743,21 +739,15 @@ export class TopupService {
   private extractProcessorFeeKobo(
     verification: KorapayTransactionVerification,
     webhookPayload: KorapayWebhookPayload | undefined,
-    creditedAmountKobo: bigint | null,
-    grossPaidKobo: bigint | null,
   ): bigint | null {
     const explicitFee =
       this.parseOptionalMajorAmountToKobo(verification.processorFee, 'verification processor_fee') ??
       this.parseOptionalMajorAmountToKobo(verification.transactionFee, 'verification transaction_fee') ??
       this.parseOptionalMajorAmountToKobo(verification.fee, 'verification fee') ??
-      this.extractProcessorFeeKoboFromWebhook(webhookPayload, creditedAmountKobo, grossPaidKobo);
+      this.extractProcessorFeeKoboFromWebhook(webhookPayload);
 
     if (explicitFee !== null) {
       return explicitFee;
-    }
-
-    if (creditedAmountKobo !== null && grossPaidKobo !== null && grossPaidKobo >= creditedAmountKobo) {
-      return grossPaidKobo - creditedAmountKobo;
     }
 
     return null;
@@ -765,8 +755,6 @@ export class TopupService {
 
   private extractProcessorFeeKoboFromWebhook(
     webhookPayload: KorapayWebhookPayload | undefined,
-    creditedAmountKobo: bigint | null,
-    grossPaidKobo: bigint | null,
   ): bigint | null {
     const data = webhookPayload?.data;
     const explicitFee =
@@ -780,15 +768,7 @@ export class TopupService {
       ) ??
       this.parseOptionalMajorAmountToKobo(this.readKorapayAmountLikeField(data, 'fee'), 'webhook fee');
 
-    if (explicitFee !== null) {
-      return explicitFee;
-    }
-
-    if (creditedAmountKobo !== null && grossPaidKobo !== null && grossPaidKobo >= creditedAmountKobo) {
-      return grossPaidKobo - creditedAmountKobo;
-    }
-
-    return null;
+    return explicitFee;
   }
 
   private parseOptionalMajorAmountToKobo(

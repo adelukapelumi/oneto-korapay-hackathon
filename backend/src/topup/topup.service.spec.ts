@@ -539,6 +539,57 @@ describe('TopupService', () => {
       );
     });
 
+    it('credits exactly 10000 kobo for live student-fee verification payloads', async () => {
+      mockPrisma.paymentTopup.findFirst.mockResolvedValue({
+        reference: 'top_123',
+        status: 'PENDING',
+        amountKobo: BigInt(10_000),
+      });
+      mockPrisma.paymentTopup.findUnique.mockResolvedValue(
+        buildPendingTopup({ amountKobo: BigInt(10_000) }),
+      );
+      mockSuccessfulVerification({
+        amount: '101.61',
+        amountPaid: '101.61',
+        fee: '1.61',
+        merchantBearsCost: false,
+      });
+      mockHappyPathUsers(BigInt(0), BigInt(10_000));
+
+      await expect(service.getStatusForUser('u_123', 'top_123')).resolves.toEqual({
+        reference: 'top_123',
+        status: 'SUCCESS',
+        amountKobo: '10000',
+      });
+
+      expect(mockPrisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'u_123' },
+          data: { verifiedBalanceKobo: { increment: BigInt(10_000) } },
+        }),
+      );
+      expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            type: LedgerEntryType.CREDIT,
+            amountKobo: BigInt(10_000),
+          }),
+        }),
+      );
+      expect(mockPrisma.paymentTopup.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { reference: 'top_123' },
+          data: expect.objectContaining({
+            status: 'SUCCESS',
+            creditedAmountKobo: BigInt(10_000),
+            feeBearer: 'STUDENT',
+            processorFeeKobo: BigInt(161),
+            grossPaidKobo: BigInt(10_161),
+          }),
+        }),
+      );
+    });
+
     it('does not double-credit when status is already successful', async () => {
       mockPrisma.paymentTopup.findFirst.mockResolvedValue({
         reference: 'top_123',
@@ -877,23 +928,23 @@ describe('TopupService', () => {
       expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledTimes(2);
     });
 
-    it('fails closed on webhook amount mismatch', async () => {
+    it('does not trust webhook amount semantics and still requires active verification', async () => {
       mockKorapay.verifyWebhookSignature.mockReturnValue(true);
       mockPrisma.paymentTopup.findUnique.mockResolvedValue(buildPendingTopup());
+      mockSuccessfulVerification();
+      mockHappyPathUsers();
 
       const result = await service.handleWebhook(buildSuccessfulPayload('top_123', 600), 'good-sig');
 
       expect(result).toEqual({ success: true });
-      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
-      expect(mockPrisma.user.update).not.toHaveBeenCalled();
+      expect(mockKorapay.verifyTransaction).toHaveBeenCalledWith('top_123');
+      expect(mockPrisma.user.update).toHaveBeenCalledTimes(2);
+      expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledTimes(2);
       expect(mockPrisma.paymentTopup.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { reference: 'top_123' },
           data: expect.objectContaining({
-            status: 'FAILED',
-            korapayResponse: expect.objectContaining({
-              internal_failure: 'amount_mismatch',
-            }),
+            status: 'SUCCESS',
           }),
         }),
       );
