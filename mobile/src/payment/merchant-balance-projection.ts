@@ -1,4 +1,5 @@
 import { listPendingByStatus } from "../ledger/db";
+import { MIN_CASHOUT_GROSS_KOBO } from "@oneto/shared/src/types/limits";
 
 export interface MerchantBalanceProjection {
   readonly settledBalanceKobo: number;
@@ -43,6 +44,7 @@ export type CashoutRequestBlockReason =
   | "jwt_stale"
   | "balance_unconfirmed"
   | "zero_balance"
+  | "below_minimum_cashout"
   | "request_in_progress"
   | "active_cashout";
 
@@ -155,12 +157,20 @@ export function getCashoutRequestDecision(input: {
   readonly jwtFresh: boolean;
   readonly balanceConfirmedOnline: boolean;
   readonly cashoutableBalanceKobo: number;
+  readonly minimumCashoutGrossKobo?: number;
   readonly isRequestInProgress?: boolean;
   readonly activeCashout?: ActiveCashoutSummary | null;
 }): CashoutRequestDecision {
+  const minimumCashoutGrossKobo =
+    input.minimumCashoutGrossKobo ?? MIN_CASHOUT_GROSS_KOBO;
+
   assertNonNegativeInteger(
     "cashoutableBalanceKobo",
     input.cashoutableBalanceKobo,
+  );
+  assertNonNegativeInteger(
+    "minimumCashoutGrossKobo",
+    minimumCashoutGrossKobo,
   );
 
   if (input.isRequestInProgress) {
@@ -177,6 +187,9 @@ export function getCashoutRequestDecision(input: {
   }
   if (input.cashoutableBalanceKobo <= 0) {
     return { canRequestCashout: false, reason: "zero_balance" };
+  }
+  if (input.cashoutableBalanceKobo < minimumCashoutGrossKobo) {
+    return { canRequestCashout: false, reason: "below_minimum_cashout" };
   }
 
   return { canRequestCashout: true };

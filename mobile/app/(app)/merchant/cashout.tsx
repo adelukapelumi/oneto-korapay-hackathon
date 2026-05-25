@@ -28,6 +28,10 @@ import {
   getKorapayPayoutFeeText,
 } from "../../../src/payment/cashout-fee-display";
 import { BackButton } from "../../../components/BackButton";
+import {
+  MIN_CASHOUT_GROSS_KOBO,
+  MIN_KORAPAY_TRANSFER_KOBO,
+} from "@oneto/shared/src/types/limits";
 import { useThemeMode } from "../../../src/theme/theme-provider";
 import {
   getTheme,
@@ -49,6 +53,8 @@ function getCashoutBlockMessage(reason: CashoutRequestBlockReason): string {
       return "Connect to the internet to confirm your cashout balance.";
     case "zero_balance":
       return "Your available cashout balance is zero.";
+    case "below_minimum_cashout":
+      return `Minimum gross cashout is ${formatKobo(MIN_CASHOUT_GROSS_KOBO)}.`;
     case "request_in_progress":
       return "Please wait while your cashout balance is being confirmed.";
     case "active_cashout":
@@ -173,6 +179,7 @@ export default function CashoutScreen(): React.ReactElement {
     jwtFresh,
     balanceConfirmedOnline,
     cashoutableBalanceKobo: displayCashoutableBalanceKobo,
+    minimumCashoutGrossKobo: MIN_CASHOUT_GROSS_KOBO,
     isRequestInProgress: loading || balanceFetchState === "loading",
     activeCashout,
   });
@@ -249,6 +256,10 @@ export default function CashoutScreen(): React.ReactElement {
               ₦{(balanceProjection.pendingIncomingKobo / 100).toFixed(2)} pending verification is not yet cashoutable.
             </Text>
           ) : null}
+          <Text style={[styles.balanceNote, { color: t.textSec }]}>
+            Minimum gross cashout: {formatKobo(MIN_CASHOUT_GROSS_KOBO)}. Minimum Korapay transfer:{" "}
+            {formatKobo(MIN_KORAPAY_TRANSFER_KOBO)}.
+          </Text>
           {balanceConfirmedOnline && !activeCashout ? (
             <View style={styles.breakdown}>
               <View style={styles.breakdownRow}>

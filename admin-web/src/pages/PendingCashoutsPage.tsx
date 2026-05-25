@@ -49,8 +49,10 @@ export function PendingCashoutsPage() {
   const [cashouts, setCashouts] = useState<PendingCashout[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isApproving, setIsApproving] = useState(false);
+  const [approvingCashoutId, setApprovingCashoutId] = useState<string | null>(null);
   const [selectedCashout, setSelectedCashout] = useState<PendingCashout | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const loadPendingCashouts = useCallback(async () => {
     setIsLoading(true);
@@ -76,16 +78,28 @@ export function PendingCashoutsPage() {
     }
 
     setIsApproving(true);
+    setApprovingCashoutId(selectedCashout.id);
     setError(null);
+    setNotice(null);
 
     try {
-      await approveCashout(selectedCashout.id, markAnonymous);
+      const approvedCashoutId = selectedCashout.id;
+      const result = await approveCashout(approvedCashoutId, markAnonymous);
+      setCashouts((existingCashouts) =>
+        existingCashouts.filter((cashout) => cashout.id !== approvedCashoutId),
+      );
       setSelectedCashout(null);
+      if (result.status === "FAILED") {
+        setNotice(`Cashout failed: ${result.failureReason ?? "payout_gateway_error"}`);
+      } else {
+        setNotice("Cashout approval submitted; payout processing");
+      }
       await loadPendingCashouts();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to approve cashout.");
     } finally {
       setIsApproving(false);
+      setApprovingCashoutId(null);
     }
   };
 
@@ -117,6 +131,7 @@ export function PendingCashoutsPage() {
         </div>
       </div>
 
+      {notice ? <p className="message">{notice}</p> : null}
       {error ? <p className="error">{error}</p> : null}
 
       {cashouts.length === 0 ? (
@@ -188,8 +203,12 @@ export function PendingCashoutsPage() {
                       <span className="table-badge table-badge-warning">{cashout.status}</span>
                     </td>
                     <td className="table-action">
-                      <button type="button" onClick={() => setSelectedCashout(cashout)}>
-                        Approve cashout
+                      <button
+                        type="button"
+                        onClick={() => setSelectedCashout(cashout)}
+                        disabled={isApproving}
+                      >
+                        {isApproving && approvingCashoutId === cashout.id ? "Approving..." : "Approve cashout"}
                       </button>
                     </td>
                   </tr>

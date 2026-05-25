@@ -5,6 +5,7 @@ import { JwtWrapperService } from '../auth/jwt.service';
 import { CashoutStatus, KorapayPayoutFeeBearer } from '@prisma/client';
 import { Reflector } from '@nestjs/core';
 import { UserThrottlerGuard } from '../common/user-throttler.guard';
+import { MIN_CASHOUT_GROSS_KOBO, MIN_KORAPAY_TRANSFER_KOBO } from '@oneto/shared';
 
 describe('CashoutController', () => {
   let controller: CashoutController;
@@ -66,6 +67,8 @@ describe('CashoutController', () => {
     expect(result.cashout.korapayPayoutFeeBearer).toBe('UNKNOWN');
     expect(result.cashout.korapayPayoutFeeDeductedFromRecipient).toBeNull();
     expect(result.cashout.netPayoutKobo).toBeNull();
+    expect(result.minimumCashoutGrossKobo).toBe(MIN_CASHOUT_GROSS_KOBO.toString());
+    expect(result.minimumKorapayTransferKobo).toBe(MIN_KORAPAY_TRANSFER_KOBO.toString());
     expect(service.requestCashout).toHaveBeenCalledWith('u_merchant');
   });
 
@@ -96,6 +99,8 @@ describe('CashoutController', () => {
     expect(result.cashouts[0].korapayPayoutFeeBearer).toBe('ONETO');
     expect(result.cashouts[0].korapayPayoutFeeDeductedFromRecipient).toBe(false);
     expect(result.cashouts[0].netPayoutKobo).toBe('4875');
+    expect(result.minimumCashoutGrossKobo).toBe(MIN_CASHOUT_GROSS_KOBO.toString());
+    expect(result.minimumKorapayTransferKobo).toBe(MIN_KORAPAY_TRANSFER_KOBO.toString());
   });
 
   it('3. ADMIN can approve cashout', async () => {

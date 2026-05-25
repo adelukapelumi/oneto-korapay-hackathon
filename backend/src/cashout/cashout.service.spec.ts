@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { CashoutService } from './cashout.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { KorapayService } from '../topup/korapay.service';
+import { KorapayGatewayError, KorapayService } from '../topup/korapay.service';
 import {
   Prisma,
   CashoutStatus,
@@ -68,7 +68,7 @@ describe('CashoutService', () => {
     id: merchantId,
     role: Role.MERCHANT,
     status: Status.ACTIVE,
-    verifiedBalanceKobo: BigInt(5000),
+    verifiedBalanceKobo: BigInt(500000),
     merchantProfile: {
       cashoutBankName: 'Wema Bank',
       cashoutBankCode: '035',
@@ -117,6 +117,14 @@ describe('CashoutService', () => {
       await expect(service.requestCashout(merchantId)).rejects.toThrow(BadRequestException);
     });
 
+    it('4b. requestCashout: transfer amount below gateway minimum -> BadRequestException', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({
+        ...mockMerchant,
+        verifiedBalanceKobo: BigInt(51_000),
+      });
+      await expect(service.requestCashout(merchantId)).rejects.toThrow(BadRequestException);
+    });
+
     it('5. requestCashout: existing PENDING cashout -> ConflictException', async () => {
       mockPrisma.user.findUnique.mockResolvedValue(mockMerchant);
       mockPrisma.cashout.findFirst.mockResolvedValue({ id: 'existing', status: CashoutStatus.PENDING });
@@ -139,15 +147,15 @@ describe('CashoutService', () => {
       expect(mockPrisma.cashout.create).toHaveBeenCalledWith({
         data: {
           merchantUserId: merchantId,
-          amountKobo: BigInt(5000),
-          grossAmountKobo: BigInt(5000),
+          amountKobo: BigInt(500000),
+          grossAmountKobo: BigInt(500000),
           onetoFeeBps: 250,
-          onetoFeeKobo: BigInt(125),
+          onetoFeeKobo: BigInt(12500),
           korapayPayoutFeeKobo: null,
           korapayPayoutFeeBearer: KorapayPayoutFeeBearer.UNKNOWN,
           korapayPayoutFeeDeductedFromRecipient: null,
           netPayoutKobo: null,
-          korapayTransferAmountKobo: null,
+          korapayTransferAmountKobo: BigInt(487500),
           status: CashoutStatus.PENDING,
           cashoutBankName: 'Wema Bank',
           cashoutBankCode: '035',
@@ -177,6 +185,7 @@ describe('CashoutService', () => {
           korapayPayoutFeeBearer: KorapayPayoutFeeBearer.UNKNOWN,
           korapayPayoutFeeDeductedFromRecipient: null,
           netPayoutKobo: null,
+          korapayTransferAmountKobo: 975_000n,
         }),
       });
     });
@@ -187,10 +196,10 @@ describe('CashoutService', () => {
     const mockCashout = {
       id: cashoutId,
       merchantUserId: merchantId,
-      amountKobo: BigInt(5000),
-      grossAmountKobo: BigInt(5000),
+      amountKobo: BigInt(500000),
+      grossAmountKobo: BigInt(500000),
       onetoFeeBps: 250,
-      onetoFeeKobo: BigInt(125),
+      onetoFeeKobo: BigInt(12500),
       korapayPayoutFeeKobo: null,
       korapayPayoutFeeBearer: KorapayPayoutFeeBearer.UNKNOWN,
       korapayPayoutFeeDeductedFromRecipient: null,
@@ -272,7 +281,7 @@ describe('CashoutService', () => {
     it('Insufficient Merchant Balance: rollback and throw BadRequest', async () => {
       mockPrisma.user.findUnique.mockImplementation((args: any) => {
         if (args.where.id === adminId) return Promise.resolve({ id: adminId, role: Role.ADMIN });
-        if (args.where.id === merchantId) return Promise.resolve({ ...mockMerchant, verifiedBalanceKobo: BigInt(1000) });
+        if (args.where.id === merchantId) return Promise.resolve({ ...mockMerchant, verifiedBalanceKobo: BigInt(100000) });
         if (args.where.id === operatingId) return Promise.resolve(mockOperating);
         return Promise.resolve(null);
       });
@@ -314,7 +323,7 @@ describe('CashoutService', () => {
       // Verify operating credit
       expect(mockPrisma.user.update).toHaveBeenCalledWith({
         where: { id: operatingId },
-        data: { verifiedBalanceKobo: mockOperating.verifiedBalanceKobo + BigInt(5000) },
+        data: { verifiedBalanceKobo: mockOperating.verifiedBalanceKobo + BigInt(500000) },
       });
       expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledWith(expect.objectContaining({
         data: expect.objectContaining({ userId: operatingId, type: LedgerEntryType.CREDIT })
@@ -388,15 +397,15 @@ describe('CashoutService', () => {
     const mockCashout = {
       id: cashoutId,
       merchantUserId: merchantId,
-      amountKobo: BigInt(5000),
-      grossAmountKobo: BigInt(5000),
+      amountKobo: BigInt(500000),
+      grossAmountKobo: BigInt(500000),
       onetoFeeBps: 250,
-      onetoFeeKobo: BigInt(125),
+      onetoFeeKobo: BigInt(12500),
       korapayPayoutFeeKobo: null,
       korapayPayoutFeeBearer: KorapayPayoutFeeBearer.UNKNOWN,
       korapayPayoutFeeDeductedFromRecipient: null,
       netPayoutKobo: null,
-      korapayTransferAmountKobo: BigInt(4875),
+      korapayTransferAmountKobo: BigInt(487500),
       status: CashoutStatus.PROCESSING,
       cashoutBankName: 'Wema Bank',
       cashoutBankCode: '035',
@@ -425,7 +434,7 @@ describe('CashoutService', () => {
 
       expect(mockKorapay.initiatePayout).toHaveBeenCalledWith(expect.objectContaining({
         reference: korapayRef,
-        amountKobo: 4875,
+        amountKobo: 487500,
       }));
       expect(mockPrisma.cashout.update).toHaveBeenCalledWith({
         where: { id: cashoutId },
@@ -433,7 +442,7 @@ describe('CashoutService', () => {
           korapayPayoutFeeKobo: null,
           korapayPayoutFeeBearer: KorapayPayoutFeeBearer.UNKNOWN,
           korapayPayoutFeeDeductedFromRecipient: null,
-          korapayTransferAmountKobo: 4875n,
+          korapayTransferAmountKobo: 487500n,
           netPayoutKobo: null,
         }),
       });
@@ -456,10 +465,10 @@ describe('CashoutService', () => {
         where: { id: cashoutId },
         data: expect.objectContaining({
           korapayPayoutFeeKobo: 2_500n,
-          korapayTransferAmountKobo: 4_875n,
+          korapayTransferAmountKobo: 487_500n,
           korapayPayoutFeeBearer: KorapayPayoutFeeBearer.ONETO,
           korapayPayoutFeeDeductedFromRecipient: false,
-          netPayoutKobo: 4_875n,
+          netPayoutKobo: 487_500n,
           korapayResponse: expect.objectContaining({
             data: expect.objectContaining({ fee: '25.00' }),
           }),
@@ -491,7 +500,7 @@ describe('CashoutService', () => {
           korapayPayoutFeeKobo: 2_500n,
           korapayPayoutFeeBearer: KorapayPayoutFeeBearer.MERCHANT,
           korapayPayoutFeeDeductedFromRecipient: true,
-          netPayoutKobo: 2_375n,
+          netPayoutKobo: 485_000n,
         }),
       });
     });
@@ -503,14 +512,20 @@ describe('CashoutService', () => {
 
       // Reversal should happen: CREDIT merchant, DEBIT operating
       expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledWith(expect.objectContaining({
-        data: expect.objectContaining({ type: LedgerEntryType.CREDIT, userId: merchantId, amountKobo: 5000n })
+        data: expect.objectContaining({ type: LedgerEntryType.CREDIT, userId: merchantId, amountKobo: 500000n })
       }));
       expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledWith(expect.objectContaining({
-        data: expect.objectContaining({ type: LedgerEntryType.DEBIT, userId: operatingId, amountKobo: 5000n })
+        data: expect.objectContaining({ type: LedgerEntryType.DEBIT, userId: operatingId, amountKobo: 500000n })
       }));
-      expect(mockPrisma.cashout.update).toHaveBeenCalledWith({
-        where: { id: cashoutId },
-        data: { status: CashoutStatus.FAILED, failureReason: 'payout_initiation_failed' },
+      expect(mockPrisma.cashout.updateMany).toHaveBeenCalledWith({
+        where: { id: cashoutId, status: CashoutStatus.PROCESSING },
+        data: expect.objectContaining({
+          status: CashoutStatus.FAILED,
+          failureReason: 'payout_gateway_error',
+          korapayResponse: expect.objectContaining({
+            errorType: 'payout_initiation_error',
+          }),
+        }),
       });
     });
 
@@ -525,15 +540,63 @@ describe('CashoutService', () => {
       await cashoutServiceWithPrivateMethod.initiateKorapayPayout(cashoutId, korapayRef);
 
       expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledWith(expect.objectContaining({
-        data: expect.objectContaining({ type: LedgerEntryType.CREDIT, userId: merchantId, amountKobo: 5000n })
+        data: expect.objectContaining({ type: LedgerEntryType.CREDIT, userId: merchantId, amountKobo: 500000n })
       }));
       expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledWith(expect.objectContaining({
         data: expect.objectContaining({ type: LedgerEntryType.DEBIT, userId: operatingId })
       }));
-      expect(mockPrisma.cashout.update).toHaveBeenCalledWith({
-        where: { id: cashoutId },
-        data: { status: CashoutStatus.FAILED, failureReason: 'payout_initiation_failed' },
+      expect(mockPrisma.cashout.updateMany).toHaveBeenCalledWith({
+        where: { id: cashoutId, status: CashoutStatus.PROCESSING },
+        data: expect.objectContaining({
+          status: CashoutStatus.FAILED,
+          failureReason: 'payout_gateway_error',
+        }),
       });
+    });
+
+    it('stores structured Korapay rejection diagnostics on failed payout initiation', async () => {
+      mockKorapay.initiatePayout.mockRejectedValue(
+        new KorapayGatewayError({
+          message: 'Korapay payout rejected request with HTTP 422',
+          category: 'http_error',
+          statusCode: 422,
+          responseBody: {
+            status: false,
+            message: 'Invalid account number',
+          },
+        }),
+      );
+
+      await (service as any).initiateKorapayPayout(cashoutId, korapayRef);
+
+      expect(mockPrisma.cashout.updateMany).toHaveBeenCalledWith({
+        where: { id: cashoutId, status: CashoutStatus.PROCESSING },
+        data: expect.objectContaining({
+          status: CashoutStatus.FAILED,
+          failureReason: 'payout_gateway_invalid_bank_account',
+          korapayResponse: expect.objectContaining({
+            errorType: 'korapay_gateway_error',
+            category: 'http_error',
+            statusCode: 422,
+            responseBody: expect.objectContaining({
+              message: 'Invalid account number',
+            }),
+          }),
+        }),
+      });
+    });
+
+    it('refunds merchant gross balance exactly once when initiation failure handler runs more than once', async () => {
+      mockKorapay.initiatePayout.mockRejectedValue(new Error('API Down'));
+      mockPrisma.cashout.updateMany
+        .mockResolvedValueOnce({ count: 1 })
+        .mockResolvedValueOnce({ count: 0 });
+
+      await (service as any).initiateKorapayPayout(cashoutId, korapayRef);
+      await (service as any).initiateKorapayPayout(cashoutId, korapayRef);
+
+      expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledTimes(2);
+      expect(mockPrisma.user.update).toHaveBeenCalledTimes(2);
     });
   });
 

@@ -12,6 +12,12 @@ export const MAX_OFFLINE_TRANSACTION_KOBO = 200_000;
 // (Pilot cap; revisit after pilot.)
 export const MAX_USER_BALANCE_KOBO = 5_000_000;
 
+// Cashout safety limits
+// Pilot minimum gross merchant cashout request: NGN 1,000
+export const MIN_CASHOUT_GROSS_KOBO = 100_000;
+// Minimum amount safe to send to payout gateway after fees: NGN 500
+export const MIN_KORAPAY_TRANSFER_KOBO = 50_000;
+
 // Envelope timing
 // Short QR scan/display freshness window.
 // This is not the offline merchant claim window.

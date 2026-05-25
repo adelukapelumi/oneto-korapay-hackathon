@@ -1013,13 +1013,16 @@ tbody tr:last-child td {
 
 .modal {
   width: min(560px, 100%);
+  max-height: min(88vh, 860px);
   background: var(--panel-strong);
   border: 1px solid var(--panel-border);
   border-radius: 28px;
   padding: 24px;
   box-shadow: var(--shadow-strong);
   display: grid;
-  gap: 18px;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 14px;
+  overflow: hidden;
 }
 
 :root[data-theme="dark"] .modal {
@@ -1044,6 +1047,12 @@ tbody tr:last-child td {
 .modal-body {
   display: grid;
   gap: 14px;
+}
+
+.modal-body-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .modal-body p {
@@ -1089,6 +1098,14 @@ tbody tr:last-child td {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+}
+
+.modal-actions-sticky {
+  position: sticky;
+  bottom: 0;
+  background: var(--panel-strong);
+  border-top: 1px solid var(--panel-border);
+  padding-top: 12px;
 }
 
 .merchant-form,

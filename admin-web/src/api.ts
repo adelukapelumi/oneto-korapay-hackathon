@@ -150,7 +150,7 @@ export async function getPendingCashouts(onAuthFailure: OnAuthFailure) {
 }
 
 export function approveCashout(id: string, onAuthFailure: OnAuthFailure) {
-  return request<{ success: boolean }>(`/admin/cashouts/${id}/approve`, {
+  return request<{ success: boolean; status: string; failureReason: string | null }>(`/admin/cashouts/${id}/approve`, {
     method: "POST",
     requiresCsrf: true,
   }, onAuthFailure);

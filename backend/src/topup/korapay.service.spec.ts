@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { KorapayService } from './korapay.service';
+import { KorapayGatewayError, KorapayService } from './korapay.service';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import { InternalServerErrorException } from '@nestjs/common';
@@ -314,6 +314,37 @@ describe('KorapayService', () => {
       expect(service.parseMajorNgnToKobo(25.5)).toBe(2550n);
       expect(service.parseMajorNgnToKobo('25.555')).toBeNull();
       expect(service.extractPayoutFeeKobo({ transfer_fee: '30.00' })).toBe(3000n);
+    });
+
+    it('throws KorapayGatewayError with status and body on non-2xx payout response', async () => {
+      jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+        ok: false,
+        status: 422,
+        text: async () =>
+          JSON.stringify({
+            status: false,
+            message: 'Account number is invalid',
+            code: 'invalid_account',
+          }),
+      } as Response);
+
+      await expect(
+        service.initiatePayout({
+          reference: 'cashout_ref',
+          amountKobo: 97500,
+          bankCode: '035',
+          accountNumber: '1234567890',
+          accountName: 'Campus Cafe',
+          narration: 'Cashout cashout_ref',
+        }),
+      ).rejects.toMatchObject({
+        name: 'KorapayGatewayError',
+        statusCode: 422,
+        category: 'http_error',
+        responseBody: expect.objectContaining({
+          code: 'invalid_account',
+        }),
+      } satisfies Partial<KorapayGatewayError>);
     });
   });
 
