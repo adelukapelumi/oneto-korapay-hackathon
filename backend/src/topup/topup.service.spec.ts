@@ -590,6 +590,94 @@ describe('TopupService', () => {
       );
     });
 
+    it('fails closed when amount_paid and fee do not resolve to the pending credit amount', async () => {
+      mockPrisma.paymentTopup.findFirst.mockResolvedValue({
+        reference: 'top_123',
+        status: 'PENDING',
+        amountKobo: BigInt(10_000),
+      });
+      mockPrisma.paymentTopup.findUnique.mockResolvedValue(
+        buildPendingTopup({ amountKobo: BigInt(10_000) }),
+      );
+      mockSuccessfulVerification({
+        amount: '100.00',
+        amountPaid: '50.00',
+        fee: '1.61',
+        merchantBearsCost: false,
+      });
+
+      await expect(service.getStatusForUser('u_123', 'top_123')).resolves.toEqual({
+        reference: 'top_123',
+        status: 'FAILED',
+        amountKobo: '10000',
+      });
+
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
+      expect(mockPrisma.ledgerEntry.create).not.toHaveBeenCalled();
+      expect(mockPrisma.paymentTopup.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { reference: 'top_123' },
+          data: expect.objectContaining({
+            status: 'FAILED',
+            korapayResponse: expect.objectContaining({
+              internal_failure: 'amount_mismatch',
+            }),
+          }),
+        }),
+      );
+    });
+
+    it('succeeds when amount_paid and explicit fee reconcile to pending credit', async () => {
+      mockPrisma.paymentTopup.findFirst.mockResolvedValue({
+        reference: 'top_123',
+        status: 'PENDING',
+        amountKobo: BigInt(10_000),
+      });
+      mockPrisma.paymentTopup.findUnique.mockResolvedValue(
+        buildPendingTopup({ amountKobo: BigInt(10_000) }),
+      );
+      mockSuccessfulVerification({
+        amount: '100.00',
+        amountPaid: '101.61',
+        fee: '1.61',
+        merchantBearsCost: false,
+      });
+      mockHappyPathUsers(BigInt(0), BigInt(10_000));
+
+      await expect(service.getStatusForUser('u_123', 'top_123')).resolves.toEqual({
+        reference: 'top_123',
+        status: 'SUCCESS',
+        amountKobo: '10000',
+      });
+
+      expect(mockPrisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'u_123' },
+          data: { verifiedBalanceKobo: { increment: BigInt(10_000) } },
+        }),
+      );
+      expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            type: LedgerEntryType.CREDIT,
+            amountKobo: BigInt(10_000),
+          }),
+        }),
+      );
+      expect(mockPrisma.paymentTopup.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { reference: 'top_123' },
+          data: expect.objectContaining({
+            status: 'SUCCESS',
+            creditedAmountKobo: BigInt(10_000),
+            feeBearer: 'STUDENT',
+            processorFeeKobo: BigInt(161),
+            grossPaidKobo: BigInt(10_161),
+          }),
+        }),
+      );
+    });
+
     it('does not double-credit when status is already successful', async () => {
       mockPrisma.paymentTopup.findFirst.mockResolvedValue({
         reference: 'top_123',
