@@ -28,6 +28,9 @@ import {
   getKorapayPayoutFeeText,
 } from "../../../src/payment/cashout-fee-display";
 import { BackButton } from "../../../components/BackButton";
+// TODO(post-pilot): expose a lightweight shared limits entrypoint
+// (for example "@oneto/shared/limits") so mobile can import these
+// constants without referencing /src paths.
 import {
   MIN_CASHOUT_GROSS_KOBO,
   MIN_KORAPAY_TRANSFER_KOBO,

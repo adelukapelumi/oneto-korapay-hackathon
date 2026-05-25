@@ -1,4 +1,7 @@
 import { listPendingByStatus } from "../ledger/db";
+// TODO(post-pilot): expose a lightweight shared limits entrypoint
+// (for example "@oneto/shared/limits") so mobile can import these
+// constants without referencing /src paths.
 import { MIN_CASHOUT_GROSS_KOBO } from "@oneto/shared/src/types/limits";
 
 export interface MerchantBalanceProjection {
