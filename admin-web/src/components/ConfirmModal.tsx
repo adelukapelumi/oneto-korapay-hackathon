@@ -33,8 +33,10 @@ export function ConfirmModal({
           <h3 id="confirm-modal-title">{title}</h3>
           <p className="modal-subtitle">Review the details below before continuing.</p>
         </div>
-        <div className="modal-body">{body}</div>
-        <div className="modal-actions">
+        <div className="modal-body-scroll">
+          <div className="modal-body">{body}</div>
+        </div>
+        <div className="modal-actions modal-actions-sticky">
           <button type="button" className="secondary" onClick={onCancel} disabled={isBusy}>
             {cancelLabel}
           </button>

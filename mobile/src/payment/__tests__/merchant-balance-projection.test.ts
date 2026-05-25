@@ -106,7 +106,7 @@ describe("merchant balance projection", () => {
       getCashoutRequestDecision({
         jwtFresh: true,
         balanceConfirmedOnline: true,
-        cashoutableBalanceKobo: 1_000,
+        cashoutableBalanceKobo: 150_000,
       }),
     ).toEqual({ canRequestCashout: true });
   });
@@ -116,7 +116,7 @@ describe("merchant balance projection", () => {
       getCashoutRequestDecision({
         jwtFresh: true,
         balanceConfirmedOnline: true,
-        cashoutableBalanceKobo: 1_000,
+        cashoutableBalanceKobo: 150_000,
         isRequestInProgress: true,
       }),
     ).toEqual({ canRequestCashout: false, reason: "request_in_progress" });
@@ -127,7 +127,7 @@ describe("merchant balance projection", () => {
       getCashoutRequestDecision({
         jwtFresh: true,
         balanceConfirmedOnline: false,
-        cashoutableBalanceKobo: 1_000,
+        cashoutableBalanceKobo: 150_000,
       }),
     ).toEqual({
       canRequestCashout: false,
@@ -140,9 +140,19 @@ describe("merchant balance projection", () => {
       getCashoutRequestDecision({
         jwtFresh: false,
         balanceConfirmedOnline: true,
-        cashoutableBalanceKobo: 1_000,
+        cashoutableBalanceKobo: 150_000,
       }),
     ).toEqual({ canRequestCashout: false, reason: "jwt_stale" });
+  });
+
+  it("blocks cashout when confirmed balance is below minimum cashout threshold", () => {
+    expect(
+      getCashoutRequestDecision({
+        jwtFresh: true,
+        balanceConfirmedOnline: true,
+        cashoutableBalanceKobo: 99_999,
+      }),
+    ).toEqual({ canRequestCashout: false, reason: "below_minimum_cashout" });
   });
 
   it("blocks cashout when cashoutable balance is zero", () => {
@@ -160,8 +170,8 @@ describe("merchant balance projection", () => {
       getCashoutRequestDecision({
         jwtFresh: true,
         balanceConfirmedOnline: true,
-        cashoutableBalanceKobo: 1_000,
-        activeCashout: { amountKobo: 1_000, grossAmountKobo: 1_000, status: "PENDING" },
+        cashoutableBalanceKobo: 150_000,
+        activeCashout: { amountKobo: 150_000, grossAmountKobo: 150_000, status: "PENDING" },
       }),
     ).toEqual({ canRequestCashout: false, reason: "active_cashout" });
   });

@@ -63,6 +63,30 @@ export interface KorapayPayoutInitiation {
   rawResponse: unknown;
 }
 
+type KorapayGatewayErrorCategory =
+  | 'http_error'
+  | 'invalid_response'
+  | 'network_error';
+
+export class KorapayGatewayError extends Error {
+  readonly statusCode: number | null;
+  readonly responseBody: unknown;
+  readonly category: KorapayGatewayErrorCategory;
+
+  constructor(input: {
+    message: string;
+    category: KorapayGatewayErrorCategory;
+    statusCode?: number | null;
+    responseBody?: unknown;
+  }) {
+    super(input.message);
+    this.name = 'KorapayGatewayError';
+    this.category = input.category;
+    this.statusCode = input.statusCode ?? null;
+    this.responseBody = input.responseBody ?? null;
+  }
+}
+
 const KorapayVerifyTransactionResponseSchema = z.object({
   status: z.boolean(),
   data: z.object({
@@ -217,16 +241,28 @@ export class KorapayService {
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
-        this.logger.error(`Korapay payout failed: ${response.status} ${errorText}`);
-        throw new InternalServerErrorException('Payout failed');
+        const responseBody = await this.readResponseBody(response);
+        this.logger.error(
+          `Korapay payout failed with non-2xx response: ${response.status} ${JSON.stringify(responseBody)}`,
+        );
+        throw new KorapayGatewayError({
+          message: `Korapay payout rejected request with HTTP ${response.status}`,
+          category: 'http_error',
+          statusCode: response.status,
+          responseBody,
+        });
       }
 
       const json = await response.json();
       const parsed = KorapayPayoutResponseSchema.safeParse(json);
       if (!parsed.success || !parsed.data.status || !parsed.data.data) {
         this.logger.error(`Korapay payout returned invalid response: ${JSON.stringify(json)}`);
-        throw new InternalServerErrorException('Invalid payout response');
+        throw new KorapayGatewayError({
+          message: 'Korapay payout returned an invalid response payload',
+          category: 'invalid_response',
+          statusCode: response.status,
+          responseBody: json,
+        });
       }
 
       return {
@@ -236,11 +272,15 @@ export class KorapayService {
         rawResponse: json,
       };
     } catch (error) {
-      if (error instanceof InternalServerErrorException) {
+      if (error instanceof KorapayGatewayError) {
         throw error;
       }
       this.logger.error(`Failed to reach Korapay Payout API: ${error}`);
-      throw new InternalServerErrorException('Failed to communicate with payment gateway');
+      throw new KorapayGatewayError({
+        message: 'Failed to communicate with payout gateway',
+        category: 'network_error',
+        responseBody: error instanceof Error ? { message: error.message } : { error: String(error) },
+      });
     }
   }
 
@@ -404,6 +444,19 @@ export class KorapayService {
     } finally {
       clearTimeout(timeout);
       removeExternalAbortListener?.();
+    }
+  }
+
+  private async readResponseBody(response: Response): Promise<unknown> {
+    const rawText = await response.text();
+    if (rawText.length === 0) {
+      return null;
+    }
+
+    try {
+      return JSON.parse(rawText) as unknown;
+    } catch {
+      return rawText;
     }
   }
 

@@ -5,6 +5,7 @@ import { RolesGuard } from '../auth/role.guard';
 import { UserThrottlerGuard } from '../common/user-throttler.guard';
 import { Throttle } from '@nestjs/throttler';
 import type { CashoutStatus, KorapayPayoutFeeBearer } from '@prisma/client';
+import { MIN_CASHOUT_GROSS_KOBO, MIN_KORAPAY_TRANSFER_KOBO } from '@oneto/shared';
 
 type CashoutResponseShape = {
   id: string;
@@ -24,6 +25,9 @@ type CashoutResponseShape = {
 @Controller('cashout')
 export class CashoutController {
   constructor(private readonly cashoutService: CashoutService) {}
+
+  private readonly minimumCashoutGrossKobo = MIN_CASHOUT_GROSS_KOBO.toString();
+  private readonly minimumKorapayTransferKobo = MIN_KORAPAY_TRANSFER_KOBO.toString();
 
   private requireUserSub(req: AuthenticatedRequest): string {
     if (!req.user?.sub) {
@@ -60,6 +64,8 @@ export class CashoutController {
     const cashout = await this.cashoutService.requestCashout(this.requireUserSub(req));
     return {
       cashout: this.serializeCashout(cashout),
+      minimumCashoutGrossKobo: this.minimumCashoutGrossKobo,
+      minimumKorapayTransferKobo: this.minimumKorapayTransferKobo,
     };
   }
 
@@ -69,6 +75,8 @@ export class CashoutController {
     const cashouts = await this.cashoutService.getRecentCashouts(this.requireUserSub(req));
     return {
       cashouts: cashouts.map((c) => this.serializeCashout(c)),
+      minimumCashoutGrossKobo: this.minimumCashoutGrossKobo,
+      minimumKorapayTransferKobo: this.minimumKorapayTransferKobo,
     };
   }
 

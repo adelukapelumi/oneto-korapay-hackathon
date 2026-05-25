@@ -6,10 +6,11 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { KorapayService } from '../topup/korapay.service';
+import { KorapayGatewayError, KorapayService } from '../topup/korapay.service';
 import { Prisma, CashoutStatus, KorapayPayoutFeeBearer, LedgerEntryType } from '@prisma/client';
 import * as crypto from 'crypto';
 import { z } from 'zod';
+import { MIN_CASHOUT_GROSS_KOBO, MIN_KORAPAY_TRANSFER_KOBO } from '@oneto/shared';
 
 const ONETO_SERVICE_FEE_BPS = 250;
 const BASIS_POINTS_DIVISOR = 10_000n;
@@ -56,7 +57,8 @@ type PayoutFeeAccountingResult = {
 export class CashoutService {
   private readonly logger = new Logger(CashoutService.name);
   private readonly OPERATING_USER_ID = 'u_operating';
-  private readonly MIN_CASHOUT_KOBO = 1000n; // 10 NGN
+  private readonly MIN_CASHOUT_GROSS_KOBO = BigInt(MIN_CASHOUT_GROSS_KOBO);
+  private readonly MIN_KORAPAY_TRANSFER_KOBO = BigInt(MIN_KORAPAY_TRANSFER_KOBO);
 
   constructor(
     private readonly prisma: PrismaService,
@@ -198,6 +200,87 @@ export class CashoutService {
     return amount;
   }
 
+  private assertCashoutMinimums(input: {
+    readonly grossAmountKobo: bigint;
+    readonly korapayTransferAmountKobo: bigint;
+  }): void {
+    if (input.grossAmountKobo < this.MIN_CASHOUT_GROSS_KOBO) {
+      throw new BadRequestException('cashout_gross_below_minimum');
+    }
+
+    if (input.korapayTransferAmountKobo < this.MIN_KORAPAY_TRANSFER_KOBO) {
+      throw new BadRequestException('cashout_transfer_below_gateway_minimum');
+    }
+  }
+
+  private buildKorapayErrorDiagnostics(error: unknown): {
+    readonly failureReason: string;
+    readonly diagnostics: Prisma.InputJsonValue;
+  } {
+    if (error instanceof KorapayGatewayError) {
+      const failureReason = this.classifyKorapayFailureReason(error);
+      return {
+        failureReason,
+        diagnostics: this.toJsonValue({
+          errorType: 'korapay_gateway_error',
+          category: error.category,
+          statusCode: error.statusCode,
+          message: error.message,
+          responseBody: error.responseBody,
+        }),
+      };
+    }
+
+    return {
+      failureReason: 'payout_gateway_error',
+      diagnostics: this.toJsonValue({
+        errorType: 'payout_initiation_error',
+        message: error instanceof Error ? error.message : String(error),
+      }),
+    };
+  }
+
+  private classifyKorapayFailureReason(error: KorapayGatewayError): string {
+    if (error.category === 'network_error') {
+      return 'payout_gateway_error';
+    }
+
+    const statusCode = error.statusCode ?? 0;
+    const bodyText =
+      typeof error.responseBody === 'string'
+        ? error.responseBody.toLowerCase()
+        : JSON.stringify(error.responseBody).toLowerCase();
+
+    const containsAny = (...keywords: readonly string[]) =>
+      keywords.some((keyword) => bodyText.includes(keyword));
+
+    if (
+      containsAny('insufficient balance', 'insufficient fund', 'insufficient wallet') ||
+      statusCode === 402
+    ) {
+      return 'payout_gateway_insufficient_balance';
+    }
+
+    if (
+      containsAny('minimum', 'below minimum', 'too small') ||
+      statusCode === 416
+    ) {
+      return 'payout_gateway_minimum_amount';
+    }
+
+    if (
+      containsAny('invalid account', 'account number', 'invalid bank', 'bank code', 'beneficiary')
+    ) {
+      return 'payout_gateway_invalid_bank_account';
+    }
+
+    if (statusCode >= 400 && statusCode < 500) {
+      return 'payout_gateway_rejected';
+    }
+
+    return 'payout_gateway_error';
+  }
+
   async recoverStuckCashouts() {
     try {
       const fiveMinsAgo = new Date(Date.now() - 5 * 60 * 1000);
@@ -253,11 +336,12 @@ export class CashoutService {
     }
 
     const grossAmountKobo = user.verifiedBalanceKobo;
-    if (grossAmountKobo < this.MIN_CASHOUT_KOBO) {
-      throw new BadRequestException('insufficient_balance_for_cashout');
-    }
-
     const onetoFeeKobo = this.calculateOnetoFeeKobo(grossAmountKobo);
+    const korapayTransferAmountKobo = grossAmountKobo - onetoFeeKobo;
+    this.assertCashoutMinimums({
+      grossAmountKobo,
+      korapayTransferAmountKobo,
+    });
 
     const existingCashout = await this.prisma.cashout.findFirst({
       where: {
@@ -281,7 +365,7 @@ export class CashoutService {
         korapayPayoutFeeBearer: KorapayPayoutFeeBearer.UNKNOWN,
         korapayPayoutFeeDeductedFromRecipient: null,
         netPayoutKobo: null,
-        korapayTransferAmountKobo: null,
+        korapayTransferAmountKobo,
         status: CashoutStatus.PENDING,
         cashoutBankName: user.merchantProfile.cashoutBankName,
         cashoutBankCode: user.merchantProfile.cashoutBankCode,
@@ -323,6 +407,10 @@ export class CashoutService {
           const onetoFeeKobo = cashout.onetoFeeKobo ?? this.calculateOnetoFeeKobo(grossAmountKobo);
           const korapayTransferAmountKobo =
             cashout.korapayTransferAmountKobo ?? (grossAmountKobo - onetoFeeKobo);
+          this.assertCashoutMinimums({
+            grossAmountKobo,
+            korapayTransferAmountKobo,
+          });
           const korapayPayoutFeeKobo = cashout.korapayPayoutFeeKobo ?? null;
           const feeAccounting = this.resolvePayoutFeeAccounting({
             grossAmountKobo,
@@ -435,12 +523,21 @@ export class CashoutService {
     }
 
     // Only reached if transaction committed successfully.
-    // Fire-and-forget Korapay call.
-    this.initiateKorapayPayout(cashoutId, korapayReference).catch((err) => {
-      this.logger.error(`Async Korapay payout initiation failed for ${cashoutId}: ${err.message}`);
+    await this.initiateKorapayPayout(cashoutId, korapayReference);
+
+    const latestCashout = await this.prisma.cashout.findUnique({
+      where: { id: cashoutId },
+      select: {
+        status: true,
+        failureReason: true,
+      },
     });
 
-    return { success: true };
+    return {
+      success: true,
+      status: latestCashout?.status ?? CashoutStatus.PROCESSING,
+      failureReason: latestCashout?.failureReason ?? null,
+    };
   }
 
   private async initiateKorapayPayout(cashoutId: string, korapayReference: string) {
@@ -501,13 +598,29 @@ export class CashoutService {
         },
       });
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Korapay payout initiation failed for ${cashoutId}: ${message}`);
+      const diagnostics = this.buildKorapayErrorDiagnostics(error);
+      this.logger.error(
+        `Korapay payout initiation failed for ${cashoutId}: ${diagnostics.failureReason}`,
+      );
 
       // Manual reversal of balance reservation since Korapay initiation failed immediately.
       // This pattern remains to ensure ledger consistency.
       await this.prisma.$transaction(
         async (tx) => {
+          const transition = await tx.cashout.updateMany({
+            where: { id: cashoutId, status: CashoutStatus.PROCESSING },
+            data: {
+              status: CashoutStatus.FAILED,
+              failureReason: diagnostics.failureReason,
+              korapayResponse: diagnostics.diagnostics,
+            },
+          });
+
+          // Duplicate invocation or already-terminal state: do not refund twice.
+          if (transition.count === 0) {
+            return;
+          }
+
           const merchant = await tx.user.findUnique({ where: { id: cashout.merchantUserId } });
           const operating = await tx.user.findUnique({ where: { id: this.OPERATING_USER_ID } });
 
@@ -544,11 +657,6 @@ export class CashoutService {
               data: { verifiedBalanceKobo: { decrement: grossAmountKobo } },
             });
           }
-
-          await tx.cashout.update({
-            where: { id: cashoutId },
-            data: { status: CashoutStatus.FAILED, failureReason: 'payout_initiation_failed' },
-          });
         },
         { isolationLevel: 'Serializable' },
       );
