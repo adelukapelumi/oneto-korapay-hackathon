@@ -36,6 +36,7 @@ describe("Admin HTTP boundary", () => {
     deactivateMerchant: jest.fn(),
     reactivateMerchant: jest.fn(),
     getPendingCashouts: jest.fn(),
+    getOutboundIpDiagnostic: jest.fn(),
     getReconciliationReport: jest.fn(),
   };
 
@@ -81,6 +82,11 @@ describe("Admin HTTP boundary", () => {
     });
     mockAdminService.updateMerchant.mockResolvedValue({
       merchant: { userId: "u_merchant", businessName: "Updated Cafe" },
+    });
+    mockAdminService.getOutboundIpDiagnostic.mockResolvedValue({
+      ipv4: "203.0.113.10",
+      auto: "2001:db8::10",
+      checkedAt: "2026-05-25T00:00:00.000Z",
     });
 
     const moduleRef = await Test.createTestingModule({
@@ -132,6 +138,29 @@ describe("Admin HTTP boundary", () => {
 
     expect(response.body).toEqual({ merchants: [{ userId: "u_merchant" }] });
     expect(mockAdminService.listMerchants).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects GET /admin/network/outbound-ip with Bearer ADMIN token", async () => {
+    await request(app.getHttpServer())
+      .get("/admin/network/outbound-ip")
+      .set("Authorization", `Bearer ${BEARER_ADMIN_TOKEN}`)
+      .expect(401);
+
+    expect(mockAdminService.getOutboundIpDiagnostic).not.toHaveBeenCalled();
+  });
+
+  it("accepts GET /admin/network/outbound-ip with admin session cookie", async () => {
+    const response = await request(app.getHttpServer())
+      .get("/admin/network/outbound-ip")
+      .set("Cookie", `${ADMIN_SESSION_COOKIE_NAME}=${COOKIE_ADMIN_TOKEN}`)
+      .expect(200);
+
+    expect(response.body).toEqual({
+      ipv4: "203.0.113.10",
+      auto: "2001:db8::10",
+      checkedAt: "2026-05-25T00:00:00.000Z",
+    });
+    expect(mockAdminService.getOutboundIpDiagnostic).toHaveBeenCalledTimes(1);
   });
 
   it("rejects POST /admin/merchants without admin CSRF header", async () => {
