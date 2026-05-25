@@ -411,6 +411,9 @@ describe('CashoutService', () => {
       cashoutBankCode: '035',
       cashoutAccountNumber: '1234567890',
       cashoutAccountName: 'Test Merchant',
+      merchant: {
+        email: 'merchant@cu.edu.ng',
+      },
     };
 
     beforeEach(() => {
@@ -435,6 +438,8 @@ describe('CashoutService', () => {
       expect(mockKorapay.initiatePayout).toHaveBeenCalledWith(expect.objectContaining({
         reference: korapayRef,
         amountKobo: 487500,
+        customerName: 'Test Merchant',
+        customerEmail: 'merchant@cu.edu.ng',
       }));
       expect(mockPrisma.cashout.update).toHaveBeenCalledWith({
         where: { id: cashoutId },
@@ -584,6 +589,37 @@ describe('CashoutService', () => {
           }),
         }),
       });
+    });
+
+    it('fails safely for missing merchant email, never calls Korapay, and reverses exactly once', async () => {
+      mockPrisma.cashout.findUnique.mockResolvedValue({
+        ...mockCashout,
+        merchant: { email: 'not-an-email' },
+      });
+      mockPrisma.cashout.updateMany
+        .mockResolvedValueOnce({ count: 1 })
+        .mockResolvedValueOnce({ count: 0 });
+
+      await (service as any).initiateKorapayPayout(cashoutId, korapayRef);
+      await (service as any).initiateKorapayPayout(cashoutId, korapayRef);
+
+      expect(mockKorapay.initiatePayout).not.toHaveBeenCalled();
+      expect(mockPrisma.cashout.updateMany).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          where: { id: cashoutId, status: CashoutStatus.PROCESSING },
+          data: expect.objectContaining({
+            status: CashoutStatus.FAILED,
+            failureReason: 'payout_merchant_email_invalid',
+            korapayResponse: expect.objectContaining({
+              errorType: 'payout_precondition_error',
+              code: 'merchant_email_missing_or_invalid',
+            }),
+          }),
+        }),
+      );
+      expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledTimes(2);
+      expect(mockPrisma.user.update).toHaveBeenCalledTimes(2);
     });
 
     it('refunds merchant gross balance exactly once when initiation failure handler runs more than once', async () => {
