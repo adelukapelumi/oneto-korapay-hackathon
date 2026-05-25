@@ -25,6 +25,8 @@ export interface InitiatePayoutParams {
   bankCode: string;
   accountNumber: string;
   accountName: string;
+  customerName: string;
+  customerEmail: string;
   narration: string;
 }
 
@@ -223,6 +225,10 @@ export class KorapayService {
         amount: amountNgn,
         currency: 'NGN',
         narration: params.narration,
+        customer: {
+          name: params.customerName,
+          email: params.customerEmail,
+        },
         bank_account: {
           bank: params.bankCode,
           account: params.accountNumber,

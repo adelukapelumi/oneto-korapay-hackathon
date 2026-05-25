@@ -254,6 +254,8 @@ describe('KorapayService', () => {
         bankCode: '035',
         accountNumber: '1234567890',
         accountName: 'Campus Cafe',
+        customerName: 'Campus Cafe',
+        customerEmail: 'merchant@cu.edu.ng',
         narration: 'Cashout cashout_ref',
       })).resolves.toEqual({
         reference: 'cashout_ref',
@@ -278,6 +280,10 @@ describe('KorapayService', () => {
           reference: 'cashout_ref',
           destination: expect.objectContaining({
             amount: 975,
+            customer: {
+              name: 'Campus Cafe',
+              email: 'merchant@cu.edu.ng',
+            },
           }),
         }),
       );
@@ -301,6 +307,8 @@ describe('KorapayService', () => {
         bankCode: '035',
         accountNumber: '1234567890',
         accountName: 'Campus Cafe',
+        customerName: 'Campus Cafe',
+        customerEmail: 'merchant@cu.edu.ng',
         narration: 'Cashout cashout_ref',
       })).resolves.toMatchObject({
         reference: 'cashout_ref',
@@ -335,6 +343,8 @@ describe('KorapayService', () => {
           bankCode: '035',
           accountNumber: '1234567890',
           accountName: 'Campus Cafe',
+          customerName: 'Campus Cafe',
+          customerEmail: 'merchant@cu.edu.ng',
           narration: 'Cashout cashout_ref',
         }),
       ).rejects.toMatchObject({

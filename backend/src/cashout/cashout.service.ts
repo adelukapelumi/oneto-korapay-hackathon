@@ -11,6 +11,7 @@ import { Prisma, CashoutStatus, KorapayPayoutFeeBearer, LedgerEntryType } from '
 import * as crypto from 'crypto';
 import { z } from 'zod';
 import { MIN_CASHOUT_GROSS_KOBO, MIN_KORAPAY_TRANSFER_KOBO } from '@oneto/shared';
+import { tryNormalizeEmail } from '../common/email';
 
 const ONETO_SERVICE_FEE_BPS = 250;
 const BASIS_POINTS_DIVISOR = 10_000n;
@@ -52,6 +53,18 @@ type PayoutFeeAccountingResult = {
   readonly korapayPayoutFeeDeductedFromRecipient: boolean | null;
   readonly netPayoutKobo: bigint | null;
 };
+
+class CashoutPayoutPreconditionError extends Error {
+  readonly code: string;
+  readonly context: Record<string, unknown>;
+
+  constructor(code: string, context: Record<string, unknown>) {
+    super(code);
+    this.name = 'CashoutPayoutPreconditionError';
+    this.code = code;
+    this.context = context;
+  }
+}
 
 @Injectable()
 export class CashoutService {
@@ -217,6 +230,17 @@ export class CashoutService {
     readonly failureReason: string;
     readonly diagnostics: Prisma.InputJsonValue;
   } {
+    if (error instanceof CashoutPayoutPreconditionError) {
+      return {
+        failureReason: 'payout_merchant_email_invalid',
+        diagnostics: this.toJsonValue({
+          errorType: 'payout_precondition_error',
+          code: error.code,
+          context: error.context,
+        }),
+      };
+    }
+
     if (error instanceof KorapayGatewayError) {
       const failureReason = this.classifyKorapayFailureReason(error);
       return {
@@ -543,6 +567,13 @@ export class CashoutService {
   private async initiateKorapayPayout(cashoutId: string, korapayReference: string) {
     const cashout = await this.prisma.cashout.findUnique({
       where: { id: cashoutId },
+      include: {
+        merchant: {
+          select: {
+            email: true,
+          },
+        },
+      },
     });
 
     if (!cashout || cashout.status !== CashoutStatus.PROCESSING) {
@@ -555,6 +586,14 @@ export class CashoutService {
       cashout.korapayTransferAmountKobo ?? (grossAmountKobo - onetoFeeKobo);
 
     try {
+      const merchantEmail = tryNormalizeEmail(cashout.merchant?.email ?? '');
+      if (merchantEmail === null) {
+        throw new CashoutPayoutPreconditionError('merchant_email_missing_or_invalid', {
+          cashoutId,
+          merchantUserId: cashout.merchantUserId,
+        });
+      }
+
       // Korapay's documented payout response can return a fee after payout
       // initiation, but we do not currently have a documented fee quote before
       // transfer initiation. Approval therefore cannot display an exact final
@@ -572,6 +611,8 @@ export class CashoutService {
         bankCode: cashout.cashoutBankCode,
         accountNumber: cashout.cashoutAccountNumber,
         accountName: cashout.cashoutAccountName,
+        customerName: cashout.cashoutAccountName,
+        customerEmail: merchantEmail,
         narration: `Cashout ${korapayReference}`,
       });
 

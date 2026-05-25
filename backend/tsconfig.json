@@ -22,7 +22,10 @@
     "forceConsistentCasingInFileNames": true,
     "noFallthroughCasesInSwitch": true,
     "composite": true,
-    "rootDir": "src"
+    "rootDir": "src",
+    "types": [
+      "node"
+    ]
   },
   "include": [
     "src/**/*.ts"
@@ -31,6 +34,8 @@
     "node_modules",
     "dist",
     "jest.config.ts",
+    "tsconfig.spec.json",
+    "**/*.spec.ts",
     "prisma/seed.ts",
     "scratch",
     "scripts"
