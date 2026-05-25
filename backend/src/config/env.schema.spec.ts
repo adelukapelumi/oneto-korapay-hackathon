@@ -143,4 +143,18 @@ describe("envSchema", () => {
       expect(result.data.REDIS_KEY_PREFIX).toBe("oneto:prod");
     }
   });
+
+  it("accepts ADMIN_OUTBOUND_IP_DIAGNOSTIC_ENABLED when set to false", () => {
+    const result = envSchema.safeParse(
+      makeBaseEnv({
+        NODE_ENV: "development",
+        ADMIN_OUTBOUND_IP_DIAGNOSTIC_ENABLED: "false",
+      }),
+    );
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.ADMIN_OUTBOUND_IP_DIAGNOSTIC_ENABLED).toBe("false");
+    }
+  });
 });

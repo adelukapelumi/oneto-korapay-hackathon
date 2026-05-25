@@ -98,6 +98,10 @@ describe("AdminService", () => {
     service = new AdminService(prisma as never);
   });
 
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   it("getPendingMerchants returns only pending merchant applications", async () => {
     prisma.user.findMany.mockResolvedValue([
       {
@@ -623,5 +627,70 @@ describe("AdminService", () => {
     expect(result.operatingBalanceKobo).toBeNull();
     expect(result.operatingAccountPresent).toBe(false);
     expect(result.invariantPasses).toBe(false);
+  });
+
+  it("getOutboundIpDiagnostic returns IPv4 and auto-detected IP values when both providers succeed", async () => {
+    const fetchMock = jest
+      .spyOn(global, "fetch")
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ ip: "203.0.113.10" }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ ip: "2001:db8::10" }),
+      } as Response);
+
+    const result = await service.getOutboundIpDiagnostic();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result).toEqual({
+      ipv4: "203.0.113.10",
+      auto: "2001:db8::10",
+      checkedAt: expect.any(String),
+    });
+  });
+
+  it("getOutboundIpDiagnostic returns null for a provider that fails while preserving the other provider result", async () => {
+    jest
+      .spyOn(global, "fetch")
+      .mockRejectedValueOnce(new Error("network failure"))
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ ip: "2001:db8::10" }),
+      } as Response);
+
+    const result = await service.getOutboundIpDiagnostic();
+
+    expect(result).toEqual({
+      ipv4: null,
+      auto: "2001:db8::10",
+      checkedAt: expect.any(String),
+    });
+  });
+
+  it("getOutboundIpDiagnostic response does not expose secrets or extra fields", async () => {
+    jest
+      .spyOn(global, "fetch")
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          ip: "203.0.113.10",
+          token: "secret",
+          authorization: "Bearer leaked",
+        }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: false,
+        json: async () => ({ ip: "ignored" }),
+      } as Response);
+
+    const result = await service.getOutboundIpDiagnostic();
+
+    expect(result.ipv4).toBe("203.0.113.10");
+    expect(result.auto).toBeNull();
+    expect(Object.keys(result).sort()).toEqual(["auto", "checkedAt", "ipv4"]);
+    expect(JSON.stringify(result)).not.toContain("secret");
+    expect(JSON.stringify(result)).not.toContain("authorization");
   });
 });

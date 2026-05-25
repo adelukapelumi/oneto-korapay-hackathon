@@ -5,7 +5,9 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { CashoutStatus, Prisma, Role, Status } from "@prisma/client";
+import { z } from "zod";
 import { InvalidEmailError, normalizeEmail } from "../common/email";
 import { PrismaService } from "../prisma/prisma.service";
 import {
@@ -15,6 +17,20 @@ import {
 import { generateOnetoUserId } from "../common/user-id";
 
 const OPERATING_USER_ID = "u_operating";
+const OUTBOUND_IP_FETCH_TIMEOUT_MS = 5_000;
+const OUTBOUND_IP_ENDPOINTS = {
+  ipv4: "https://api.ipify.org?format=json",
+  auto: "https://api64.ipify.org?format=json",
+} as const;
+const OutboundIpResponseSchema = z.object({
+  ip: z.string().trim().min(1),
+});
+
+type OutboundIpDiagnostic = {
+  ipv4: string | null;
+  auto: string | null;
+  checkedAt: string;
+};
 const ADMIN_MERCHANT_SELECT = {
   id: true,
   email: true,
@@ -42,7 +58,10 @@ type AdminMerchantRecord = Prisma.UserGetPayload<{
 export class AdminService {
   private readonly logger = new Logger(AdminService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly configService?: ConfigService,
+  ) {}
 
   async getOverview() {
     const [
@@ -446,6 +465,29 @@ export class AdminService {
     };
   }
 
+  async getOutboundIpDiagnostic(): Promise<OutboundIpDiagnostic> {
+    this.logger.log("Admin outbound IP diagnostic requested");
+
+    if (!this.isOutboundIpDiagnosticEnabled()) {
+      return {
+        ipv4: null,
+        auto: null,
+        checkedAt: new Date().toISOString(),
+      };
+    }
+
+    const [ipv4, auto] = await Promise.all([
+      this.fetchOutboundIp(OUTBOUND_IP_ENDPOINTS.ipv4),
+      this.fetchOutboundIp(OUTBOUND_IP_ENDPOINTS.auto),
+    ]);
+
+    return {
+      ipv4,
+      auto,
+      checkedAt: new Date().toISOString(),
+    };
+  }
+
   private mapAdminMerchant(user: AdminMerchantRecord) {
     return {
       userId: user.id,
@@ -539,5 +581,45 @@ export class AdminService {
     }
 
     return data;
+  }
+
+  private isOutboundIpDiagnosticEnabled(): boolean {
+    const rawFlag = this.configService?.get<string>(
+      "ADMIN_OUTBOUND_IP_DIAGNOSTIC_ENABLED",
+    );
+
+    if (!rawFlag) {
+      return true;
+    }
+
+    return rawFlag.trim().toLowerCase() !== "false";
+  }
+
+  private async fetchOutboundIp(url: string): Promise<string | null> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), OUTBOUND_IP_FETCH_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(url, {
+        method: "GET",
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        return null;
+      }
+
+      const payload: unknown = await response.json();
+      const parsed = OutboundIpResponseSchema.safeParse(payload);
+      if (!parsed.success) {
+        return null;
+      }
+
+      return parsed.data.ip;
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 }

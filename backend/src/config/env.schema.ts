@@ -16,6 +16,7 @@ const baseEnvSchema = z.object({
   KORAPAY_SECRET_KEY: z.string().optional(),
   KORAPAY_BASE_URL: z.string().default('https://api.korapay.com/merchant/api/v1'),
   ADMIN_WEB_ORIGINS: z.string().optional(),
+  ADMIN_OUTBOUND_IP_DIAGNOSTIC_ENABLED: z.enum(["true", "false"]).optional(),
 }).superRefine((data, ctx) => {
   const isProduction = data.NODE_ENV === 'production';
   const isRedisEnabled =

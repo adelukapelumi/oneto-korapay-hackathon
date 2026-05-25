@@ -140,6 +140,11 @@ export class AdminController {
     return { cashouts: await this.adminService.getPendingCashouts() };
   }
 
+  @Get("network/outbound-ip")
+  async getOutboundIpDiagnostic() {
+    return this.adminService.getOutboundIpDiagnostic();
+  }
+
   @Get("recovery/pending")
   async getPendingRecoveryRequests() {
     return {

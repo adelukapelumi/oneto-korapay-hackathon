@@ -23,6 +23,7 @@ describe("AdminController", () => {
     deactivateMerchant: jest.fn(),
     reactivateMerchant: jest.fn(),
     getPendingCashouts: jest.fn(),
+    getOutboundIpDiagnostic: jest.fn(),
     getReconciliationReport: jest.fn(),
   };
 
@@ -133,6 +134,23 @@ describe("AdminController", () => {
 
     expect(result).toEqual({ merchants: [{ userId: "u_merchant" }] });
     expect(mockAdminService.listMerchants).toHaveBeenCalledTimes(1);
+  });
+
+  it("delegates GET /admin/network/outbound-ip to AdminService.getOutboundIpDiagnostic", async () => {
+    mockAdminService.getOutboundIpDiagnostic.mockResolvedValue({
+      ipv4: "203.0.113.10",
+      auto: "2001:db8::10",
+      checkedAt: "2026-05-25T00:00:00.000Z",
+    });
+
+    const result = await controller.getOutboundIpDiagnostic();
+
+    expect(result).toEqual({
+      ipv4: "203.0.113.10",
+      auto: "2001:db8::10",
+      checkedAt: "2026-05-25T00:00:00.000Z",
+    });
+    expect(mockAdminService.getOutboundIpDiagnostic).toHaveBeenCalledTimes(1);
   });
 
   it("delegates POST /admin/merchants to AdminService.createMerchant", async () => {
