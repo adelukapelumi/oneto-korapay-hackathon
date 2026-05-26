@@ -18,6 +18,19 @@ export const AdminMerchantUserIdParamSchema = z.object({
   userId: z.string().trim().min(1, "userId is required"),
 });
 
+export const AdminCashoutIdParamSchema = z.object({
+  id: z.string().trim().min(1, "cashout id is required"),
+});
+
+export const AdminMarkCashoutPaidSchema = z.object({
+  externalReference: z
+    .string()
+    .trim()
+    .min(1, "externalReference is required")
+    .max(200),
+  note: optionalStringField(500),
+});
+
 export const CreateAdminMerchantSchema = z.object({
   email: z.string().email("Invalid email address"),
   businessName: requiredStringField("businessName", 200),
@@ -44,5 +57,7 @@ export const UpdateAdminMerchantSchema = CreateAdminMerchantSchema.omit({
   );
 
 export type AdminMerchantUserIdParamDto = z.infer<typeof AdminMerchantUserIdParamSchema>;
+export type AdminCashoutIdParamDto = z.infer<typeof AdminCashoutIdParamSchema>;
+export type AdminMarkCashoutPaidDto = z.infer<typeof AdminMarkCashoutPaidSchema>;
 export type CreateAdminMerchantDto = z.infer<typeof CreateAdminMerchantSchema>;
 export type UpdateAdminMerchantDto = z.infer<typeof UpdateAdminMerchantSchema>;

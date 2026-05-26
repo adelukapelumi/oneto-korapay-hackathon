@@ -23,12 +23,15 @@ describe("AdminController", () => {
     deactivateMerchant: jest.fn(),
     reactivateMerchant: jest.fn(),
     getPendingCashouts: jest.fn(),
+    getCashoutOperations: jest.fn(),
     getOutboundIpDiagnostic: jest.fn(),
     getReconciliationReport: jest.fn(),
   };
 
   const mockCashoutService = {
     approveCashout: jest.fn(),
+    markManualCashoutPaid: jest.fn(),
+    cancelManualCashout: jest.fn(),
   };
 
   const mockRecoveryService = {
@@ -101,10 +104,44 @@ describe("AdminController", () => {
     mockCashoutService.approveCashout.mockResolvedValue({ success: true });
     const req = { user: { sub: "u_admin" } } as unknown as AuthenticatedRequest;
 
-    const result = await controller.approveCashout("cashout_1", req);
+    const result = await controller.approveCashout({ id: "cashout_1" }, req);
 
     expect(result).toEqual({ success: true });
     expect(mockCashoutService.approveCashout).toHaveBeenCalledWith(
+      "cashout_1",
+      "u_admin",
+    );
+  });
+
+  it("delegates /admin/cashouts/:id/mark-paid to CashoutService.markManualCashoutPaid", async () => {
+    mockCashoutService.markManualCashoutPaid.mockResolvedValue({ success: true });
+    const req = { user: { sub: "u_admin" } } as unknown as AuthenticatedRequest;
+
+    const result = await controller.markCashoutPaid(
+      { id: "cashout_1" },
+      { externalReference: "bank_ref_123", note: "sent from ops account" },
+      req,
+    );
+
+    expect(result).toEqual({ success: true });
+    expect(mockCashoutService.markManualCashoutPaid).toHaveBeenCalledWith(
+      "cashout_1",
+      "u_admin",
+      { externalReference: "bank_ref_123", note: "sent from ops account" },
+    );
+  });
+
+  it("delegates /admin/cashouts/:id/cancel-manual to CashoutService.cancelManualCashout", async () => {
+    mockCashoutService.cancelManualCashout.mockResolvedValue({ success: true });
+    const req = { user: { sub: "u_admin" } } as unknown as AuthenticatedRequest;
+
+    const result = await controller.cancelManualCashout(
+      { id: "cashout_1" },
+      req,
+    );
+
+    expect(result).toEqual({ success: true });
+    expect(mockCashoutService.cancelManualCashout).toHaveBeenCalledWith(
       "cashout_1",
       "u_admin",
     );
@@ -134,6 +171,15 @@ describe("AdminController", () => {
 
     expect(result).toEqual({ merchants: [{ userId: "u_merchant" }] });
     expect(mockAdminService.listMerchants).toHaveBeenCalledTimes(1);
+  });
+
+  it("delegates GET /admin/cashouts/operations to AdminService.getCashoutOperations", async () => {
+    mockAdminService.getCashoutOperations.mockResolvedValue([{ id: "cash_1" }]);
+
+    const result = await controller.getCashoutOperations();
+
+    expect(result).toEqual({ cashouts: [{ id: "cash_1" }] });
+    expect(mockAdminService.getCashoutOperations).toHaveBeenCalledTimes(1);
   });
 
   it("delegates GET /admin/network/outbound-ip to AdminService.getOutboundIpDiagnostic", async () => {

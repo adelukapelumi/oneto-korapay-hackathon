@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { CashoutService } from './cashout.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { KorapayGatewayError, KorapayService } from '../topup/korapay.service';
+import { ConfigService } from '@nestjs/config';
 import {
   Prisma,
   CashoutStatus,
@@ -11,6 +12,7 @@ import {
   LedgerEntryType,
 } from '@prisma/client';
 import { ForbiddenException, BadRequestException, ConflictException } from '@nestjs/common';
+import { AdminCashoutNotificationService } from './admin-cashout-notification.service';
 
 describe('CashoutService', () => {
   let service: CashoutService;
@@ -43,12 +45,35 @@ describe('CashoutService', () => {
     extractPayoutFeeKobo: jest.fn(),
   };
 
+  const mockConfigService = {
+    get: jest.fn(),
+  };
+
+  const mockAdminCashoutNotificationService = {
+    sendNewCashoutRequestNotification: jest.fn(),
+  };
+
+  let payoutMode: 'korapay_api' | 'manual' = 'korapay_api';
+
   beforeEach(async () => {
+    payoutMode = 'korapay_api';
+    mockConfigService.get.mockImplementation((key: string) => {
+      if (key === 'CASHOUT_PAYOUT_MODE') {
+        return payoutMode;
+      }
+      return undefined;
+    });
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         CashoutService,
         { provide: PrismaService, useValue: mockPrisma },
         { provide: KorapayService, useValue: mockKorapay },
+        { provide: ConfigService, useValue: mockConfigService },
+        {
+          provide: AdminCashoutNotificationService,
+          useValue: mockAdminCashoutNotificationService,
+        },
       ],
     }).compile();
 
@@ -58,6 +83,7 @@ describe('CashoutService', () => {
     jest.clearAllMocks();
     mockPrisma.cashout.updateMany.mockResolvedValue({ count: 1 });
     mockKorapay.extractPayoutFeeKobo.mockReturnValue(null);
+    mockAdminCashoutNotificationService.sendNewCashoutRequestNotification.mockResolvedValue(undefined);
   });
 
   const merchantId = 'u_merchant';
@@ -189,6 +215,60 @@ describe('CashoutService', () => {
         }),
       });
     });
+
+    it('requestCashout sends admin cashout notification after successful create', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue(mockMerchant);
+      mockPrisma.cashout.findFirst.mockResolvedValue(null);
+      mockPrisma.cashout.create.mockResolvedValue({
+        id: 'cashout_notify_1',
+        merchantUserId: merchantId,
+        amountKobo: 500_000n,
+        grossAmountKobo: 500_000n,
+        onetoFeeKobo: 12_500n,
+        korapayTransferAmountKobo: 487_500n,
+        cashoutBankName: 'Wema Bank',
+        cashoutAccountName: 'Test Merchant',
+        cashoutAccountNumber: '1234567890',
+      });
+
+      await service.requestCashout(merchantId);
+
+      expect(
+        mockAdminCashoutNotificationService.sendNewCashoutRequestNotification,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cashoutId: 'cashout_notify_1',
+          merchantUserId: merchantId,
+          amountToPayKobo: 487_500n,
+          grossAmountKobo: 500_000n,
+          onetoFeeKobo: 12_500n,
+        }),
+      );
+    });
+
+    it('requestCashout does not fail when admin cashout notification send fails', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue(mockMerchant);
+      mockPrisma.cashout.findFirst.mockResolvedValue(null);
+      mockPrisma.cashout.create.mockResolvedValue({
+        id: 'cashout_notify_2',
+        merchantUserId: merchantId,
+        amountKobo: 500_000n,
+        grossAmountKobo: 500_000n,
+        onetoFeeKobo: 12_500n,
+        korapayTransferAmountKobo: 487_500n,
+        cashoutBankName: 'Wema Bank',
+        cashoutAccountName: 'Test Merchant',
+        cashoutAccountNumber: '1234567890',
+      });
+      mockAdminCashoutNotificationService.sendNewCashoutRequestNotification.mockRejectedValue(
+        new Error('mail_down'),
+      );
+
+      await expect(service.requestCashout(merchantId)).resolves.toEqual(
+        expect.objectContaining({ id: 'cashout_notify_2' }),
+      );
+    });
+
   });
 
   describe('approveCashout', () => {
@@ -250,6 +330,61 @@ describe('CashoutService', () => {
 
       await service.approveCashout(cashoutId, adminId);
       expect(initiateKorapayPayoutSpy).toHaveBeenCalledWith(cashoutId, expect.stringContaining('cashout_'));
+    });
+
+    it('manual mode approve does not call Korapay payout initiation', async () => {
+      payoutMode = 'manual';
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          CashoutService,
+          { provide: PrismaService, useValue: mockPrisma },
+          { provide: KorapayService, useValue: mockKorapay },
+          { provide: ConfigService, useValue: mockConfigService },
+          {
+            provide: AdminCashoutNotificationService,
+            useValue: mockAdminCashoutNotificationService,
+          },
+        ],
+      }).compile();
+      service = module.get<CashoutService>(CashoutService);
+
+      const initiateKorapayPayoutSpy = jest
+        .spyOn(service as any, 'initiateKorapayPayout')
+        .mockResolvedValue(undefined);
+
+      await service.approveCashout(cashoutId, adminId);
+
+      expect(initiateKorapayPayoutSpy).not.toHaveBeenCalled();
+    });
+
+    it('manual mode approve reserves merchant and operating balances exactly once and stores transfer amount', async () => {
+      payoutMode = 'manual';
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          CashoutService,
+          { provide: PrismaService, useValue: mockPrisma },
+          { provide: KorapayService, useValue: mockKorapay },
+          { provide: ConfigService, useValue: mockConfigService },
+          {
+            provide: AdminCashoutNotificationService,
+            useValue: mockAdminCashoutNotificationService,
+          },
+        ],
+      }).compile();
+      service = module.get<CashoutService>(CashoutService);
+
+      await service.approveCashout(cashoutId, adminId);
+
+      expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledTimes(2);
+      expect(mockPrisma.user.update).toHaveBeenCalledTimes(2);
+      expect(mockPrisma.cashout.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: cashoutId },
+          data: expect.objectContaining({
+            korapayTransferAmountKobo: 487_500n,
+          }),
+        }),
+      );
     });
 
     it('approveCashout: race condition — second admin gets P2025, no payout fired', async () => {
@@ -328,6 +463,196 @@ describe('CashoutService', () => {
       expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledWith(expect.objectContaining({
         data: expect.objectContaining({ userId: operatingId, type: LedgerEntryType.CREDIT })
       }));
+    });
+  });
+
+  describe('markManualCashoutPaid', () => {
+    const cashoutId = 'c_manual_paid';
+
+    beforeEach(() => {
+      mockPrisma.user.findUnique.mockImplementation((args: any) => {
+        if (args.where.id === adminId) return Promise.resolve({ id: adminId, role: Role.ADMIN });
+        return Promise.resolve(null);
+      });
+      mockPrisma.cashout.findUnique.mockResolvedValue({
+        id: cashoutId,
+        status: CashoutStatus.PROCESSING,
+        korapayResponse: {
+          source: 'manual_payout_required',
+          payoutMode: 'manual',
+          amountToPayKobo: '487500',
+          approvedByUserId: adminId,
+          approvedAt: '2026-05-26T10:00:00.000Z',
+        },
+      });
+      mockPrisma.cashout.updateMany.mockResolvedValue({ count: 1 });
+    });
+
+    it('mark-paid completes manual cashout without creating extra ledger entries', async () => {
+      const result = await service.markManualCashoutPaid(cashoutId, adminId, {
+        externalReference: 'bank_ref_123',
+        note: 'settled manually',
+      });
+
+      expect(result.status).toBe(CashoutStatus.COMPLETED);
+      expect(mockPrisma.ledgerEntry.create).not.toHaveBeenCalled();
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
+      expect(mockPrisma.cashout.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: cashoutId, status: CashoutStatus.PROCESSING },
+          data: expect.objectContaining({
+            status: CashoutStatus.COMPLETED,
+            failureReason: null,
+            korapayResponse: expect.objectContaining({
+              source: 'manual_payout_required',
+              manualPayoutResponse: expect.objectContaining({
+                source: 'manual_payout',
+                externalReference: 'bank_ref_123',
+              }),
+            }),
+          }),
+        }),
+      );
+    });
+
+    it('mark-paid requires external reference', async () => {
+      await expect(
+        service.markManualCashoutPaid(cashoutId, adminId, {
+          externalReference: '   ',
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('duplicate mark-paid does not create money side effects', async () => {
+      mockPrisma.cashout.findUnique
+        .mockResolvedValueOnce({
+          id: cashoutId,
+          status: CashoutStatus.PROCESSING,
+          korapayResponse: {
+            source: 'manual_payout_required',
+            payoutMode: 'manual',
+            amountToPayKobo: '487500',
+            approvedByUserId: adminId,
+            approvedAt: '2026-05-26T10:00:00.000Z',
+          },
+        })
+        .mockResolvedValueOnce({
+          id: cashoutId,
+          status: CashoutStatus.COMPLETED,
+          korapayResponse: {
+            source: 'manual_payout_required',
+            payoutMode: 'manual',
+            amountToPayKobo: '487500',
+            approvedByUserId: adminId,
+            approvedAt: '2026-05-26T10:00:00.000Z',
+          },
+        });
+
+      await service.markManualCashoutPaid(cashoutId, adminId, {
+        externalReference: 'bank_ref_123',
+      });
+
+      await expect(
+        service.markManualCashoutPaid(cashoutId, adminId, {
+          externalReference: 'bank_ref_123',
+        }),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(mockPrisma.ledgerEntry.create).not.toHaveBeenCalled();
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('cancelManualCashout', () => {
+    const cashoutId = 'c_manual_cancel';
+
+    beforeEach(() => {
+      mockPrisma.user.findUnique.mockImplementation((args: any) => {
+        if (args.where.id === adminId) return Promise.resolve({ id: adminId, role: Role.ADMIN });
+        if (args.where.id === merchantId) {
+          return Promise.resolve({ ...mockMerchant, verifiedBalanceKobo: 0n });
+        }
+        if (args.where.id === operatingId) {
+          return Promise.resolve({ id: operatingId, verifiedBalanceKobo: 600_000n });
+        }
+        return Promise.resolve(null);
+      });
+      mockPrisma.cashout.findUnique.mockResolvedValue({
+        id: cashoutId,
+        merchantUserId: merchantId,
+        amountKobo: 500_000n,
+        grossAmountKobo: 500_000n,
+        korapayReference: 'cashout_manual_ref',
+        status: CashoutStatus.PROCESSING,
+        korapayResponse: {
+          source: 'manual_payout_required',
+          payoutMode: 'manual',
+          amountToPayKobo: '487500',
+          approvedByUserId: adminId,
+          approvedAt: '2026-05-26T10:00:00.000Z',
+        },
+      });
+      mockPrisma.cashout.updateMany.mockResolvedValue({ count: 1 });
+    });
+
+    it('cancel-manual reverses reservation exactly once', async () => {
+      const result = await service.cancelManualCashout(cashoutId, adminId);
+
+      expect(result.status).toBe(CashoutStatus.FAILED);
+      expect(mockPrisma.cashout.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: cashoutId, status: CashoutStatus.PROCESSING },
+          data: expect.objectContaining({
+            status: CashoutStatus.FAILED,
+            failureReason: 'manual_payout_cancelled',
+          }),
+        }),
+      );
+      expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledTimes(2);
+      expect(mockPrisma.user.update).toHaveBeenCalledTimes(2);
+    });
+
+    it('duplicate cancel-manual does not double refund', async () => {
+      mockPrisma.cashout.findUnique
+        .mockResolvedValueOnce({
+          id: cashoutId,
+          merchantUserId: merchantId,
+          amountKobo: 500_000n,
+          grossAmountKobo: 500_000n,
+          korapayReference: 'cashout_manual_ref',
+          status: CashoutStatus.PROCESSING,
+          korapayResponse: {
+            source: 'manual_payout_required',
+            payoutMode: 'manual',
+            amountToPayKobo: '487500',
+            approvedByUserId: adminId,
+            approvedAt: '2026-05-26T10:00:00.000Z',
+          },
+        })
+        .mockResolvedValueOnce({
+          id: cashoutId,
+          merchantUserId: merchantId,
+          amountKobo: 500_000n,
+          grossAmountKobo: 500_000n,
+          korapayReference: 'cashout_manual_ref',
+          status: CashoutStatus.FAILED,
+          korapayResponse: {
+            source: 'manual_payout_required',
+            payoutMode: 'manual',
+            amountToPayKobo: '487500',
+            approvedByUserId: adminId,
+            approvedAt: '2026-05-26T10:00:00.000Z',
+          },
+        });
+
+      await service.cancelManualCashout(cashoutId, adminId);
+
+      await expect(service.cancelManualCashout(cashoutId, adminId)).rejects.toThrow(
+        BadRequestException,
+      );
+
+      expect(mockPrisma.ledgerEntry.create).toHaveBeenCalledTimes(2);
+      expect(mockPrisma.user.update).toHaveBeenCalledTimes(2);
     });
   });
 

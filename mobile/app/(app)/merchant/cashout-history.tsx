@@ -85,13 +85,17 @@ export default function CashoutHistoryScreen(): React.ReactElement {
       minute: "2-digit",
     });
     const statusColors = getStatusColors(item.status);
+    const statusLabel =
+      item.status === "PROCESSING" && (item.manualPayoutRequired || item.payoutMode === "manual")
+        ? "PROCESSING (MANUAL PAYOUT)"
+        : item.status;
 
     return (
       <View style={[styles.card, { backgroundColor: t.card, borderColor: t.border }]}>
         <View style={styles.cardHeader}>
           <Text style={[styles.amount, { color: t.text }]}>{"\u20A6"}{grossAmountNaira}</Text>
           <View style={[styles.badge, { backgroundColor: statusColors.bg }]}>
-            <Text style={[styles.badgeText, { color: statusColors.text }]}>{item.status}</Text>
+            <Text style={[styles.badgeText, { color: statusColors.text }]}>{statusLabel}</Text>
           </View>
         </View>
         <View style={styles.breakdown}>
@@ -105,9 +109,9 @@ export default function CashoutHistoryScreen(): React.ReactElement {
             Final merchant payout: {netPayoutText}
           </Text>
           <Text style={[styles.detail, { color: t.textSec }]}>
-            Amount sent to Korapay:{" "}
-            {item.korapayTransferAmountKobo
-              ? `\u20A6${(Number(item.korapayTransferAmountKobo) / 100).toFixed(2)}`
+            {item.payoutMode === "manual" ? "Manual payout amount: " : "Amount sent to Korapay: "}
+            {(item.amountToPayKobo ?? item.korapayTransferAmountKobo)
+              ? `\u20A6${(Number(item.amountToPayKobo ?? item.korapayTransferAmountKobo) / 100).toFixed(2)}`
               : "set during approval"}
           </Text>
         </View>

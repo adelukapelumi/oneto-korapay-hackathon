@@ -17,6 +17,7 @@ describe('CashoutController', () => {
     getRecentCashouts: jest.fn(),
     approveCashout: jest.fn(),
     handlePayoutWebhook: jest.fn(),
+    getConfiguredPayoutMode: jest.fn(() => 'korapay_api'),
   };
 
   const mockJwtService = {

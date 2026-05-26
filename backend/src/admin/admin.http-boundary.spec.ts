@@ -36,12 +36,15 @@ describe("Admin HTTP boundary", () => {
     deactivateMerchant: jest.fn(),
     reactivateMerchant: jest.fn(),
     getPendingCashouts: jest.fn(),
+    getCashoutOperations: jest.fn(),
     getOutboundIpDiagnostic: jest.fn(),
     getReconciliationReport: jest.fn(),
   };
 
   const mockCashoutService = {
     approveCashout: jest.fn(),
+    markManualCashoutPaid: jest.fn(),
+    cancelManualCashout: jest.fn(),
   };
 
   const mockRecoveryService = {
@@ -87,6 +90,15 @@ describe("Admin HTTP boundary", () => {
       ipv4: "203.0.113.10",
       auto: "2001:db8::10",
       checkedAt: "2026-05-25T00:00:00.000Z",
+    });
+    mockAdminService.getCashoutOperations.mockResolvedValue([{ id: "cashout_1" }]);
+    mockCashoutService.markManualCashoutPaid.mockResolvedValue({
+      success: true,
+      status: "COMPLETED",
+    });
+    mockCashoutService.cancelManualCashout.mockResolvedValue({
+      success: true,
+      status: "FAILED",
     });
 
     const moduleRef = await Test.createTestingModule({
@@ -254,6 +266,44 @@ describe("Admin HTTP boundary", () => {
       "u_merchant",
       { businessName: "Updated Cafe" },
       ADMIN_PAYLOAD.sub,
+    );
+  });
+
+  it("accepts GET /admin/cashouts/operations with admin session cookie", async () => {
+    const response = await request(app.getHttpServer())
+      .get("/admin/cashouts/operations")
+      .set("Cookie", `${ADMIN_SESSION_COOKIE_NAME}=${COOKIE_ADMIN_TOKEN}`)
+      .expect(200);
+
+    expect(response.body).toEqual({ cashouts: [{ id: "cashout_1" }] });
+    expect(mockAdminService.getCashoutOperations).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects POST /admin/cashouts/:id/mark-paid without admin CSRF header", async () => {
+    await request(app.getHttpServer())
+      .post("/admin/cashouts/cashout_1/mark-paid")
+      .set("Cookie", `${ADMIN_SESSION_COOKIE_NAME}=${COOKIE_ADMIN_TOKEN}`)
+      .set("Origin", ALLOWED_ORIGIN)
+      .send({ externalReference: "bank_ref_1" })
+      .expect(403);
+
+    expect(mockCashoutService.markManualCashoutPaid).not.toHaveBeenCalled();
+  });
+
+  it("allows POST /admin/cashouts/:id/mark-paid with cookie auth, allowlisted Origin and CSRF header", async () => {
+    const response = await request(app.getHttpServer())
+      .post("/admin/cashouts/cashout_1/mark-paid")
+      .set("Cookie", `${ADMIN_SESSION_COOKIE_NAME}=${COOKIE_ADMIN_TOKEN}`)
+      .set("Origin", ALLOWED_ORIGIN)
+      .set("X-Oneto-Admin-CSRF", "1")
+      .send({ externalReference: "bank_ref_1", note: "sent" })
+      .expect(201);
+
+    expect(response.body).toEqual({ success: true, status: "COMPLETED" });
+    expect(mockCashoutService.markManualCashoutPaid).toHaveBeenCalledWith(
+      "cashout_1",
+      ADMIN_PAYLOAD.sub,
+      { externalReference: "bank_ref_1", note: "sent" },
     );
   });
 });
