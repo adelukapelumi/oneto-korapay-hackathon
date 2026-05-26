@@ -73,6 +73,9 @@ export type PendingCashout = {
   korapayPayoutFeeDeductedFromRecipient: boolean | null;
   netPayoutKobo: string | null;
   korapayTransferAmountKobo: string | null;
+  amountToPayKobo: string | null;
+  payoutMode: "korapay_api" | "manual" | string;
+  manualPayoutRequired: boolean;
   requestedAt: string;
   status: string;
   cashoutBankName: string;

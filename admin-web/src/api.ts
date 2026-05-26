@@ -149,11 +149,60 @@ export async function getPendingCashouts(onAuthFailure: OnAuthFailure) {
   return result.cashouts;
 }
 
+export async function getCashoutOperations(onAuthFailure: OnAuthFailure) {
+  const result = await request<{ cashouts: PendingCashout[] }>(
+    "/admin/cashouts/operations",
+    {
+      method: "GET",
+    },
+    onAuthFailure,
+  );
+
+  return result.cashouts;
+}
+
 export function approveCashout(id: string, onAuthFailure: OnAuthFailure) {
-  return request<{ success: boolean; status: string; failureReason: string | null }>(`/admin/cashouts/${id}/approve`, {
-    method: "POST",
-    requiresCsrf: true,
-  }, onAuthFailure);
+  return request<{
+    success: boolean;
+    status: string;
+    failureReason: string | null;
+    payoutMode: "korapay_api" | "manual" | string;
+    amountToPayKobo: string | null;
+  }>(
+    `/admin/cashouts/${id}/approve`,
+    {
+      method: "POST",
+      requiresCsrf: true,
+    },
+    onAuthFailure,
+  );
+}
+
+export function markManualCashoutPaid(
+  id: string,
+  input: { externalReference: string; note?: string },
+  onAuthFailure: OnAuthFailure,
+) {
+  return request<{ success: boolean; status: string }>(
+    `/admin/cashouts/${id}/mark-paid`,
+    {
+      method: "POST",
+      requiresCsrf: true,
+      body: JSON.stringify(input),
+    },
+    onAuthFailure,
+  );
+}
+
+export function cancelManualCashout(id: string, onAuthFailure: OnAuthFailure) {
+  return request<{ success: boolean; status: string; failureReason: string }>(
+    `/admin/cashouts/${id}/cancel-manual`,
+    {
+      method: "POST",
+      requiresCsrf: true,
+    },
+    onAuthFailure,
+  );
 }
 
 export async function getMerchants(onAuthFailure: OnAuthFailure) {

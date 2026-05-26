@@ -83,6 +83,7 @@ export default function CashoutScreen(): React.ReactElement {
     useState<CashoutBalanceFetchState>("offline_unconfirmed");
   const [activeCashout, setActiveCashout] =
     useState<ActiveCashoutSummary | null>(null);
+  const [activeCashoutPayoutMode, setActiveCashoutPayoutMode] = useState<string | null>(null);
   const refreshInFlightRef = useRef(false);
   const isAuthed = state.status === "authed";
 
@@ -112,9 +113,13 @@ export default function CashoutScreen(): React.ReactElement {
         ...getPendingIncomingSummary(),
       });
       const nextActiveCashout = getActiveCashoutSummary(cashouts);
+      const nextActiveCashoutMode =
+        cashouts.find((cashout) => ["PENDING", "APPROVED", "PROCESSING"].includes(cashout.status))
+          ?.payoutMode ?? null;
 
       setProjection(nextProjection);
       setActiveCashout(nextActiveCashout);
+      setActiveCashoutPayoutMode(nextActiveCashoutMode);
       setBalanceFetchState("confirmed");
       setLocalState("verified_balance_kobo", fresh.verifiedBalanceKobo);
       setLocalState("last_sync_at", new Date().toISOString());
@@ -133,6 +138,7 @@ export default function CashoutScreen(): React.ReactElement {
         }),
       );
       setActiveCashout(null);
+      setActiveCashoutPayoutMode(null);
       if (err instanceof NetworkError) {
         setBalanceFetchState("offline_unconfirmed");
         setError("Connect to the internet to confirm your cashout balance.");
@@ -201,6 +207,7 @@ export default function CashoutScreen(): React.ReactElement {
         grossAmountKobo: Number(res.grossAmountKobo),
         status: res.status,
       });
+      setActiveCashoutPayoutMode(res.payoutMode ?? null);
       setSuccessData(res);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -251,7 +258,9 @@ export default function CashoutScreen(): React.ReactElement {
           ) : null}
           {activeCashout ? (
             <Text style={[styles.balanceNote, { color: t.textSec }]}>
-              Cashout pending: {"\u20A6"}{(activeCashout.amountKobo / 100).toFixed(2)} requested.
+              {activeCashoutPayoutMode === "manual"
+                ? "Cashout requested. Waiting for admin manual payout."
+                : `Cashout pending: ${"\u20A6"}${(activeCashout.amountKobo / 100).toFixed(2)} requested.`}
             </Text>
           ) : null}
           {balanceProjection.hasPendingSync ? (
@@ -339,15 +348,22 @@ export default function CashoutScreen(): React.ReactElement {
                 </Text>
               </View>
               <View style={styles.breakdownRow}>
-                <Text style={[styles.breakdownLabel, { color: t.textSec }]}>Amount sent to Korapay</Text>
+                <Text style={[styles.breakdownLabel, { color: t.textSec }]}>
+                  {successData.payoutMode === "manual" ? "Amount to manually pay" : "Amount sent to Korapay"}
+                </Text>
                 <Text style={[styles.breakdownValue, { color: t.textSec }]}>
-                  {formatKobo(successData.korapayTransferAmountKobo)}
+                  {formatKobo(successData.amountToPayKobo ?? successData.korapayTransferAmountKobo)}
                 </Text>
               </View>
             </View>
             <View style={styles.statusBadge}>
               <Text style={styles.statusBadgeText}>⏳ {successData.status}</Text>
             </View>
+            {successData.payoutMode === "manual" ? (
+              <Text style={[styles.balanceNote, { color: t.textSec }]}>
+                Waiting for admin manual payout.
+              </Text>
+            ) : null}
             <Pressable
               style={({ pressed }) => [
                 styles.historyButton,

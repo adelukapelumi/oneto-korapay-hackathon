@@ -4,11 +4,12 @@ import { CashoutController } from './cashout.controller';
 import { PrismaModule } from '../prisma/prisma.module';
 import { AuthModule } from '../auth/auth.module';
 import { TopupModule } from '../topup/topup.module';
+import { AdminCashoutNotificationService } from './admin-cashout-notification.service';
 
 @Module({
   imports: [PrismaModule, AuthModule, TopupModule],
   controllers: [CashoutController],
-  providers: [CashoutService],
+  providers: [CashoutService, AdminCashoutNotificationService],
   exports: [CashoutService],
 })
 export class CashoutModule {}

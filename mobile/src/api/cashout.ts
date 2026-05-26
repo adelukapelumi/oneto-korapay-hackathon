@@ -13,6 +13,9 @@ const CashoutSchema = z.object({
   korapayPayoutFeeDeductedFromRecipient: z.boolean().nullable(),
   netPayoutKobo: z.string().nullable(),
   korapayTransferAmountKobo: z.string().nullable(),
+  amountToPayKobo: z.string().nullable().optional(),
+  payoutMode: z.string().optional(),
+  manualPayoutRequired: z.boolean().optional(),
   status: z.string(),        // PENDING, PROCESSING, COMPLETED, FAILED
   requestedAt: z.string(),
 });

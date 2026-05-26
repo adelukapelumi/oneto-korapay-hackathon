@@ -26,6 +26,10 @@ import {
   RejectRecoveryRequestSchema,
 } from "../recovery/recovery.schemas";
 import {
+  AdminCashoutIdParamDto,
+  AdminCashoutIdParamSchema,
+  AdminMarkCashoutPaidDto,
+  AdminMarkCashoutPaidSchema,
   AdminMerchantUserIdParamDto,
   AdminMerchantUserIdParamSchema,
   CreateAdminMerchantDto,
@@ -140,6 +144,11 @@ export class AdminController {
     return { cashouts: await this.adminService.getPendingCashouts() };
   }
 
+  @Get("cashouts/operations")
+  async getCashoutOperations() {
+    return { cashouts: await this.adminService.getCashoutOperations() };
+  }
+
   @Get("network/outbound-ip")
   async getOutboundIpDiagnostic() {
     return this.adminService.getOutboundIpDiagnostic();
@@ -193,12 +202,44 @@ export class AdminController {
   }
 
   @Post("cashouts/:id/approve")
-  async approveCashout(@Param("id") id: string, @Req() req: AuthenticatedRequest) {
+  async approveCashout(
+    @Param(new ZodValidationPipe(AdminCashoutIdParamSchema))
+    params: AdminCashoutIdParamDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
     const adminUserId = req.user?.sub;
     if (!adminUserId) {
       throw new UnauthorizedException("Missing authenticated admin context");
     }
-    return this.cashoutService.approveCashout(id, adminUserId);
+    return this.cashoutService.approveCashout(params.id, adminUserId);
+  }
+
+  @Post("cashouts/:id/mark-paid")
+  async markCashoutPaid(
+    @Param(new ZodValidationPipe(AdminCashoutIdParamSchema))
+    params: AdminCashoutIdParamDto,
+    @Body(new ZodValidationPipe(AdminMarkCashoutPaidSchema))
+    body: AdminMarkCashoutPaidDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const adminUserId = req.user?.sub;
+    if (!adminUserId) {
+      throw new UnauthorizedException("Missing authenticated admin context");
+    }
+    return this.cashoutService.markManualCashoutPaid(params.id, adminUserId, body);
+  }
+
+  @Post("cashouts/:id/cancel-manual")
+  async cancelManualCashout(
+    @Param(new ZodValidationPipe(AdminCashoutIdParamSchema))
+    params: AdminCashoutIdParamDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const adminUserId = req.user?.sub;
+    if (!adminUserId) {
+      throw new UnauthorizedException("Missing authenticated admin context");
+    }
+    return this.cashoutService.cancelManualCashout(params.id, adminUserId);
   }
 
   @Get("reconciliation-report")

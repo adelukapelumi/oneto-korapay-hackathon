@@ -1,5 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
-import { approveCashout, getPendingCashouts } from "../api";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  approveCashout,
+  cancelManualCashout,
+  getCashoutOperations,
+  markManualCashoutPaid,
+} from "../api";
 import { useAuth } from "../auth";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { EmptyState } from "../components/EmptyState";
@@ -24,82 +29,161 @@ function formatOptionalNgnFromKobo(amountKobo: string | null, fallback: string) 
   return amountKobo === null ? fallback : formatNgnFromKobo(amountKobo);
 }
 
-function formatKorapayFeeStatus(cashout: PendingCashout) {
-  if (cashout.korapayPayoutFeeBearer === "MERCHANT") {
-    return formatOptionalNgnFromKobo(cashout.korapayPayoutFeeKobo, "pending");
-  }
-
-  if (cashout.korapayPayoutFeeBearer === "ONETO" && cashout.korapayPayoutFeeKobo) {
-    return `${formatNgnFromKobo(cashout.korapayPayoutFeeKobo)} recorded as processor fee`;
-  }
-
-  return "Korapay payout fee pending confirmation.";
+function getAmountToPayKobo(cashout: PendingCashout): string | null {
+  return cashout.amountToPayKobo ?? cashout.korapayTransferAmountKobo;
 }
 
-function formatFinalMerchantPayout(cashout: PendingCashout) {
-  if (cashout.korapayPayoutFeeBearer === "UNKNOWN") {
-    return "pending payout fee confirmation";
-  }
-
-  return formatOptionalNgnFromKobo(cashout.netPayoutKobo, "pending payout fee confirmation");
+function formatPayoutMode(mode: PendingCashout["payoutMode"]) {
+  return mode === "manual" ? "manual" : "korapay_api";
 }
 
 export function PendingCashoutsPage() {
   const { markAnonymous } = useAuth();
   const [cashouts, setCashouts] = useState<PendingCashout[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [isApproving, setIsApproving] = useState(false);
-  const [approvingCashoutId, setApprovingCashoutId] = useState<string | null>(null);
-  const [selectedCashout, setSelectedCashout] = useState<PendingCashout | null>(null);
+  const [isWorking, setIsWorking] = useState(false);
+  const [workingCashoutId, setWorkingCashoutId] = useState<string | null>(null);
+  const [selectedApprovalCashout, setSelectedApprovalCashout] = useState<PendingCashout | null>(null);
+  const [selectedMarkPaidCashout, setSelectedMarkPaidCashout] = useState<PendingCashout | null>(null);
+  const [selectedCancelCashout, setSelectedCancelCashout] = useState<PendingCashout | null>(null);
+  const [externalReference, setExternalReference] = useState("");
+  const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const loadPendingCashouts = useCallback(async () => {
+  const loadCashoutOperations = useCallback(async () => {
     setIsLoading(true);
     setError(null);
 
     try {
-      const data = await getPendingCashouts(markAnonymous);
+      const data = await getCashoutOperations(markAnonymous);
       setCashouts(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load pending cashouts.");
+      setError(err instanceof Error ? err.message : "Failed to load cashout operations.");
     } finally {
       setIsLoading(false);
     }
   }, [markAnonymous]);
 
   useEffect(() => {
-    void loadPendingCashouts();
-  }, [loadPendingCashouts]);
+    void loadCashoutOperations();
+  }, [loadCashoutOperations]);
+
+  const pendingCashouts = useMemo(
+    () => cashouts.filter((cashout) => cashout.status === "PENDING"),
+    [cashouts],
+  );
+  const manualProcessingCashouts = useMemo(
+    () =>
+      cashouts.filter(
+        (cashout) =>
+          cashout.status === "PROCESSING" &&
+          (cashout.manualPayoutRequired || cashout.payoutMode === "manual"),
+      ),
+    [cashouts],
+  );
 
   const handleApprove = async () => {
-    if (!selectedCashout) {
+    if (!selectedApprovalCashout) {
       return;
     }
 
-    setIsApproving(true);
-    setApprovingCashoutId(selectedCashout.id);
+    setIsWorking(true);
+    setWorkingCashoutId(selectedApprovalCashout.id);
     setError(null);
     setNotice(null);
 
     try {
-      const approvedCashoutId = selectedCashout.id;
+      const approvedCashoutId = selectedApprovalCashout.id;
       const result = await approveCashout(approvedCashoutId, markAnonymous);
-      setCashouts((existingCashouts) =>
-        existingCashouts.filter((cashout) => cashout.id !== approvedCashoutId),
-      );
-      setSelectedCashout(null);
+      setSelectedApprovalCashout(null);
+
       if (result.status === "FAILED") {
         setNotice(`Cashout failed: ${result.failureReason ?? "payout_gateway_error"}`);
+      } else if (result.payoutMode === "manual") {
+        const manualAmount =
+          result.amountToPayKobo ?? getAmountToPayKobo(selectedApprovalCashout) ?? "0";
+        setNotice(
+          `Manual payout required. Pay ${formatNgnFromKobo(
+            manualAmount,
+          )} to merchant, then mark as paid.`,
+        );
       } else {
-        setNotice("Cashout approval submitted; payout processing");
+        setNotice("Cashout approval submitted; payout processing.");
       }
-      await loadPendingCashouts();
+
+      await loadCashoutOperations();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to approve cashout.");
     } finally {
-      setIsApproving(false);
-      setApprovingCashoutId(null);
+      setIsWorking(false);
+      setWorkingCashoutId(null);
+    }
+  };
+
+  const openMarkPaidModal = (cashout: PendingCashout) => {
+    setExternalReference("");
+    setNote("");
+    setSelectedMarkPaidCashout(cashout);
+    setError(null);
+    setNotice(null);
+  };
+
+  const handleMarkPaid = async () => {
+    if (!selectedMarkPaidCashout) {
+      return;
+    }
+
+    if (externalReference.trim().length === 0) {
+      setError("External reference is required.");
+      return;
+    }
+
+    setIsWorking(true);
+    setWorkingCashoutId(selectedMarkPaidCashout.id);
+    setError(null);
+    setNotice(null);
+
+    try {
+      await markManualCashoutPaid(
+        selectedMarkPaidCashout.id,
+        {
+          externalReference: externalReference.trim(),
+          note: note.trim() || undefined,
+        },
+        markAnonymous,
+      );
+      setSelectedMarkPaidCashout(null);
+      setNotice("Manual cashout marked as paid.");
+      await loadCashoutOperations();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to mark cashout as paid.");
+    } finally {
+      setIsWorking(false);
+      setWorkingCashoutId(null);
+    }
+  };
+
+  const handleCancelManualPayout = async () => {
+    if (!selectedCancelCashout) {
+      return;
+    }
+
+    setIsWorking(true);
+    setWorkingCashoutId(selectedCancelCashout.id);
+    setError(null);
+    setNotice(null);
+
+    try {
+      await cancelManualCashout(selectedCancelCashout.id, markAnonymous);
+      setSelectedCancelCashout(null);
+      setNotice("Manual payout cancelled and merchant reservation reversed.");
+      await loadCashoutOperations();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to cancel manual payout.");
+    } finally {
+      setIsWorking(false);
+      setWorkingCashoutId(null);
     }
   };
 
@@ -107,7 +191,7 @@ export function PendingCashoutsPage() {
     return (
       <section className="page-section">
         <div className="panel">
-          <p className="supporting-text">Loading pending cashouts...</p>
+          <p className="supporting-text">Loading cashout operations...</p>
         </div>
       </section>
     );
@@ -118,15 +202,18 @@ export function PendingCashoutsPage() {
       <div className="page-header">
         <div className="page-header-copy">
           <p className="page-eyebrow">Cashout review</p>
-          <h1 className="page-title">Pending Cashouts</h1>
+          <h1 className="page-title">Cashout Operations</h1>
           <p className="page-description">
-            Review merchant payout requests carefully. Cashout approvals should only happen after
-            reconciliation health has been checked.
+            Approve pending requests, execute manual payouts, and only mark paid after real transfer
+            completion.
           </p>
         </div>
         <div className="page-meta">
           <span className="status-pill">
-            {cashouts.length} {cashouts.length === 1 ? "request" : "requests"}
+            {pendingCashouts.length} pending
+          </span>
+          <span className="status-pill">
+            {manualProcessingCashouts.length} manual processing
           </span>
         </div>
       </div>
@@ -134,19 +221,18 @@ export function PendingCashoutsPage() {
       {notice ? <p className="message">{notice}</p> : null}
       {error ? <p className="error">{error}</p> : null}
 
-      {cashouts.length === 0 ? (
+      {pendingCashouts.length === 0 ? (
         <EmptyState
-          title="No cashouts waiting for approval"
-          description="Merchant cashout requests will appear here after they have been submitted and are waiting for manual admin review."
+          title="No pending cashouts"
+          description="Merchant cashout requests awaiting approval will appear here."
         />
       ) : (
         <div className="panel table-card">
           <div className="table-card-header">
             <div>
-              <h2 className="table-title">Approval queue</h2>
+              <h2 className="table-title">Pending approvals</h2>
               <p className="table-note">
-                Amounts below are shown in naira for review while keeping the existing backend
-                approval flow unchanged.
+                In manual mode, approval reserves balances and creates ledger entries before transfer.
               </p>
             </div>
           </div>
@@ -156,15 +242,15 @@ export function PendingCashoutsPage() {
               <thead>
                 <tr>
                   <th>Merchant</th>
+                  <th>Payout mode</th>
                   <th>Payout account</th>
-                  <th>Amount</th>
+                  <th>Amounts</th>
                   <th>Requested</th>
-                  <th>Status</th>
                   <th>Action</th>
                 </tr>
               </thead>
               <tbody>
-                {cashouts.map((cashout) => (
+                {pendingCashouts.map((cashout) => (
                   <tr key={cashout.id}>
                     <td>
                       <div className="table-primary">
@@ -172,6 +258,11 @@ export function PendingCashoutsPage() {
                         <span className="table-secondary mono">{cashout.merchantUserId}</span>
                         <span className="table-secondary mono">{cashout.id}</span>
                       </div>
+                    </td>
+                    <td>
+                      <span className="table-badge table-badge-warning">
+                        {formatPayoutMode(cashout.payoutMode)}
+                      </span>
                     </td>
                     <td>
                       <div className="table-primary">
@@ -187,28 +278,23 @@ export function PendingCashoutsPage() {
                           Oneto fee: {formatOptionalNgnFromKobo(cashout.onetoFeeKobo, "pending")}
                         </span>
                         <span className="table-secondary">
-                          Korapay fee: {formatKorapayFeeStatus(cashout)}
-                        </span>
-                        <span className="table-secondary">
-                          Final merchant payout: {formatFinalMerchantPayout(cashout)}
-                        </span>
-                        <span className="table-secondary">
-                          Amount sent to Korapay:{" "}
-                          {formatOptionalNgnFromKobo(cashout.korapayTransferAmountKobo, "set during approval")}
+                          Amount to pay:{" "}
+                          {formatOptionalNgnFromKobo(getAmountToPayKobo(cashout), "set during approval")}
                         </span>
                       </div>
                     </td>
                     <td>{new Date(cashout.requestedAt).toLocaleString()}</td>
-                    <td>
-                      <span className="table-badge table-badge-warning">{cashout.status}</span>
-                    </td>
                     <td className="table-action">
                       <button
                         type="button"
-                        onClick={() => setSelectedCashout(cashout)}
-                        disabled={isApproving}
+                        onClick={() => setSelectedApprovalCashout(cashout)}
+                        disabled={isWorking}
                       >
-                        {isApproving && approvingCashoutId === cashout.id ? "Approving..." : "Approve cashout"}
+                        {isWorking && workingCashoutId === cashout.id
+                          ? "Approving..."
+                          : cashout.payoutMode === "manual"
+                            ? "Approve for manual payout"
+                            : "Approve cashout"}
                       </button>
                     </td>
                   </tr>
@@ -219,88 +305,206 @@ export function PendingCashoutsPage() {
         </div>
       )}
 
+      {manualProcessingCashouts.length > 0 ? (
+        <div className="panel table-card">
+          <div className="table-card-header">
+            <div>
+              <h2 className="table-title">Manual payout queue</h2>
+              <p className="table-note">
+                Manual payout required. Pay merchant first, then mark as paid.
+              </p>
+            </div>
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Merchant</th>
+                  <th>Amount to pay</th>
+                  <th>Payout account</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {manualProcessingCashouts.map((cashout) => (
+                  <tr key={cashout.id}>
+                    <td>
+                      <div className="table-primary">
+                        <span>{cashout.merchantBusinessName ?? cashout.merchantUserId}</span>
+                        <span className="table-secondary mono">{cashout.id}</span>
+                      </div>
+                    </td>
+                    <td>{formatOptionalNgnFromKobo(getAmountToPayKobo(cashout), "pending")}</td>
+                    <td>
+                      <div className="table-primary">
+                        <span>{cashout.cashoutAccountName}</span>
+                        <span className="table-secondary">{cashout.cashoutBankName}</span>
+                        <span className="table-secondary">{cashout.cashoutAccountNumber}</span>
+                      </div>
+                    </td>
+                    <td>
+                      <span className="table-badge table-badge-warning">{cashout.status}</span>
+                    </td>
+                    <td className="table-action">
+                      <button
+                        type="button"
+                        onClick={() => openMarkPaidModal(cashout)}
+                        disabled={isWorking}
+                      >
+                        Mark as paid
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary"
+                        onClick={() => setSelectedCancelCashout(cashout)}
+                        disabled={isWorking}
+                      >
+                        Cancel manual payout
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
+
       <ConfirmModal
-        open={selectedCashout !== null}
-        title="Approve merchant cashout"
+        open={selectedApprovalCashout !== null}
+        title={selectedApprovalCashout?.payoutMode === "manual" ? "Approve for manual payout" : "Approve merchant cashout"}
         body={
-          selectedCashout ? (
+          selectedApprovalCashout ? (
             <>
               <p>
-                This approval triggers the existing cashout approval flow for{" "}
-                <strong>
-                  {selectedCashout.merchantBusinessName ?? selectedCashout.merchantUserId}
-                </strong>
-                .
-              </p>
-              <p>
-                Approval debits the merchant by the gross settled balance. The backend sends gross
-                minus Oneto's service fee to Korapay, then records Korapay's payout fee when the
-                gateway confirms it.
-              </p>
-              <p>
-                Treat Korapay's payout fee as merchant-borne only if the fee is deducted from the
-                transfer amount. If Korapay charges Oneto separately, handle it as a processor
-                expense until a reliable fee-before-payout method exists.
+                This approval reserves merchant funds and updates the ledger atomically. In manual
+                payout mode, do the real transfer outside Oneto, then mark as paid.
               </p>
               <ul className="modal-detail-list">
                 <li>
                   <span className="modal-detail-label">Cashout ID</span>
-                  <span className="modal-detail-value mono">{selectedCashout.id}</span>
+                  <span className="modal-detail-value mono">{selectedApprovalCashout.id}</span>
                 </li>
                 <li>
-                  <span className="modal-detail-label">Merchant</span>
-                  <span className="modal-detail-value">
-                    {selectedCashout.merchantBusinessName ?? selectedCashout.merchantUserId}
-                  </span>
+                  <span className="modal-detail-label">Payout mode</span>
+                  <span className="modal-detail-value">{formatPayoutMode(selectedApprovalCashout.payoutMode)}</span>
                 </li>
                 <li>
                   <span className="modal-detail-label">Gross cashout</span>
                   <span className="modal-detail-value">
-                    {formatNgnFromKobo(selectedCashout.grossAmountKobo)}
+                    {formatNgnFromKobo(selectedApprovalCashout.grossAmountKobo)}
                   </span>
                 </li>
                 <li>
                   <span className="modal-detail-label">Oneto fee</span>
                   <span className="modal-detail-value">
-                    {formatOptionalNgnFromKobo(selectedCashout.onetoFeeKobo, "pending")} at{" "}
-                    {selectedCashout.onetoFeeBps / 100}%
+                    {formatOptionalNgnFromKobo(selectedApprovalCashout.onetoFeeKobo, "pending")}
                   </span>
                 </li>
                 <li>
-                <span className="modal-detail-label">Korapay payout fee</span>
-                <span className="modal-detail-value">
-                    {formatKorapayFeeStatus(selectedCashout)}
-                </span>
-              </li>
-              <li>
-                  <span className="modal-detail-label">Final merchant payout</span>
+                  <span className="modal-detail-label">Amount to pay</span>
                   <span className="modal-detail-value">
-                    {formatFinalMerchantPayout(selectedCashout)}
-                  </span>
-                </li>
-                <li>
-                  <span className="modal-detail-label">Amount sent to Korapay</span>
-                  <span className="modal-detail-value">
-                    {formatOptionalNgnFromKobo(
-                      selectedCashout.korapayTransferAmountKobo,
-                      "set during approval",
-                    )}
+                    {formatOptionalNgnFromKobo(getAmountToPayKobo(selectedApprovalCashout), "set during approval")}
                   </span>
                 </li>
                 <li>
                   <span className="modal-detail-label">Payout account</span>
                   <span className="modal-detail-value">
-                    {selectedCashout.cashoutAccountName} / {selectedCashout.cashoutAccountNumber}
+                    {selectedApprovalCashout.cashoutAccountName} / {selectedApprovalCashout.cashoutAccountNumber}
                   </span>
                 </li>
               </ul>
             </>
           ) : null
         }
-        confirmLabel="Approve cashout"
-        isBusy={isApproving}
+        confirmLabel={
+          selectedApprovalCashout?.payoutMode === "manual"
+            ? "Approve for manual payout"
+            : "Approve cashout"
+        }
+        isBusy={isWorking}
         onConfirm={handleApprove}
-        onCancel={() => setSelectedCashout(null)}
+        onCancel={() => setSelectedApprovalCashout(null)}
+      />
+
+      <ConfirmModal
+        open={selectedMarkPaidCashout !== null}
+        title="Mark manual payout as paid"
+        body={
+          selectedMarkPaidCashout ? (
+            <>
+              <p>
+                Only mark paid after you have actually sent the bank transfer.
+              </p>
+              <ul className="modal-detail-list">
+                <li>
+                  <span className="modal-detail-label">Cashout ID</span>
+                  <span className="modal-detail-value mono">{selectedMarkPaidCashout.id}</span>
+                </li>
+                <li>
+                  <span className="modal-detail-label">Amount to pay</span>
+                  <span className="modal-detail-value">
+                    {formatOptionalNgnFromKobo(getAmountToPayKobo(selectedMarkPaidCashout), "pending")}
+                  </span>
+                </li>
+              </ul>
+              <div className="field-group">
+                <label htmlFor="externalReference">External reference</label>
+                <input
+                  id="externalReference"
+                  value={externalReference}
+                  onChange={(event) => setExternalReference(event.target.value)}
+                  placeholder="bank transfer reference"
+                />
+              </div>
+              <div className="field-group">
+                <label htmlFor="markPaidNote">Note (optional)</label>
+                <textarea
+                  id="markPaidNote"
+                  rows={3}
+                  value={note}
+                  onChange={(event) => setNote(event.target.value)}
+                  placeholder="optional operator note"
+                />
+              </div>
+            </>
+          ) : null
+        }
+        confirmLabel="Mark as paid"
+        isBusy={isWorking}
+        onConfirm={handleMarkPaid}
+        onCancel={() => setSelectedMarkPaidCashout(null)}
+      />
+
+      <ConfirmModal
+        open={selectedCancelCashout !== null}
+        title="Cancel manual payout"
+        body={
+          selectedCancelCashout ? (
+            <>
+              <p>
+                Only cancel if money has not been sent. This reverses the merchant reservation.
+              </p>
+              <ul className="modal-detail-list">
+                <li>
+                  <span className="modal-detail-label">Cashout ID</span>
+                  <span className="modal-detail-value mono">{selectedCancelCashout.id}</span>
+                </li>
+                <li>
+                  <span className="modal-detail-label">Amount to reverse</span>
+                  <span className="modal-detail-value">
+                    {formatNgnFromKobo(selectedCancelCashout.grossAmountKobo)}
+                  </span>
+                </li>
+              </ul>
+            </>
+          ) : null
+        }
+        confirmLabel="Cancel manual payout"
+        isBusy={isWorking}
+        onConfirm={handleCancelManualPayout}
+        onCancel={() => setSelectedCancelCashout(null)}
       />
     </section>
   );

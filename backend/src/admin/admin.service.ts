@@ -11,6 +11,10 @@ import { z } from "zod";
 import { InvalidEmailError, normalizeEmail } from "../common/email";
 import { PrismaService } from "../prisma/prisma.service";
 import {
+  getCashoutPayoutMode,
+  parseManualPayoutRequiredMetadata,
+} from "../cashout/manual-payout-metadata";
+import {
   CreateAdminMerchantDto,
   UpdateAdminMerchantDto,
 } from "./admin.schemas";
@@ -259,6 +263,90 @@ export class AdminService {
       cashoutAccountNumber: cashout.cashoutAccountNumber,
       cashoutAccountName: cashout.cashoutAccountName,
     }));
+  }
+
+  async getCashoutOperations() {
+    const configuredPayoutMode = getCashoutPayoutMode(
+      this.configService?.get<string>("CASHOUT_PAYOUT_MODE"),
+    );
+
+    const cashouts = await this.prisma.cashout.findMany({
+      where: {
+        status: {
+          in: [CashoutStatus.PENDING, CashoutStatus.PROCESSING],
+        },
+      },
+      orderBy: { requestedAt: "asc" },
+      select: {
+        id: true,
+        merchantUserId: true,
+        amountKobo: true,
+        grossAmountKobo: true,
+        onetoFeeBps: true,
+        onetoFeeKobo: true,
+        korapayPayoutFeeKobo: true,
+        korapayPayoutFeeBearer: true,
+        korapayPayoutFeeDeductedFromRecipient: true,
+        netPayoutKobo: true,
+        korapayTransferAmountKobo: true,
+        requestedAt: true,
+        status: true,
+        cashoutBankName: true,
+        cashoutBankCode: true,
+        cashoutAccountNumber: true,
+        cashoutAccountName: true,
+        korapayResponse: true,
+        merchant: {
+          select: {
+            merchantProfile: {
+              select: {
+                businessName: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return cashouts
+      .filter((cashout) => {
+        if (cashout.status === CashoutStatus.PENDING) {
+          return true;
+        }
+
+        return parseManualPayoutRequiredMetadata(cashout.korapayResponse) !== null;
+      })
+      .map((cashout) => {
+        const manualMetadata = parseManualPayoutRequiredMetadata(cashout.korapayResponse);
+        const payoutMode = manualMetadata?.payoutMode ?? configuredPayoutMode;
+
+        return {
+          id: cashout.id,
+          merchantUserId: cashout.merchantUserId,
+          merchantBusinessName: cashout.merchant.merchantProfile?.businessName ?? null,
+          amountKobo: cashout.amountKobo.toString(),
+          grossAmountKobo: (cashout.grossAmountKobo ?? cashout.amountKobo).toString(),
+          onetoFeeBps: cashout.onetoFeeBps,
+          onetoFeeKobo: cashout.onetoFeeKobo?.toString() ?? null,
+          korapayPayoutFeeKobo: cashout.korapayPayoutFeeKobo?.toString() ?? null,
+          korapayPayoutFeeBearer: cashout.korapayPayoutFeeBearer,
+          korapayPayoutFeeDeductedFromRecipient:
+            cashout.korapayPayoutFeeDeductedFromRecipient ?? null,
+          netPayoutKobo: cashout.netPayoutKobo?.toString() ?? null,
+          korapayTransferAmountKobo: cashout.korapayTransferAmountKobo?.toString() ?? null,
+          amountToPayKobo:
+            manualMetadata?.amountToPayKobo ?? cashout.korapayTransferAmountKobo?.toString() ?? null,
+          payoutMode,
+          manualPayoutRequired:
+            payoutMode === "manual" && cashout.status === CashoutStatus.PROCESSING,
+          requestedAt: cashout.requestedAt.toISOString(),
+          status: cashout.status,
+          cashoutBankName: cashout.cashoutBankName,
+          cashoutBankCode: cashout.cashoutBankCode,
+          cashoutAccountNumber: cashout.cashoutAccountNumber,
+          cashoutAccountName: cashout.cashoutAccountName,
+        };
+      });
   }
 
   async listMerchants() {

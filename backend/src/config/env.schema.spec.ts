@@ -109,6 +109,7 @@ describe("envSchema", () => {
       expect(result.data.OTP_STORE_BACKEND).toBe("memory");
       expect(result.data.THROTTLER_STORE_BACKEND).toBe("memory");
       expect(result.data.REDIS_KEY_PREFIX).toBe("oneto:dev");
+      expect(result.data.CASHOUT_PAYOUT_MODE).toBe("korapay_api");
     }
   });
 
@@ -155,6 +156,38 @@ describe("envSchema", () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.ADMIN_OUTBOUND_IP_DIAGNOSTIC_ENABLED).toBe("false");
+    }
+  });
+
+  it("accepts manual cashout payout mode", () => {
+    const result = envSchema.safeParse(
+      makeBaseEnv({
+        CASHOUT_PAYOUT_MODE: "manual",
+      }),
+    );
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.CASHOUT_PAYOUT_MODE).toBe("manual");
+    }
+  });
+
+  it("rejects invalid admin cashout notification email list", () => {
+    const result = envSchema.safeParse(
+      makeBaseEnv({
+        ADMIN_CASHOUT_NOTIFICATION_EMAILS: "admin@getoneto.com,not-an-email",
+      }),
+    );
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: ["ADMIN_CASHOUT_NOTIFICATION_EMAILS"],
+          }),
+        ]),
+      );
     }
   });
 });

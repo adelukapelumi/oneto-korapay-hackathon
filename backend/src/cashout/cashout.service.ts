@@ -5,6 +5,7 @@ import {
   BadRequestException,
   ConflictException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { KorapayGatewayError, KorapayService } from '../topup/korapay.service';
 import { Prisma, CashoutStatus, KorapayPayoutFeeBearer, LedgerEntryType } from '@prisma/client';
@@ -12,6 +13,14 @@ import * as crypto from 'crypto';
 import { z } from 'zod';
 import { MIN_CASHOUT_GROSS_KOBO, MIN_KORAPAY_TRANSFER_KOBO } from '@oneto/shared';
 import { tryNormalizeEmail } from '../common/email';
+import { AdminCashoutNotificationService } from './admin-cashout-notification.service';
+import {
+  buildManualPayoutRequiredMetadata,
+  type CashoutPayoutMode,
+  getCashoutPayoutMode,
+  parseManualPayoutRequiredMetadata,
+  withManualPayoutResponse,
+} from './manual-payout-metadata';
 
 const ONETO_SERVICE_FEE_BPS = 250;
 const BASIS_POINTS_DIVISOR = 10_000n;
@@ -72,13 +81,23 @@ export class CashoutService {
   private readonly OPERATING_USER_ID = 'u_operating';
   private readonly MIN_CASHOUT_GROSS_KOBO = BigInt(MIN_CASHOUT_GROSS_KOBO);
   private readonly MIN_KORAPAY_TRANSFER_KOBO = BigInt(MIN_KORAPAY_TRANSFER_KOBO);
+  private readonly payoutMode: CashoutPayoutMode;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly korapayService: KorapayService,
+    private readonly configService: ConfigService,
+    private readonly adminCashoutNotificationService: AdminCashoutNotificationService,
   ) {
+    this.payoutMode = getCashoutPayoutMode(
+      this.configService.get<string>('CASHOUT_PAYOUT_MODE'),
+    );
     // Periodically recover stuck cashouts that never reached terminal state
     setInterval(() => this.recoverStuckCashouts(), 5 * 60 * 1000).unref();
+  }
+
+  getConfiguredPayoutMode(): CashoutPayoutMode {
+    return this.payoutMode;
   }
 
   private calculateOnetoFeeKobo(grossAmountKobo: bigint): bigint {
@@ -378,7 +397,7 @@ export class CashoutService {
       throw new ConflictException('cashout_in_progress');
     }
 
-    return this.prisma.cashout.create({
+    const cashout = await this.prisma.cashout.create({
       data: {
         merchantUserId,
         amountKobo: grossAmountKobo,
@@ -397,6 +416,28 @@ export class CashoutService {
         cashoutAccountName: user.merchantProfile.cashoutAccountName,
       },
     });
+
+    try {
+      await this.adminCashoutNotificationService.sendNewCashoutRequestNotification({
+        cashoutId: cashout.id,
+        merchantUserId: cashout.merchantUserId,
+        merchantBusinessName: user.merchantProfile.businessName,
+        grossAmountKobo,
+        onetoFeeKobo,
+        amountToPayKobo: korapayTransferAmountKobo,
+        cashoutBankName: cashout.cashoutBankName,
+        cashoutAccountName: cashout.cashoutAccountName,
+        cashoutAccountNumber: cashout.cashoutAccountNumber,
+      });
+    } catch (error) {
+      this.logger.error(
+        `Failed admin cashout request notification for ${cashout.id}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+
+    return cashout;
   }
 
   async approveCashout(cashoutId: string, adminUserId: string) {
@@ -405,6 +446,7 @@ export class CashoutService {
       throw new ForbiddenException('Only admins can approve cashouts');
     }
 
+    const approvedAt = new Date();
     const korapayReference = `cashout_${crypto.randomBytes(12).toString('hex')}`;
 
     try {
@@ -420,7 +462,7 @@ export class CashoutService {
             },
             data: {
               status: CashoutStatus.PROCESSING,
-              approvedAt: new Date(),
+              approvedAt,
               approvedByUserId: adminUserId,
               korapayReference,
             },
@@ -445,19 +487,33 @@ export class CashoutService {
             existingDeductedFromRecipient: cashout.korapayPayoutFeeDeductedFromRecipient,
           });
 
+          const manualPayoutMetadata =
+            this.payoutMode === 'manual'
+              ? buildManualPayoutRequiredMetadata({
+                  amountToPayKobo: korapayTransferAmountKobo,
+                  approvedByUserId: adminUserId,
+                  approvedAtIso: approvedAt.toISOString(),
+                })
+              : null;
+
+          const cashoutUpdateData: Prisma.CashoutUpdateInput = {
+            amountKobo: grossAmountKobo,
+            grossAmountKobo,
+            onetoFeeBps,
+            onetoFeeKobo,
+            korapayTransferAmountKobo,
+            korapayPayoutFeeBearer: feeAccounting.korapayPayoutFeeBearer,
+            korapayPayoutFeeDeductedFromRecipient:
+              feeAccounting.korapayPayoutFeeDeductedFromRecipient,
+            netPayoutKobo: feeAccounting.netPayoutKobo,
+          };
+          if (manualPayoutMetadata !== null) {
+            cashoutUpdateData.korapayResponse = this.toJsonValue(manualPayoutMetadata);
+          }
+
           await tx.cashout.update({
             where: { id: cashout.id },
-            data: {
-              amountKobo: grossAmountKobo,
-              grossAmountKobo,
-              onetoFeeBps,
-              onetoFeeKobo,
-              korapayTransferAmountKobo,
-              korapayPayoutFeeBearer: feeAccounting.korapayPayoutFeeBearer,
-              korapayPayoutFeeDeductedFromRecipient:
-                feeAccounting.korapayPayoutFeeDeductedFromRecipient,
-              netPayoutKobo: feeAccounting.netPayoutKobo,
-            },
+            data: cashoutUpdateData,
           });
 
           // 2. Fetch merchant and check balance
@@ -547,13 +603,16 @@ export class CashoutService {
     }
 
     // Only reached if transaction committed successfully.
-    await this.initiateKorapayPayout(cashoutId, korapayReference);
+    if (this.payoutMode === 'korapay_api') {
+      await this.initiateKorapayPayout(cashoutId, korapayReference);
+    }
 
     const latestCashout = await this.prisma.cashout.findUnique({
       where: { id: cashoutId },
       select: {
         status: true,
         failureReason: true,
+        korapayTransferAmountKobo: true,
       },
     });
 
@@ -561,6 +620,8 @@ export class CashoutService {
       success: true,
       status: latestCashout?.status ?? CashoutStatus.PROCESSING,
       failureReason: latestCashout?.failureReason ?? null,
+      payoutMode: this.payoutMode,
+      amountToPayKobo: latestCashout?.korapayTransferAmountKobo?.toString() ?? null,
     };
   }
 
@@ -701,6 +762,182 @@ export class CashoutService {
         },
         { isolationLevel: 'Serializable' },
       );
+    }
+  }
+
+  async markManualCashoutPaid(
+    cashoutId: string,
+    adminUserId: string,
+    input: { externalReference: string; note?: string },
+  ) {
+    const admin = await this.prisma.user.findUnique({ where: { id: adminUserId } });
+    if (!admin || admin.role !== 'ADMIN') {
+      throw new ForbiddenException('Only admins can mark cashouts as paid');
+    }
+
+    const externalReference = input.externalReference.trim();
+    if (externalReference.length === 0) {
+      throw new BadRequestException('external_reference_required');
+    }
+    const note = input.note?.trim() || null;
+
+    const cashout = await this.prisma.cashout.findUnique({
+      where: { id: cashoutId },
+      select: {
+        id: true,
+        status: true,
+        korapayResponse: true,
+      },
+    });
+
+    if (!cashout || cashout.status !== CashoutStatus.PROCESSING) {
+      throw new BadRequestException('cashout_not_processing');
+    }
+
+    const manualMetadata = parseManualPayoutRequiredMetadata(cashout.korapayResponse);
+    if (manualMetadata === null) {
+      throw new BadRequestException('manual_payout_metadata_missing');
+    }
+
+    const markedPaidAt = new Date();
+    const transition = await this.prisma.cashout.updateMany({
+      where: {
+        id: cashout.id,
+        status: CashoutStatus.PROCESSING,
+      },
+      data: {
+        status: CashoutStatus.COMPLETED,
+        completedAt: markedPaidAt,
+        failureReason: null,
+        korapayResponse: this.toJsonValue(
+          withManualPayoutResponse(manualMetadata, {
+            externalReference,
+            note,
+            markedPaidByUserId: adminUserId,
+            markedPaidAtIso: markedPaidAt.toISOString(),
+          }),
+        ),
+      },
+    });
+
+    if (transition.count === 0) {
+      throw new BadRequestException('cashout_not_processing');
+    }
+
+    return {
+      success: true,
+      status: CashoutStatus.COMPLETED,
+      payoutMode: 'manual',
+    };
+  }
+
+  async cancelManualCashout(cashoutId: string, adminUserId: string) {
+    const admin = await this.prisma.user.findUnique({ where: { id: adminUserId } });
+    if (!admin || admin.role !== 'ADMIN') {
+      throw new ForbiddenException('Only admins can cancel manual cashouts');
+    }
+
+    try {
+      const cancelled = await this.prisma.$transaction(
+        async (tx) => {
+          const cashout = await tx.cashout.findUnique({
+            where: { id: cashoutId },
+            select: {
+              id: true,
+              merchantUserId: true,
+              amountKobo: true,
+              grossAmountKobo: true,
+              korapayReference: true,
+              korapayResponse: true,
+              status: true,
+            },
+          });
+
+          if (!cashout || cashout.status !== CashoutStatus.PROCESSING) {
+            throw new BadRequestException('cashout_not_processing');
+          }
+
+          const manualMetadata = parseManualPayoutRequiredMetadata(cashout.korapayResponse);
+          if (manualMetadata === null) {
+            throw new BadRequestException('manual_payout_metadata_missing');
+          }
+
+          const transition = await tx.cashout.updateMany({
+            where: { id: cashout.id, status: CashoutStatus.PROCESSING },
+            data: {
+              status: CashoutStatus.FAILED,
+              failureReason: 'manual_payout_cancelled',
+              korapayResponse: this.toJsonValue({
+                ...manualMetadata,
+                manualPayoutCancellation: {
+                  source: 'manual_payout_cancelled',
+                  cancelledByUserId: adminUserId,
+                  cancelledAt: new Date().toISOString(),
+                },
+              }),
+            },
+          });
+
+          if (transition.count === 0) {
+            throw new BadRequestException('cashout_not_processing');
+          }
+
+          const merchant = await tx.user.findUnique({ where: { id: cashout.merchantUserId } });
+          const operating = await tx.user.findUnique({ where: { id: this.OPERATING_USER_ID } });
+          if (!merchant || !operating) {
+            throw new BadRequestException('cashout_reversal_account_missing');
+          }
+
+          const grossAmountKobo = this.getGrossAmountKobo(cashout);
+          const reverseRef = `${cashout.korapayReference ?? `cashout_${cashout.id}`}_manual_cancel`;
+
+          const merchantBalanceAfter = merchant.verifiedBalanceKobo + grossAmountKobo;
+          await tx.ledgerEntry.create({
+            data: {
+              transactionId: reverseRef,
+              userId: merchant.id,
+              type: LedgerEntryType.CREDIT,
+              amountKobo: grossAmountKobo,
+              balanceAfterKobo: merchantBalanceAfter,
+              description: `Cashout manual cancellation refund ${cashout.id}`,
+            },
+          });
+          await tx.user.update({
+            where: { id: merchant.id },
+            data: { verifiedBalanceKobo: merchantBalanceAfter },
+          });
+
+          const operatingBalanceAfter = operating.verifiedBalanceKobo - grossAmountKobo;
+          await tx.ledgerEntry.create({
+            data: {
+              transactionId: reverseRef,
+              userId: operating.id,
+              type: LedgerEntryType.DEBIT,
+              amountKobo: grossAmountKobo,
+              balanceAfterKobo: operatingBalanceAfter,
+              description: `Cashout manual cancellation reversal from merchant ${merchant.id}`,
+            },
+          });
+          await tx.user.update({
+            where: { id: operating.id },
+            data: { verifiedBalanceKobo: operatingBalanceAfter },
+          });
+
+          return true;
+        },
+        { isolationLevel: 'Serializable' },
+      );
+
+      return {
+        success: cancelled,
+        status: CashoutStatus.FAILED,
+        failureReason: 'manual_payout_cancelled',
+      };
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      throw error;
     }
   }
 
@@ -858,6 +1095,7 @@ export class CashoutService {
         cashoutBankName: true,
         cashoutBankCode: true,
         cashoutAccountNumber: true,
+        korapayResponse: true,
       },
     });
   }

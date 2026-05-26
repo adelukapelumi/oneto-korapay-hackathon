@@ -15,6 +15,8 @@ const baseEnvSchema = z.object({
   KORAPAY_PUBLIC_KEY: z.string().optional(),
   KORAPAY_SECRET_KEY: z.string().optional(),
   KORAPAY_BASE_URL: z.string().default('https://api.korapay.com/merchant/api/v1'),
+  CASHOUT_PAYOUT_MODE: z.enum(['korapay_api', 'manual']).default('korapay_api'),
+  ADMIN_CASHOUT_NOTIFICATION_EMAILS: z.string().optional(),
   ADMIN_WEB_ORIGINS: z.string().optional(),
   ADMIN_OUTBOUND_IP_DIAGNOSTIC_ENABLED: z.enum(["true", "false"]).optional(),
 }).superRefine((data, ctx) => {
@@ -100,6 +102,24 @@ const baseEnvSchema = z.object({
         message: 'ADMIN_WEB_ORIGINS must be a comma-separated list of valid origins',
         path: ['ADMIN_WEB_ORIGINS'],
       });
+    }
+  }
+
+  if (data.ADMIN_CASHOUT_NOTIFICATION_EMAILS) {
+    for (const rawEmail of data.ADMIN_CASHOUT_NOTIFICATION_EMAILS.split(',')) {
+      const candidate = rawEmail.trim();
+      if (candidate.length === 0) {
+        continue;
+      }
+      const isValid = z.string().email().safeParse(candidate).success;
+      if (!isValid) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'ADMIN_CASHOUT_NOTIFICATION_EMAILS must be a comma-separated list of valid email addresses',
+          path: ['ADMIN_CASHOUT_NOTIFICATION_EMAILS'],
+        });
+        break;
+      }
     }
   }
 });

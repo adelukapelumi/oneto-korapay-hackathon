@@ -6,6 +6,7 @@ import { UserThrottlerGuard } from '../common/user-throttler.guard';
 import { Throttle } from '@nestjs/throttler';
 import type { CashoutStatus, KorapayPayoutFeeBearer } from '@prisma/client';
 import { MIN_CASHOUT_GROSS_KOBO, MIN_KORAPAY_TRANSFER_KOBO } from '@oneto/shared';
+import { parseManualPayoutRequiredMetadata } from './manual-payout-metadata';
 
 type CashoutResponseShape = {
   id: string;
@@ -18,6 +19,7 @@ type CashoutResponseShape = {
   korapayPayoutFeeDeductedFromRecipient?: boolean | null;
   netPayoutKobo?: bigint | null;
   korapayTransferAmountKobo?: bigint | null;
+  korapayResponse?: unknown;
   status: CashoutStatus;
   requestedAt: Date;
 };
@@ -39,6 +41,11 @@ export class CashoutController {
 
   private serializeCashout(cashout: CashoutResponseShape) {
     const grossAmountKobo = cashout.grossAmountKobo ?? cashout.amountKobo;
+    const manualMetadata = parseManualPayoutRequiredMetadata(cashout.korapayResponse);
+    const configuredMode = this.cashoutService.getConfiguredPayoutMode();
+    const payoutMode = manualMetadata?.payoutMode ?? configuredMode;
+    const amountToPayKobo =
+      manualMetadata?.amountToPayKobo ?? cashout.korapayTransferAmountKobo?.toString() ?? null;
 
     return {
       id: cashout.id,
@@ -52,6 +59,10 @@ export class CashoutController {
         cashout.korapayPayoutFeeDeductedFromRecipient ?? null,
       netPayoutKobo: cashout.netPayoutKobo?.toString() ?? null,
       korapayTransferAmountKobo: cashout.korapayTransferAmountKobo?.toString() ?? null,
+      amountToPayKobo,
+      payoutMode,
+      manualPayoutRequired:
+        payoutMode === "manual" && cashout.status === "PROCESSING",
       status: cashout.status,
       requestedAt: cashout.requestedAt,
     };
