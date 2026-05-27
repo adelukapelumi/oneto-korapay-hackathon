@@ -40,16 +40,18 @@ Snapshot of what exists vs what's planned. Update this section when major compon
 
 ### Built and tested
 
-Backend feature-complete. Live at https://oneto-production.up.railway.app.
+Backend feature-complete. Live at https://api.getoneto.com
 
 - `/shared` package: Ed25519 signing/verification, deterministic canonicalization, TransactionEnvelope schema with red-team tests. 16 tests passing.
 - `/backend/src/common/phone.ts`: libphonenumber-js-based normalization for Nigerian mobile numbers. Used as the E.164 branded type (currently also repurposed for email OTP target keys until a rename).
 - `/backend/src/common/email.ts`: zod-based email normalization (lowercase + trim + format validation).
 - `/backend/src/common/user-throttler.guard.ts`: custom NestJS guard that keys rate limits by JWT subject (user-id) instead of IP, with IP fallback when no auth context. Used on financially-sensitive routes.
-- `/backend/src/auth/otp-store.service.ts`: in-memory OTP store with Argon2 hashing, burn-after-3-fails, TTL expiry, email-keyed rate limiting, periodic cleanup via setInterval lifecycle hook. 25 tests passing.
+- `/backend/src/auth/otp-store.service.ts` + `/backend/src/auth/redis-otp-store.service.ts`: OTP abstraction with both in-memory and Redis backends, Argon2 hashing, burn-after-3-fails, TTL expiry, email-keyed rate limiting, and Redis verify-lock protection for concurrent verification.
 - `/backend/src/auth/auth.service.ts`: email OTP flow (request + verify), user upsert on first successful verify, status gating for FROZEN and FLAGGED accounts, ADMIN role blocked from public OTP login (silent success to prevent enumeration), JWT issuance. 27+ tests passing.
 - `/backend/src/auth/merchant-auth.service.ts` + `/backend/src/auth/merchant-auth.controller.ts`: separate merchant signup flow with MerchantProfile (cashoutBankCode + cashoutBankName + account details), in-memory stash with TTL during OTP verification, role=MERCHANT and status=PENDING_VERIFICATION on activation. 12 tests passing.
 - `/backend/src/auth/keys.controller.ts`: public key registration with first-time bootstrap and signed rotation for replacement (Option A — strict replacement). 6 tests passing.
+- `/backend/src/recovery/`: user-initiated key recovery requests and admin review/approval/rejection flow, with DeviceKey status transitions (`ACTIVE` -> `VERIFY_ONLY` or `REVOKED`) and new active key activation on approval.
+- `/backend/src/admin/` + `/admin-web/`: authenticated admin operations surface and web UI for merchant lifecycle, cashout operations, reconciliation reporting, and recovery review.
 - `/backend/src/topup/`: Korapay checkout initiation + webhook handler. Webhook handler now (a) verifies HMAC-SHA256 signature on raw payload, (b) validates payload against KorapayWebhookSchema (Zod) — rejects malformed, (c) inside Serializable transaction: debits u_operating + credits user (Ghost Money fix), enforces MAX_USER_BALANCE_KOBO regulatory cap (FAILED PaymentTopup recorded if exceeded), creates double-entry ledger rows. Idempotent via unique constraint on PaymentTopup.reference. Throws InternalServerErrorException on transaction failure to trigger Korapay retries (does not silently swallow). 23 tests passing.
 - `/backend/src/topup/korapay-webhook.schema.ts`: Zod schema validating Korapay webhook payload structure. Uses `unknown` at boundary, narrowed inside service.
 - `/backend/src/reconcile/`: reconcile endpoint with merchant role enforcement, public key registration with signed rotation, Serializable Prisma transactions, per-user sequence uniqueness via ProcessedSequence table, identity binding (envelope recipient must match authenticated user), recipient balance cap enforcement (rejected with internal reason `recipient_balance_cap_exceeded`, generic external `invalid_envelope`), generic external errors prevent oracle attacks, sanitized rejection logs (only transactionId + senderUserId + recipientUserId + reason + amountKobo, never signature/publicKey/sequenceNumber/balances). 28 tests passing.
@@ -59,10 +61,13 @@ Backend feature-complete. Live at https://oneto-production.up.railway.app.
 - `/backend/src/instrument.ts` + Sentry integration: production error capture via @sentry/nestjs SDK. Wraps all uncaught exceptions with stack traces and request context. Free tier sufficient for pilot.
 - `/backend/src/main.ts`: helmet middleware sets HTTP security headers (HSTS, nosniff, X-Frame-Options, CSP, etc.) before any route handler.
 - `/backend/src/app.module.ts`: global IP-keyed throttler (100 req/min default) as defense-in-depth layer above per-user limits on sensitive endpoints. Per-route throttle decorators: /reconcile (20/min/user), /cashout/request (5/min/user), /cashout/approve/:id (30/min/user). SentryGlobalFilter registered as APP_FILTER.
-- Prisma schema: User, LedgerEntry, PaymentTopup, ProcessedSequence, MerchantProfile, Cashout models. Compound unique constraint `@@unique([transactionId, userId])` on LedgerEntry prevents double-spend at the database layer.
+- Prisma schema: User, UserDeviceKey, KeyRecoveryRequest, LedgerEntry, PaymentTopup, ProcessedSequence, OfflinePaymentResolution, MerchantProfile, Cashout models. Compound unique constraint `@@unique([transactionId, userId])` on LedgerEntry prevents double-spend at the database layer.
 - Email infrastructure: `getoneto.com` domain verified with SPF + DKIM. Real emails delivering to CU inboxes instantly.
 
-Total: 170 backend tests + 16 shared tests = 186 tests passing.
+Current local verification snapshot (2026-05-27):
+- Backend tests: 29 suites, 395 tests passing.
+- Mobile tests: 42 suites, 296 tests passing.
+- Shared tests: 32/33 passing (1 failing red-team test due TTL expectation drift).
 
 Three independent security audit rounds completed. Seven audit fixes shipped:
 1. Ghost Money fix (top-up debits u_operating, restoring system invariant)
@@ -88,17 +93,16 @@ Three independent security audit rounds completed. Seven audit fixes shipped:
 - Mobile app (React Native / Expo) — keypair generation, QR scan, local SQLite ledger, offline-first UI. Phase 2 in ROADMAP.
 
 ### Not yet built
-- Admin dashboard (user management, cashout approvals queue, fraud review). Phase 3 in ROADMAP. Pilot can survive with API-only access plus Prisma Studio for emergencies.
-- Lost-key recovery flow (email-based confirmation with cooling-off period). Currently requires admin manual intervention to clear an old public key when a user reinstalls the app. Documented in POST_PILOT.md.
+- Full externalized worker/queue pipeline for background reconciliation jobs (currently synchronous API + DB transaction flow).
 
 ### Known limitations of current state
 
-- OTP store is in-memory. Crashes lose all active OTP records. Acceptable for single-instance pilot. Documented as Redis migration item in POST_PILOT.md.
-- ThrottlerModule storage is in-memory. Single-instance pilot is fine; horizontal scaling requires Redis-backed throttler.
+- Redis-backed OTP and throttler storage are implemented and env-configurable; non-Redis fallback mode still exists for local/dev.
 - JWT secret lives in Railway env var. No rotation strategy yet (deferred — implement before scaling beyond pilot).
-- Clock skew tolerance in `/shared` is 120s. Offline envelopes ship with 60s expiry.
+- Clock skew tolerance in `/shared` is 120s. Envelope schema allows TTL up to 300s; mobile currently issues 60s expiry by default.
+- Reconcile verification allows expired envelope QRs and uses a backend claim window (`OFFLINE_CLAIM_WINDOW_HOURS = 48`) from signed timestamp.
 - Transaction ID is 64-bit truncated SHA-256. Safe for pilot scale.
-- No automated lost-key recovery — currently a manual admin process. Described in POST_PILOT.md.
+- Key recovery is built but remains admin-reviewed and operationally sensitive.
 - Reconcile flow is unidirectional (merchant submits). Phantom-sync for offline merchants (where we proactively push reconciled state to a merchant who can't reach the network) is post-pilot.
 - Daily invariant cron not yet running. Currently can be checked manually with: SUM all user balances + u_operating balance should equal 0.
 
@@ -109,7 +113,7 @@ Three independent security audit rounds completed. Seven audit fixes shipped:
 
 ### Deferred to post-pilot
 
-See `/POST_PILOT.md` at repo root for the full list. High-level categories: Redis-backed OTP and throttler storage, licensed NIN/BVN verification, PSSP/MMO license pursuit, professional penetration test, Google Workspace for team email, end-to-end integration tests with a real test database, lost-key recovery flow, daily invariant cron, branded Email type rename, multi-device support.
+See `/POST_PILOT.md` at repo root for the full list. High-level categories: licensed NIN/BVN verification, PSSP/MMO license pursuit, professional penetration test, Google Workspace for team email, end-to-end integration tests with a real test database, daily invariant cron, branded Email type rename, multi-device support, and queue/worker hardening.
 
 ### How to use this section
 
@@ -180,11 +184,11 @@ Lock these in `package.json`. Do not upgrade casually. Security-critical librari
 - **expo-sqlite** — local ledger storage on device.
 - **expo-camera** — QR scanning (preferred over expo-barcode-scanner which is being deprecated).
 - **react-native-qrcode-svg** — QR generation.
-- **tweetnacl** + **tweetnacl-util** — Ed25519 signing and verification. Audited, small, portable across iOS and Android.
+- **`@oneto/shared` crypto utilities** (backed by `@noble/ed25519` + `@noble/hashes`) — shared Ed25519 signing/verification and deterministic canonicalization across mobile/backend.
 - **@tanstack/react-query** — server state, caching, retry logic.
 - **zustand** — local UI state (not for sensitive data).
 - **react-hook-form** + **zod** — form validation with schema types.
-- **react-native-ssl-pinning** — certificate pinning for API calls.
+- **@bam.tech/react-native-app-security** — certificate pinning configured at build-time for production mobile API calls.
 
 ### 4.2 Backend (`/backend`)
 
@@ -193,7 +197,7 @@ Lock these in `package.json`. Do not upgrade casually. Security-critical librari
 - **Prisma** as ORM. Better DX and type safety than TypeORM for a junior dev. Migrations are enforced and version-controlled.
 - **@nestjs/config** with `zod` validation on env vars. Fail loudly at boot if env is invalid.
 - **@nestjs/throttler** — rate limiting on all public endpoints.
-- **bullmq** + **Redis** (Upstash for managed Redis) — reconciliation queue, retries, async jobs.
+- **Redis (`ioredis`)** — shared infrastructure for OTP store and global throttler storage backends.
 - **pino** — structured JSON logging. Never `console.log` in production code.
 - **class-validator** + **class-transformer** — request DTO validation on every endpoint.
 - **@nestjs/jwt** — JWT session tokens for mobile clients. Short-lived.
@@ -314,7 +318,7 @@ export interface TransactionEnvelope {
 
 ### 7.1 Hard rules
 
-1. **Never roll your own crypto.** Always use `tweetnacl` (mobile) or `@noble/ed25519` (backend).
+1. **Never roll your own crypto.** Always use the shared crypto stack (`@oneto/shared`, powered by `@noble/ed25519` and `@noble/hashes`) for both mobile and backend.
 2. **Never store, log, or transmit a private key.** Private keys live in `expo-secure-store` on device and nowhere else. They must never appear in logs, crash reports, or error messages.
 3. **Never accept an unsigned message as authoritative.** If it is not signed and verified, it is client state, not truth.
 4. **Always verify signatures against the server-registered public key** for that user. The public key embedded in the envelope must match the registered one; a mismatch is a rejection.
@@ -417,33 +421,62 @@ All endpoints return JSON. All require auth except where noted. All log structur
 ```
 POST  /auth/otp/request             public        send OTP to phone
 POST  /auth/otp/verify              public        verify OTP, return session JWT
+POST  /auth/admin/otp/request       public        request admin OTP (non-enumerating)
+POST  /auth/admin/otp/verify        public        verify admin OTP, set admin session cookie
+POST  /auth/admin/logout            public        clear admin session cookie
+GET   /auth/admin/session           auth/admin    validate admin cookie+JWT session
+
+POST  /auth/merchant/otp/request    public        request merchant onboarding OTP
+POST  /auth/merchant/otp/verify     public        verify merchant onboarding OTP
 POST  /auth/keys/register           auth          register device public key
 
 GET   /me                           auth          profile + verifiedBalanceKobo
 GET   /me/ledger                    auth          paginated transaction history
 
-POST  /topup/Korapay/initiate      auth          returns Korapay checkout URL
-POST  /topup/Korapay/webhook       public+HMAC   handles payment completion
+GET   /merchants/list               auth          list active approved merchants
+
+POST  /topup/korapay/initiate       auth          returns Korapay checkout URL
+GET   /topup/status/:reference      auth          get user top-up status
+POST  /topup/korapay/webhook        public+HMAC   handles payment completion
 
 POST  /reconcile                    auth          submit pending envelopes
 POST  /reconcile/status             auth          check envelope statuses
 
 POST  /cashout/request              auth/merchant request cashout
 GET   /cashout/status               auth/merchant check cashout status
+POST  /cashout/korapay/webhook      public+HMAC   handle payout webhooks
+POST  /cashout/approve/:id          auth/admin    legacy direct admin approval endpoint
 
-GET   /merchants/search             auth          lookup merchant by ID for payment
+POST  /recovery/request             auth          create key recovery request
+GET   /recovery/status              auth          latest key recovery status
+POST  /recovery/:id/cancel          auth          cancel pending key recovery request
 
-POST  /admin/cashout/approve        auth/admin
+GET   /admin/overview               auth/admin    dashboard summary
+GET   /admin/merchants/pending      auth/admin
+GET   /admin/merchants              auth/admin
+POST  /admin/merchants              auth/admin
+PATCH /admin/merchants/:userId      auth/admin
+POST  /admin/merchants/:userId/approve auth/admin
+POST  /admin/merchants/:userId/deactivate auth/admin
+POST  /admin/merchants/:userId/reactivate auth/admin
+GET   /admin/cashouts/pending       auth/admin
+GET   /admin/cashouts/operations    auth/admin
+POST  /admin/cashouts/:id/approve   auth/admin
+POST  /admin/cashouts/:id/mark-paid auth/admin
+POST  /admin/cashouts/:id/cancel-manual auth/admin
+GET   /admin/recovery/pending       auth/admin
+POST  /admin/recovery/:id/approve   auth/admin
+POST  /admin/recovery/:id/reject    auth/admin
 GET   /admin/reconciliation-report  auth/admin    daily float invariant check
-POST  /admin/user/:id/flag          auth/admin
-POST  /admin/user/:id/freeze        auth/admin
+GET   /admin/network/outbound-ip    auth/admin    diagnostic endpoint
+
+GET   /health                       public        uptime heartbeat
 ```
 
-Every endpoint has:
-- A zod schema for request and response
-- A NestJS DTO with `class-validator` decorators
-- At least one e2e test in `/backend/test/`
-- Rate limiting configured via `@Throttle` decorator
+Security-sensitive and money-moving endpoints should have:
+- Explicit request validation (Zod pipe and/or class-validator DTO)
+- Focused unit/integration tests on boundary behavior
+- Rate limiting where abuse risk exists
 
 ---
 
@@ -661,6 +694,6 @@ Creating a file without saving is a silent failure mode that costs hours to debu
 - Architecture pattern: external API calls (Korapay) must NOT be inside Prisma transactions. Fire after the transaction commits.
 - Tests covered logic but not infrastructure (build pipeline, DI bootstrap, DB connection). Production deployments revealed gaps that tests didn't catch (NestJS DI for OtpStoreService missing @Optional, Prisma adapter version mismatch, PowerShell BOM corruption in migrations). Future: add a single e2e test that boots the actual NestJS app against a real test database.
 
-**Last updated:** 2026-05-01
+**Last updated:** 2026-05-27
 **Document owner:** Pelumi Adeluka
 **Review cadence:** every two weeks during pilot, monthly after.
