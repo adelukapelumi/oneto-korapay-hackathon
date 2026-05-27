@@ -1,6 +1,7 @@
 import type { PublicKeyString, SignatureString } from "@oneto/shared";
 import { ApiError, NetworkError } from "../api/errors";
 import { getToken } from "../auth/token-store";
+import { isJwtExpired } from "../auth/jwt-decode";
 import {
   DeviceTransferPayloadError,
   assertApprovalMatchesPendingPublicKey,
@@ -119,11 +120,17 @@ export async function activateDeviceApproval({
   const suffix = shortKeySuffix(approval.newPublicKey);
   const token = await getTokenFn();
   const tokenPresent = Boolean(token);
+  const tokenExpired = token ? isJwtExpired(token) : false;
   log({
     event: "device_approval.activation_auth_context",
-    context: { authStateStatus, tokenPresent, publicKeySuffix: suffix },
+    context: {
+      authStateStatus,
+      tokenPresent,
+      tokenExpired,
+      publicKeySuffix: suffix,
+    },
   });
-  if (!tokenPresent) {
+  if (!tokenPresent || tokenExpired) {
     return {
       ok: false,
       routeTarget: null,
@@ -133,7 +140,12 @@ export async function activateDeviceApproval({
 
   log({
     event: "device_approval.register_public_key_started",
-    context: { publicKeySuffix: suffix, authStateStatus, tokenPresent },
+    context: {
+      publicKeySuffix: suffix,
+      authStateStatus,
+      tokenPresent,
+      tokenExpired,
+    },
   });
   try {
     await registerPublicKey(approval.newPublicKey, approval.rotationSignature);

@@ -11,7 +11,9 @@ import { CameraView, useCameraPermissions } from "expo-camera";
 import { useRouter } from "expo-router";
 import { Screen } from "../../components/Screen";
 import { registerPublicKey } from "../../src/api/keys";
+import { getToken } from "../../src/auth/token-store";
 import { useAuth } from "../../src/auth/auth-state";
+import { RECOVERY_APPROVAL_RETURN_TO } from "../../src/auth/recovery-reauth";
 import {
   PinIncorrectError,
   PinLockedError,
@@ -27,6 +29,7 @@ import { describeAttemptState, formatMmSs } from "../../src/lib/pin-attempts";
 import {
   APPROVAL_FAILED_RESCAN_MESSAGE,
   APPROVAL_RECOVERY_KEY_MISSING_MESSAGE,
+  APPROVAL_SESSION_EXPIRED_MESSAGE,
   activateDeviceApproval,
   precheckDeviceApproval,
   type DeviceApprovalLog,
@@ -58,6 +61,7 @@ export default function ScanDeviceApprovalScreen(): React.ReactElement {
     completeOnboarding,
     discardPendingRecoveryKeypair,
     getPendingRecoveryKeypair,
+    reauthenticate,
   } = useAuth();
   const { mode } = useThemeMode();
   const t = getTheme(mode);
@@ -65,12 +69,28 @@ export default function ScanDeviceApprovalScreen(): React.ReactElement {
   const [phase, setPhase] = useState<Phase>({ kind: "scanning" });
   const [pin, setPin] = useState("");
   const [lockSecondsRemaining, setLockSecondsRemaining] = useState(0);
+  const [reauthSending, setReauthSending] = useState(false);
+  const [reauthError, setReauthError] = useState<string | null>(null);
 
   useEffect(() => {
     if (permission && !permission.granted) {
       void requestPermission();
     }
   }, [permission, requestPermission]);
+
+  useEffect(() => {
+    void (async () => {
+      const token = await getToken();
+      logDeviceApproval({
+        event: "recovery_screen_auth_context",
+        context: {
+          screen: "scan-device-approval",
+          authStateStatus: state.status,
+          tokenPresent: Boolean(token),
+        },
+      });
+    })();
+  }, [state.status]);
 
   useEffect(() => {
     let cancelled = false;
@@ -236,8 +256,32 @@ export default function ScanDeviceApprovalScreen(): React.ReactElement {
   }
 
   function retry(): void {
+    setReauthError(null);
     setPin("");
     setPhase({ kind: "scanning" });
+  }
+
+  async function handleSignInAgain(): Promise<void> {
+    setReauthSending(true);
+    setReauthError(null);
+    try {
+      const email = await reauthenticate();
+      router.push({
+        pathname: "/(auth)/verify",
+        params: {
+          email,
+          returnTo: RECOVERY_APPROVAL_RETURN_TO,
+        },
+      });
+    } catch (error) {
+      logDeviceApproval({
+        event: "reauthenticate_failed",
+        context: { screen: "scan-device-approval" },
+      });
+      setReauthError("Couldn't send OTP. Check your connection and try again.");
+    } finally {
+      setReauthSending(false);
+    }
   }
 
   if (!permission?.granted) {
@@ -336,6 +380,27 @@ export default function ScanDeviceApprovalScreen(): React.ReactElement {
             >
               <Text style={styles.primaryButtonText}>Scan again</Text>
             </Pressable>
+            {phase.message === APPROVAL_SESSION_EXPIRED_MESSAGE ? (
+              <Pressable
+                accessibilityRole="button"
+                disabled={reauthSending}
+                onPress={() => {
+                  void handleSignInAgain();
+                }}
+                style={({ pressed }) => [
+                  styles.secondaryButton,
+                  reauthSending && styles.buttonDisabled,
+                  pressed && !reauthSending && styles.buttonPressed,
+                ]}
+              >
+                <Text style={styles.secondaryButtonText}>
+                  {reauthSending
+                    ? "Sending OTP..."
+                    : "Sign in again to continue"}
+                </Text>
+              </Pressable>
+            ) : null}
+            {reauthError ? <Text style={styles.error}>{reauthError}</Text> : null}
           </View>
         </View>
       </Screen>
@@ -442,6 +507,22 @@ const styles = StyleSheet.create({
   },
   primaryButtonText: {
     color: colors.primaryText,
+    fontFamily: fonts.bold,
+    fontSize: fontSizes.button,
+    textAlign: "center",
+  },
+  secondaryButton: {
+    minHeight: 52,
+    borderRadius: radii.pill,
+    borderWidth: borders.standard,
+    borderColor: colors.secondary,
+    backgroundColor: colors.secondary,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: spacing.lg,
+  },
+  secondaryButtonText: {
+    color: "#1B1208",
     fontFamily: fonts.bold,
     fontSize: fontSizes.button,
     textAlign: "center",

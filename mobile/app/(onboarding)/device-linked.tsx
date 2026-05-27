@@ -3,11 +3,13 @@ import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from "rea
 import { useRouter } from "expo-router";
 import { Screen } from "../../components/Screen";
 import { useAuth } from "../../src/auth/auth-state";
+import { getToken } from "../../src/auth/token-store";
 import {
   getRecoveryStatus,
   shouldRedirectToRecoveryStatus,
 } from "../../src/api/recovery";
 import { NetworkError } from "../../src/api/errors";
+import { logger } from "../../src/lib/logger";
 import { useThemeMode } from "../../src/theme/theme-provider";
 import {
   borders,
@@ -26,7 +28,7 @@ type ExistingRequestState =
 
 export default function DeviceLinkedScreen(): React.ReactElement {
   const router = useRouter();
-  const { resetLocalAppForTesting } = useAuth();
+  const { state, resetLocalAppForTesting } = useAuth();
   const { mode } = useThemeMode();
   const t = getTheme(mode);
   const [existingRequestState, setExistingRequestState] =
@@ -73,6 +75,17 @@ export default function DeviceLinkedScreen(): React.ReactElement {
       ],
     );
   }
+
+  useEffect(() => {
+    void (async () => {
+      const token = await getToken();
+      logger.info("recovery_screen_auth_context", {
+        screen: "device-linked",
+        authStateStatus: state.status,
+        tokenPresent: Boolean(token),
+      });
+    })();
+  }, [state.status]);
 
   useEffect(() => {
     let cancelled = false;

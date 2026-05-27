@@ -20,6 +20,7 @@ import {
 } from "../../src/api/keys";
 import { NetworkError } from "../../src/api/errors";
 import { useAuth } from "../../src/auth/auth-state";
+import { getToken } from "../../src/auth/token-store";
 import { consumePendingOnboardingPin } from "../../src/auth/onboarding-pin-memory";
 import { logger } from "../../src/lib/logger";
 import { useThemeMode } from "../../src/theme/theme-provider";
@@ -45,7 +46,7 @@ const STEP_MESSAGES: [string, string, string] = [
 const PROGRESS_CELLS = 8;
 
 export default function GeneratingKeysScreen(): React.ReactElement {
-  const { completeOnboarding, stagePendingRecoveryKeypair } = useAuth();
+  const { state, completeOnboarding, stagePendingRecoveryKeypair } = useAuth();
   const router = useRouter();
   const { mode } = useThemeMode();
   const t = getTheme(mode);
@@ -85,6 +86,17 @@ export default function GeneratingKeysScreen(): React.ReactElement {
       }),
     ).start();
   }, [pulseAnim, spinAnim]);
+
+  useEffect(() => {
+    void (async () => {
+      const token = await getToken();
+      logger.info("recovery_screen_auth_context", {
+        screen: "generating-keys",
+        authStateStatus: state.status,
+        tokenPresent: Boolean(token),
+      });
+    })();
+  }, [state.status]);
 
   useEffect(() => {
     if (startedRef.current) return;

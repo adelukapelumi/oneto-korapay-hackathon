@@ -14,6 +14,7 @@ import { Screen } from "../../components/Screen";
 import { fetchMe, requestOtp, verifyOtp } from "../../src/api/auth";
 import { NetworkError, UnauthorizedError } from "../../src/api/errors";
 import { useAuth } from "../../src/auth/auth-state";
+import { sanitizeRecoveryReauthReturnTo } from "../../src/auth/recovery-reauth";
 import { setToken } from "../../src/auth/token-store";
 import { logger } from "../../src/lib/logger";
 import { BackButton } from "../../components/BackButton";
@@ -38,8 +39,12 @@ export default function VerifyScreen(): React.ReactElement {
   const router = useRouter();
   const { mode } = useThemeMode();
   const t = getTheme(mode);
-  const params = useLocalSearchParams<{ email?: string }>();
+  const params = useLocalSearchParams<{ email?: string; returnTo?: string }>();
   const email = typeof params.email === "string" ? params.email : "";
+  const returnTo =
+    typeof params.returnTo === "string"
+      ? sanitizeRecoveryReauthReturnTo(params.returnTo)
+      : null;
   const { signIn } = useAuth();
 
   const [code, setCode] = useState("");
@@ -100,6 +105,9 @@ export default function VerifyScreen(): React.ReactElement {
       await new Promise<void>((resolve) => setTimeout(resolve, 1300));
 
       await signIn(accessToken, me);
+      if (returnTo) {
+        router.replace(returnTo);
+      }
     } catch (err) {
       if (err instanceof NetworkError) {
         setError(err.message);

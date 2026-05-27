@@ -17,6 +17,7 @@ const VALID_PUBLIC_KEY =
 const OTHER_PUBLIC_KEY =
   "ed25519:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
 const VALID_ROTATION_SIGNATURE = "ed25519:" + "a".repeat(128);
+const FRESH_TOKEN = createTokenWithOffsetSeconds(3600);
 
 describe("device approval activation", () => {
   it("approval success registers, promotes, and completes onboarding", async () => {
@@ -39,7 +40,7 @@ describe("device approval activation", () => {
       promotePendingRecoveryKeypair,
       completeOnboarding,
       log,
-      getTokenFn: async () => "jwt-123",
+      getTokenFn: async () => FRESH_TOKEN,
     });
 
     expect(result.ok).toBe(true);
@@ -75,7 +76,7 @@ describe("device approval activation", () => {
       promotePendingRecoveryKeypair,
       completeOnboarding,
       log,
-      getTokenFn: async () => "jwt-123",
+      getTokenFn: async () => FRESH_TOKEN,
     });
 
     expect(result).toEqual({
@@ -106,7 +107,7 @@ describe("device approval activation", () => {
       promotePendingRecoveryKeypair,
       completeOnboarding,
       log,
-      getTokenFn: async () => "jwt-123",
+      getTokenFn: async () => FRESH_TOKEN,
     });
 
     expect(result).toEqual({
@@ -139,6 +140,38 @@ describe("device approval activation", () => {
       completeOnboarding,
       log,
       getTokenFn: async () => null,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      routeTarget: null,
+      message: APPROVAL_SESSION_EXPIRED_MESSAGE,
+    });
+    expect(registerPublicKey).not.toHaveBeenCalled();
+    expect(promotePendingRecoveryKeypair).not.toHaveBeenCalled();
+    expect(completeOnboarding).not.toHaveBeenCalled();
+  });
+
+  it("expired token precheck returns session-expired and does not call registerPublicKey", async () => {
+    const registerPublicKey = jest.fn().mockResolvedValue({ success: true });
+    const promotePendingRecoveryKeypair = jest.fn().mockResolvedValue(undefined);
+    const completeOnboarding = jest.fn();
+    const log = jest.fn();
+    const approval = buildNewDeviceApprovalPayload(
+      VALID_PUBLIC_KEY,
+      VALID_ROTATION_SIGNATURE,
+    );
+
+    const result = await activateDeviceApproval({
+      rawApprovalQr: stringifyDeviceTransferPayload(approval),
+      pendingPublicKey: VALID_PUBLIC_KEY,
+      pendingPrivateKey: new Uint8Array(32).fill(8),
+      authStateStatus: "recovery_pending",
+      registerPublicKey,
+      promotePendingRecoveryKeypair,
+      completeOnboarding,
+      log,
+      getTokenFn: async () => createTokenWithOffsetSeconds(-120),
     });
 
     expect(result).toEqual({
@@ -191,7 +224,7 @@ describe("device approval activation", () => {
       promotePendingRecoveryKeypair,
       completeOnboarding,
       log,
-      getTokenFn: async () => "jwt-123",
+      getTokenFn: async () => FRESH_TOKEN,
     });
 
     const flattenedLogs = JSON.stringify(log.mock.calls);
@@ -222,7 +255,7 @@ describe("device approval activation", () => {
       promotePendingRecoveryKeypair,
       completeOnboarding,
       log,
-      getTokenFn: async () => "jwt-123",
+      getTokenFn: async () => FRESH_TOKEN,
     });
 
     expect(result).toEqual({
@@ -231,4 +264,70 @@ describe("device approval activation", () => {
       message: APPROVAL_REGISTER_FAILED_MESSAGE,
     });
   });
+
+  it("allows retry after re-auth and succeeds with a fresh token", async () => {
+    const registerPublicKey = jest.fn().mockResolvedValue({ success: true });
+    const promotePendingRecoveryKeypair = jest.fn().mockResolvedValue(undefined);
+    const completeOnboarding = jest.fn();
+    const log = jest.fn();
+    const approval = buildNewDeviceApprovalPayload(
+      VALID_PUBLIC_KEY,
+      VALID_ROTATION_SIGNATURE,
+    );
+
+    const missingTokenResult = await activateDeviceApproval({
+      rawApprovalQr: stringifyDeviceTransferPayload(approval),
+      pendingPublicKey: VALID_PUBLIC_KEY,
+      pendingPrivateKey: new Uint8Array(32).fill(8),
+      authStateStatus: "recovery_pending",
+      registerPublicKey,
+      promotePendingRecoveryKeypair,
+      completeOnboarding,
+      log,
+      getTokenFn: async () => null,
+    });
+    expect(missingTokenResult).toEqual({
+      ok: false,
+      routeTarget: null,
+      message: APPROVAL_SESSION_EXPIRED_MESSAGE,
+    });
+
+    const freshTokenResult = await activateDeviceApproval({
+      rawApprovalQr: stringifyDeviceTransferPayload(approval),
+      pendingPublicKey: VALID_PUBLIC_KEY,
+      pendingPrivateKey: new Uint8Array(32).fill(8),
+      authStateStatus: "recovery_pending",
+      registerPublicKey,
+      promotePendingRecoveryKeypair,
+      completeOnboarding,
+      log,
+      getTokenFn: async () => FRESH_TOKEN,
+    });
+    expect(freshTokenResult.ok).toBe(true);
+    expect(registerPublicKey).toHaveBeenCalledTimes(1);
+    expect(promotePendingRecoveryKeypair).toHaveBeenCalledTimes(1);
+    expect(completeOnboarding).toHaveBeenCalledTimes(1);
+  });
 });
+
+function createTokenWithOffsetSeconds(offsetSeconds: number): string {
+  const now = Math.floor(Date.now() / 1000);
+  const payload = {
+    sub: "u_test",
+    email: "test@stu.cu.edu.ng",
+    role: "STUDENT",
+    pubKeyRegistered: false,
+    iat: now,
+    exp: now + offsetSeconds,
+  } as const;
+  const header = { alg: "HS256", typ: "JWT" } as const;
+  return `${toBase64Url(header)}.${toBase64Url(payload)}.signature`;
+}
+
+function toBase64Url(value: unknown): string {
+  return Buffer.from(JSON.stringify(value))
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
