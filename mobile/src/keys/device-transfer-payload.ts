@@ -148,11 +148,26 @@ export interface BuildApprovalAfterPinUnlockInput {
   readonly pin: string;
   readonly unlockKeypairWithPin: (
     pin: string,
-  ) => Promise<{ readonly privateKey: Uint8Array }>;
+  ) => Promise<{
+    readonly privateKey: Uint8Array;
+    readonly publicKey: string;
+  }>;
   readonly signRotation: (
     newPublicKey: PublicKeyString,
     oldPrivateKey: Uint8Array,
   ) => SignatureString;
+  readonly derivePublicKeyFromPrivateKey: (
+    privateKey: Uint8Array,
+  ) => PublicKeyString;
+  readonly verifyRotationSignature: (
+    newPublicKey: PublicKeyString,
+    oldPublicKey: PublicKeyString,
+    rotationSignature: SignatureString,
+  ) => Promise<boolean>;
+  readonly log?: (
+    event: string,
+    context: Readonly<Record<string, string | number | boolean | null>>,
+  ) => void;
 }
 
 export async function buildApprovalQrAfterPinUnlock({
@@ -160,11 +175,55 @@ export async function buildApprovalQrAfterPinUnlock({
   pin,
   unlockKeypairWithPin,
   signRotation,
+  derivePublicKeyFromPrivateKey,
+  verifyRotationSignature,
+  log,
 }: BuildApprovalAfterPinUnlockInput): Promise<NewDeviceApprovalPayload> {
   const request = parseNewDeviceRequestQr(rawRequestQr);
-  const { privateKey } = await unlockKeypairWithPin(pin);
+  const { privateKey, publicKey } = await unlockKeypairWithPin(pin);
   try {
+    let storedPublicKey: PublicKeyString;
+    try {
+      storedPublicKey = parsePublicKey(publicKey);
+    } catch {
+      throw new DeviceTransferPayloadError(
+        "old_phone_public_key_invalid",
+        "This phone's payment key is inconsistent. Use account recovery.",
+      );
+    }
+    const derivedPublicKey = derivePublicKeyFromPrivateKey(privateKey);
+    const keypairMatches = derivedPublicKey === storedPublicKey;
+    log?.("old_phone_keypair_consistency_checked", {
+      storedPublicKeySuffix: shortKeySuffix(storedPublicKey),
+      derivedPublicKeySuffix: shortKeySuffix(derivedPublicKey),
+      keypairMatches,
+      newPublicKeySuffix: shortKeySuffix(request.newPublicKey),
+    });
+    if (!keypairMatches) {
+      throw new DeviceTransferPayloadError(
+        "old_phone_keypair_mismatch",
+        "This phone's payment key is inconsistent. Use account recovery.",
+      );
+    }
+
     const rotationSignature = signRotation(request.newPublicKey, privateKey);
+    const localSignatureVerified = await verifyRotationSignature(
+      request.newPublicKey,
+      storedPublicKey,
+      rotationSignature,
+    );
+    log?.("old_phone_rotation_signature_local_verify", {
+      storedPublicKeySuffix: shortKeySuffix(storedPublicKey),
+      derivedPublicKeySuffix: shortKeySuffix(derivedPublicKey),
+      newPublicKeySuffix: shortKeySuffix(request.newPublicKey),
+      localRotationSignatureVerified: localSignatureVerified,
+    });
+    if (!localSignatureVerified) {
+      throw new DeviceTransferPayloadError(
+        "old_phone_rotation_signature_invalid",
+        "Could not create a valid approval. Use account recovery.",
+      );
+    }
     return buildNewDeviceApprovalPayload(
       request.newPublicKey,
       rotationSignature,
@@ -223,4 +282,11 @@ function parseQrJson(rawData: string): unknown {
       "This QR code could not be read.",
     );
   }
+}
+
+function shortKeySuffix(publicKey: string): string {
+  if (publicKey.length <= 8) {
+    return publicKey;
+  }
+  return publicKey.slice(-8);
 }

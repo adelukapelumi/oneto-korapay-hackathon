@@ -9,12 +9,20 @@
 const fakeSignature = new Uint8Array(64).fill(0xab);
 const fakePublicKey = new Uint8Array(32).fill(0xcd);
 
-const sign = jest.fn((_msg: Uint8Array, _key: Uint8Array) => fakeSignature);
-const getPublicKey = jest.fn((_priv: Uint8Array) => fakePublicKey);
+const sign = jest.fn<Uint8Array, [Uint8Array, Uint8Array]>(
+  (_msg: Uint8Array, _key: Uint8Array) => fakeSignature,
+);
+const getPublicKey = jest.fn<Uint8Array, [Uint8Array]>(
+  (_priv: Uint8Array) => fakePublicKey,
+);
+const verify = jest.fn<Promise<boolean>, [Uint8Array, Uint8Array, Uint8Array]>(
+  async () => true,
+);
 
 jest.mock("@noble/ed25519", () => ({
   sign,
   getPublicKey,
+  verify,
   etc: {
     sha512Sync: undefined as ((...m: Uint8Array[]) => Uint8Array) | undefined,
     concatBytes: (...arrs: Uint8Array[]): Uint8Array => {
@@ -42,9 +50,11 @@ jest.mock("@oneto/shared", () => ({
 
 import type { AxiosInstance } from "axios";
 import {
+  derivePublicKeyFromPrivateKey,
   RotationSignatureRequiredError,
   registerPublicKey,
   signRotation,
+  verifyRotationSignature,
 } from "./keys";
 import { ApiError, NetworkError } from "./errors";
 
@@ -114,7 +124,11 @@ describe("registerPublicKey", () => {
 });
 
 describe("signRotation", () => {
-  beforeEach(() => sign.mockClear());
+  beforeEach(() => {
+    sign.mockClear();
+    getPublicKey.mockClear();
+    verify.mockClear();
+  });
 
   it("signs domain-separated UTF-8 bytes of the new public key string with the OLD private key", () => {
     const oldPriv = new Uint8Array(32).fill(0x11);
@@ -144,5 +158,49 @@ describe("signRotation", () => {
     expect(() =>
       signRotation("ed25519:abc" as never, new Uint8Array(31)),
     ).toThrow();
+  });
+
+  it("derives public key from private key in ed25519:<hex> format", () => {
+    const oldPriv = new Uint8Array(32).fill(0x11);
+    const publicKey = derivePublicKeyFromPrivateKey(oldPriv);
+
+    expect(getPublicKey).toHaveBeenCalledWith(oldPriv);
+    expect(typeof publicKey).toBe("string");
+    expect((publicKey as unknown as string).startsWith("ed25519:")).toBe(true);
+    expect((publicKey as unknown as string).slice("ed25519:".length)).toBe(
+      Buffer.from(fakePublicKey).toString("hex"),
+    );
+  });
+
+  it("verifies a rotation signature with domain-separated message bytes", async () => {
+    verify.mockResolvedValueOnce(true);
+    const ok = await verifyRotationSignature(
+      "ed25519:" + "f".repeat(64) as never,
+      "ed25519:" + "e".repeat(64) as never,
+      "ed25519:" + "a".repeat(128) as never,
+    );
+
+    expect(ok).toBe(true);
+    expect(verify).toHaveBeenCalledTimes(1);
+    const [sigArg, msgArg, pubArg] = verify.mock.calls[0]!;
+    expect(Array.from(msgArg)).toEqual(
+      Array.from(
+        new TextEncoder().encode(
+          `oneto:key-rotation:v1:${"ed25519:" + "f".repeat(64)}`,
+        ),
+      ),
+    );
+    expect((sigArg as Uint8Array).length).toBe(64);
+    expect((pubArg as Uint8Array).length).toBe(32);
+  });
+
+  it("returns false when local verification throws", async () => {
+    verify.mockRejectedValueOnce(new Error("bad sig"));
+    const ok = await verifyRotationSignature(
+      "ed25519:" + "f".repeat(64) as never,
+      "ed25519:" + "e".repeat(64) as never,
+      "ed25519:" + "a".repeat(128) as never,
+    );
+    expect(ok).toBe(false);
   });
 });

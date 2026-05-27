@@ -11,14 +11,17 @@ import { CameraView, useCameraPermissions } from "expo-camera";
 import { useRouter } from "expo-router";
 import QRCode from "react-native-qrcode-svg";
 import { Screen } from "../../components/Screen";
-import { signRotation } from "../../src/api/keys";
+import {
+  derivePublicKeyFromPrivateKey,
+  signRotation,
+  verifyRotationSignature,
+} from "../../src/api/keys";
 import { useAuth } from "../../src/auth/auth-state";
 import {
   PinIncorrectError,
   PinLockedError,
   clearAttempts,
   getAttemptState,
-  getStoredPublicKey,
   recordWrongAttempt,
   unlockKeypairWithPin,
   wipeKeypair,
@@ -111,17 +114,14 @@ export default function ApproveNewPhoneScreen(): React.ReactElement {
     }
     setPhase({ kind: "signing" });
     try {
-      const oldPublicKey = await getStoredPublicKey();
-      const request = parseNewDeviceRequestQr(rawRequestQr);
-      logApprovalEvent("old_phone_approval_signing_context", {
-        oldPhonePublicKeySuffix: shortKeySuffix(oldPublicKey),
-        requestPublicKeySuffix: shortKeySuffix(request.newPublicKey),
-      });
       const approval = await buildApprovalQrAfterPinUnlock({
         rawRequestQr,
         pin,
         unlockKeypairWithPin,
         signRotation,
+        derivePublicKeyFromPrivateKey,
+        verifyRotationSignature,
+        log: logApprovalEvent,
       });
       logApprovalEvent("old_phone_approval_payload_created", {
         approvalPublicKeySuffix: shortKeySuffix(approval.newPublicKey),
