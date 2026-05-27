@@ -5,6 +5,12 @@ const baseEnvSchema = z.object({
   PORT: z.string().default('3000'),
   DATABASE_URL: z.string().url(),
   JWT_SECRET: z.string().min(32, 'JWT secret must be at least 32 characters'),
+  JWT_ACCESS_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .min(300, 'JWT_ACCESS_TTL_SECONDS must be at least 300 seconds')
+    .max(86_400, 'JWT_ACCESS_TTL_SECONDS must be at most 86400 seconds (24 hours)')
+    .default(3600),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   OTP_STORE_BACKEND: z.enum(['memory', 'redis']).default('memory'),
   THROTTLER_STORE_BACKEND: z.enum(['memory', 'redis']).default('memory'),

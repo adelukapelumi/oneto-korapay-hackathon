@@ -108,6 +108,7 @@ describe("envSchema", () => {
     if (result.success) {
       expect(result.data.OTP_STORE_BACKEND).toBe("memory");
       expect(result.data.THROTTLER_STORE_BACKEND).toBe("memory");
+      expect(result.data.JWT_ACCESS_TTL_SECONDS).toBe(3600);
       expect(result.data.REDIS_KEY_PREFIX).toBe("oneto:dev");
       expect(result.data.CASHOUT_PAYOUT_MODE).toBe("korapay_api");
     }
@@ -186,6 +187,23 @@ describe("envSchema", () => {
           expect.objectContaining({
             path: ["ADMIN_CASHOUT_NOTIFICATION_EMAILS"],
           }),
+        ]),
+      );
+    }
+  });
+
+  it("rejects JWT_ACCESS_TTL_SECONDS above 24 hours", () => {
+    const result = envSchema.safeParse(
+      makeBaseEnv({
+        JWT_ACCESS_TTL_SECONDS: "90000",
+      }),
+    );
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ path: ["JWT_ACCESS_TTL_SECONDS"] }),
         ]),
       );
     }

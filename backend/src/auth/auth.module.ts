@@ -23,7 +23,10 @@ import { RedisModule } from "../redis/redis.module";
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         secret: config.get<string>("JWT_SECRET"),
-        signOptions: { expiresIn: "30d" },
+        // Keep access tokens short-lived. Max value is enforced by env schema.
+        signOptions: {
+          expiresIn: config.get<number>("JWT_ACCESS_TTL_SECONDS") ?? 3600,
+        },
       }),
     }),
     OtpChannelModule,
