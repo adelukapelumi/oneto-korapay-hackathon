@@ -1,4 +1,7 @@
 import {
+  APP_APPROVE_NEW_PHONE_RETURN_TO,
+  APP_HOME_RETURN_TO,
+  APP_SETTINGS_RETURN_TO,
   hasRecoveryActivationIdentityMismatch,
   isAllowedRecoveryReauthEmail,
   RECOVERY_ACTIVATION_USER_MISMATCH_MESSAGE,
@@ -16,8 +19,20 @@ describe("recovery re-auth return-to", () => {
   });
 
   it("rejects unknown routes", () => {
-    expect(sanitizeRecoveryReauthReturnTo("/(app)/home")).toBeNull();
+    expect(sanitizeRecoveryReauthReturnTo("/(app)/merchant/cashout")).toBeNull();
     expect(sanitizeRecoveryReauthReturnTo("/(onboarding)/move-device")).toBeNull();
+  });
+
+  it("accepts allowed non-recovery re-auth return routes", () => {
+    expect(sanitizeRecoveryReauthReturnTo(APP_HOME_RETURN_TO)).toBe(
+      APP_HOME_RETURN_TO,
+    );
+    expect(sanitizeRecoveryReauthReturnTo(APP_SETTINGS_RETURN_TO)).toBe(
+      APP_SETTINGS_RETURN_TO,
+    );
+    expect(sanitizeRecoveryReauthReturnTo(APP_APPROVE_NEW_PHONE_RETURN_TO)).toBe(
+      APP_APPROVE_NEW_PHONE_RETURN_TO,
+    );
   });
 
   it("allows recovery pending OTP verify route only with approved returnTo", () => {
@@ -30,9 +45,21 @@ describe("recovery re-auth return-to", () => {
     expect(
       canAccessRecoveryReauthVerifyRoute({
         pathname: "/(auth)/verify",
-        returnTo: "/(app)/home",
+        returnTo: APP_HOME_RETURN_TO,
       }),
-    ).toBe(false);
+    ).toBe(true);
+    expect(
+      canAccessRecoveryReauthVerifyRoute({
+        pathname: "/(auth)/verify",
+        returnTo: APP_SETTINGS_RETURN_TO,
+      }),
+    ).toBe(true);
+    expect(
+      canAccessRecoveryReauthVerifyRoute({
+        pathname: "/(auth)/verify",
+        returnTo: APP_APPROVE_NEW_PHONE_RETURN_TO,
+      }),
+    ).toBe(true);
     expect(
       canAccessRecoveryReauthVerifyRoute({
         pathname: "/(auth)/sign-in",
@@ -49,6 +76,20 @@ describe("recovery re-auth return-to", () => {
         expectedEmail: "oadeluka.2202531@stu.cu.edu.ng",
       }),
     ).toBe(true);
+    expect(
+      isAllowedRecoveryReauthEmail({
+        recoveryReturnTo: APP_SETTINGS_RETURN_TO,
+        requestedEmail: "oadeluka.2202531@stu.cu.edu.ng",
+        expectedEmail: "oadeluka.2202531@stu.cu.edu.ng",
+      }),
+    ).toBe(true);
+    expect(
+      isAllowedRecoveryReauthEmail({
+        recoveryReturnTo: APP_APPROVE_NEW_PHONE_RETURN_TO,
+        requestedEmail: "other@stu.cu.edu.ng",
+        expectedEmail: "oadeluka.2202531@stu.cu.edu.ng",
+      }),
+    ).toBe(false);
     expect(
       isAllowedRecoveryReauthEmail({
         recoveryReturnTo: RECOVERY_APPROVAL_RETURN_TO,

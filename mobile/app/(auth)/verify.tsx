@@ -45,7 +45,7 @@ export default function VerifyScreen(): React.ReactElement {
   const t = getTheme(mode);
   const params = useLocalSearchParams<{ email?: string; returnTo?: string }>();
   const email = typeof params.email === "string" ? params.email : "";
-  const returnTo =
+  const reauthReturnTo =
     typeof params.returnTo === "string"
       ? sanitizeRecoveryReauthReturnTo(params.returnTo)
       : null;
@@ -107,7 +107,7 @@ export default function VerifyScreen(): React.ReactElement {
         : null;
     if (
       !isAllowedRecoveryReauthEmail({
-        recoveryReturnTo: returnTo,
+        recoveryReturnTo: reauthReturnTo,
         requestedEmail: email,
         expectedEmail: expectedRecoveryEmail,
       })
@@ -122,7 +122,7 @@ export default function VerifyScreen(): React.ReactElement {
       await setToken(accessToken);
       const me = await fetchMe();
       if (
-        returnTo !== null &&
+        reauthReturnTo !== null &&
         expectedRecoveryUserId !== null &&
         me.id !== expectedRecoveryUserId
       ) {
@@ -149,8 +149,8 @@ export default function VerifyScreen(): React.ReactElement {
       await new Promise<void>((resolve) => setTimeout(resolve, 1300));
 
       await signIn(accessToken, me);
-      if (returnTo) {
-        router.replace(returnTo);
+      if (reauthReturnTo) {
+        router.replace(reauthReturnTo);
       }
     } catch (err) {
       if (err instanceof NetworkError) {
@@ -180,7 +180,7 @@ export default function VerifyScreen(): React.ReactElement {
         : null;
     if (
       !isAllowedRecoveryReauthEmail({
-        recoveryReturnTo: returnTo,
+        recoveryReturnTo: reauthReturnTo,
         requestedEmail: email,
         expectedEmail: expectedRecoveryEmail,
       })

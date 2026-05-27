@@ -10,6 +10,8 @@ export default function AuthLayout(): React.ReactElement {
   const { state } = useAuth();
   const pathname = usePathname();
   const params = useGlobalSearchParams<{ returnTo?: string }>();
+  const returnTo =
+    typeof params.returnTo === "string" ? params.returnTo : undefined;
 
   if (state.status === "loading") {
     return (
@@ -17,6 +19,9 @@ export default function AuthLayout(): React.ReactElement {
         <ActivityIndicator size="large" />
       </View>
     );
+  }
+  if (canAccessRecoveryReauthVerifyRoute({ pathname, returnTo })) {
+    return <Stack screenOptions={{ headerShown: false }} />;
   }
   if (state.status === "authed") {
     return <Redirect href="/(app)/home" />;
@@ -28,14 +33,6 @@ export default function AuthLayout(): React.ReactElement {
     return <Redirect href="/(onboarding)/welcome" />;
   }
   if (state.status === "recovery_pending") {
-    if (
-      canAccessRecoveryReauthVerifyRoute({
-        pathname,
-        returnTo: typeof params.returnTo === "string" ? params.returnTo : undefined,
-      })
-    ) {
-      return <Stack screenOptions={{ headerShown: false }} />;
-    }
     return <Redirect href="/(onboarding)/device-linked" />;
   }
   return <Stack screenOptions={{ headerShown: false }} />;
