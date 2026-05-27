@@ -106,16 +106,18 @@ export class KeysController {
       .slice(-8);
 
     this.logger.log(
-      'key_rotation_verify_attempt',
-      buildSafeKeyRegisterDiagnostics({
-        userId,
-        userEmail: user.email,
-        activeDeviceKey: activeDeviceKey.publicKey,
-        newPublicKey,
-        hasRotationSignature: Boolean(rotationSignature),
-        sigOk: null,
-        messageHashSuffix,
-        signatureLength: sigBytes.length,
+      JSON.stringify({
+        event: 'key_rotation_verify_attempt',
+        ...buildSafeKeyRegisterDiagnostics({
+          userId,
+          userEmail: user.email,
+          activeDeviceKey: activeDeviceKey.publicKey,
+          newPublicKey,
+          hasRotationSignature: Boolean(rotationSignature),
+          sigOk: null,
+          messageHashSuffix,
+          signatureLength: sigBytes.length,
+        }),
       }),
     );
 
@@ -127,16 +129,18 @@ export class KeysController {
     }
 
     this.logger.log(
-      'key_rotation_verify_result',
-      buildSafeKeyRegisterDiagnostics({
-        userId,
-        userEmail: user.email,
-        activeDeviceKey: activeDeviceKey.publicKey,
-        newPublicKey,
-        hasRotationSignature: Boolean(rotationSignature),
-        sigOk,
-        messageHashSuffix,
-        signatureLength: sigBytes.length,
+      JSON.stringify({
+        event: 'key_rotation_verify_result',
+        ...buildSafeKeyRegisterDiagnostics({
+          userId,
+          userEmail: user.email,
+          activeDeviceKey: activeDeviceKey.publicKey,
+          newPublicKey,
+          hasRotationSignature: Boolean(rotationSignature),
+          sigOk,
+          messageHashSuffix,
+          signatureLength: sigBytes.length,
+        }),
       }),
     );
 
