@@ -44,6 +44,7 @@ describe("api client interceptors", () => {
     const config = await req.fulfilled({
       headers,
       // The remaining axios config fields aren't read by our interceptor.
+      url: "/auth/keys/register",
     } as unknown as InternalAxiosRequestConfig);
     expect(config.headers.get("Authorization")).toBe("Bearer jwt-abc");
   });
@@ -63,7 +64,7 @@ describe("api client interceptors", () => {
     expect(config.headers.get("Authorization")).toBeFalsy();
   });
 
-  it("clears the token and signals on a 401", async () => {
+  it("signals on a 401 and leaves token-store clearing to auth-state handling", async () => {
     const onUnauth = jest.fn();
     setUnauthorizedHandler(onUnauth);
 
@@ -76,11 +77,11 @@ describe("api client interceptors", () => {
     await expect(
       res.rejected({ response: { status: 401 } }),
     ).rejects.toBeDefined();
-    expect(mockClear).toHaveBeenCalledTimes(1);
     expect(onUnauth).toHaveBeenCalledTimes(1);
+    expect(mockClear).not.toHaveBeenCalled();
   });
 
-  it("does not clear or signal for non-401 errors", async () => {
+  it("does not signal for non-401 errors", async () => {
     const onUnauth = jest.fn();
     setUnauthorizedHandler(onUnauth);
 
@@ -93,11 +94,10 @@ describe("api client interceptors", () => {
     await expect(
       res.rejected({ response: { status: 500 } }),
     ).rejects.toBeDefined();
-    expect(mockClear).not.toHaveBeenCalled();
     expect(onUnauth).not.toHaveBeenCalled();
   });
 
-  it("does not clear on a network error (no response)", async () => {
+  it("does not signal on a network error (no response)", async () => {
     const onUnauth = jest.fn();
     setUnauthorizedHandler(onUnauth);
 
@@ -110,7 +110,6 @@ describe("api client interceptors", () => {
     await expect(
       res.rejected({ message: "Network Error", isAxiosError: true }),
     ).rejects.toBeDefined();
-    expect(mockClear).not.toHaveBeenCalled();
     expect(onUnauth).not.toHaveBeenCalled();
   });
 });

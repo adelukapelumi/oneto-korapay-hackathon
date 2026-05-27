@@ -3,6 +3,7 @@ import {
   APPROVAL_DIFFERENT_PHONE_MESSAGE,
   APPROVAL_RECOVERY_KEY_MISSING_MESSAGE,
   APPROVAL_REGISTER_FAILED_MESSAGE,
+  APPROVAL_SESSION_EXPIRED_MESSAGE,
   activateDeviceApproval,
   precheckDeviceApproval,
 } from "./device-approval-activation";
@@ -33,10 +34,12 @@ describe("device approval activation", () => {
       rawApprovalQr: stringifyDeviceTransferPayload(approval),
       pendingPublicKey: VALID_PUBLIC_KEY,
       pendingPrivateKey,
+      authStateStatus: "recovery_pending",
       registerPublicKey,
       promotePendingRecoveryKeypair,
       completeOnboarding,
       log,
+      getTokenFn: async () => "jwt-123",
     });
 
     expect(result.ok).toBe(true);
@@ -67,16 +70,18 @@ describe("device approval activation", () => {
       rawApprovalQr: stringifyDeviceTransferPayload(approval),
       pendingPublicKey: VALID_PUBLIC_KEY,
       pendingPrivateKey: new Uint8Array(32).fill(9),
+      authStateStatus: "recovery_pending",
       registerPublicKey,
       promotePendingRecoveryKeypair,
       completeOnboarding,
       log,
+      getTokenFn: async () => "jwt-123",
     });
 
     expect(result).toEqual({
       ok: false,
       routeTarget: null,
-      message: APPROVAL_REGISTER_FAILED_MESSAGE,
+      message: APPROVAL_SESSION_EXPIRED_MESSAGE,
     });
     expect(promotePendingRecoveryKeypair).not.toHaveBeenCalled();
     expect(completeOnboarding).not.toHaveBeenCalled();
@@ -96,16 +101,50 @@ describe("device approval activation", () => {
       rawApprovalQr: stringifyDeviceTransferPayload(approval),
       pendingPublicKey: null,
       pendingPrivateKey: null,
+      authStateStatus: "recovery_pending",
       registerPublicKey,
       promotePendingRecoveryKeypair,
       completeOnboarding,
       log,
+      getTokenFn: async () => "jwt-123",
     });
 
     expect(result).toEqual({
       ok: false,
       routeTarget: null,
       message: APPROVAL_RECOVERY_KEY_MISSING_MESSAGE,
+    });
+    expect(registerPublicKey).not.toHaveBeenCalled();
+    expect(promotePendingRecoveryKeypair).not.toHaveBeenCalled();
+    expect(completeOnboarding).not.toHaveBeenCalled();
+  });
+
+  it("missing token precheck returns session-expired and does not call registerPublicKey", async () => {
+    const registerPublicKey = jest.fn().mockResolvedValue({ success: true });
+    const promotePendingRecoveryKeypair = jest.fn().mockResolvedValue(undefined);
+    const completeOnboarding = jest.fn();
+    const log = jest.fn();
+    const approval = buildNewDeviceApprovalPayload(
+      VALID_PUBLIC_KEY,
+      VALID_ROTATION_SIGNATURE,
+    );
+
+    const result = await activateDeviceApproval({
+      rawApprovalQr: stringifyDeviceTransferPayload(approval),
+      pendingPublicKey: VALID_PUBLIC_KEY,
+      pendingPrivateKey: new Uint8Array(32).fill(8),
+      authStateStatus: "recovery_pending",
+      registerPublicKey,
+      promotePendingRecoveryKeypair,
+      completeOnboarding,
+      log,
+      getTokenFn: async () => null,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      routeTarget: null,
+      message: APPROVAL_SESSION_EXPIRED_MESSAGE,
     });
     expect(registerPublicKey).not.toHaveBeenCalled();
     expect(promotePendingRecoveryKeypair).not.toHaveBeenCalled();
@@ -147,10 +186,12 @@ describe("device approval activation", () => {
       rawApprovalQr: stringifyDeviceTransferPayload(approval),
       pendingPublicKey: VALID_PUBLIC_KEY,
       pendingPrivateKey,
+      authStateStatus: "recovery_pending",
       registerPublicKey,
       promotePendingRecoveryKeypair,
       completeOnboarding,
       log,
+      getTokenFn: async () => "jwt-123",
     });
 
     const flattenedLogs = JSON.stringify(log.mock.calls);
@@ -158,5 +199,36 @@ describe("device approval activation", () => {
     expect(flattenedLogs).not.toContain("pin");
     expect(flattenedLogs).not.toContain(VALID_ROTATION_SIGNATURE);
     expect(flattenedLogs).not.toContain(VALID_PUBLIC_KEY);
+  });
+
+  it("returns register-failed message for non-401 register errors", async () => {
+    const registerPublicKey = jest
+      .fn()
+      .mockRejectedValue(new ApiError("server error", 500, "INTERNAL"));
+    const promotePendingRecoveryKeypair = jest.fn().mockResolvedValue(undefined);
+    const completeOnboarding = jest.fn();
+    const log = jest.fn();
+    const approval = buildNewDeviceApprovalPayload(
+      VALID_PUBLIC_KEY,
+      VALID_ROTATION_SIGNATURE,
+    );
+
+    const result = await activateDeviceApproval({
+      rawApprovalQr: stringifyDeviceTransferPayload(approval),
+      pendingPublicKey: VALID_PUBLIC_KEY,
+      pendingPrivateKey: new Uint8Array(32).fill(9),
+      authStateStatus: "recovery_pending",
+      registerPublicKey,
+      promotePendingRecoveryKeypair,
+      completeOnboarding,
+      log,
+      getTokenFn: async () => "jwt-123",
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      routeTarget: null,
+      message: APPROVAL_REGISTER_FAILED_MESSAGE,
+    });
   });
 });

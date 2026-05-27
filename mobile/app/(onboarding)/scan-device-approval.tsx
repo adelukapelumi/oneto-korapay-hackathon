@@ -54,6 +54,7 @@ type Phase =
 export default function ScanDeviceApprovalScreen(): React.ReactElement {
   const router = useRouter();
   const {
+    state,
     completeOnboarding,
     discardPendingRecoveryKeypair,
     getPendingRecoveryKeypair,
@@ -131,6 +132,7 @@ export default function ScanDeviceApprovalScreen(): React.ReactElement {
         rawApprovalQr,
         pendingPublicKey: staged.publicKey,
         pendingPrivateKey: staged.privateKey,
+        authStateStatus: state.status,
         registerPublicKey,
         promotePendingRecoveryKeypair,
         completeOnboarding,
@@ -169,6 +171,7 @@ export default function ScanDeviceApprovalScreen(): React.ReactElement {
         rawApprovalQr,
         pendingPublicKey: loaded.publicKey,
         pendingPrivateKey: loaded.privateKey,
+        authStateStatus: state.status,
         registerPublicKey,
         promotePendingRecoveryKeypair,
         completeOnboarding,

@@ -1,5 +1,6 @@
 import type { PublicKeyString, SignatureString } from "@oneto/shared";
 import { ApiError, NetworkError } from "../api/errors";
+import { getToken } from "../auth/token-store";
 import {
   DeviceTransferPayloadError,
   assertApprovalMatchesPendingPublicKey,
@@ -16,6 +17,8 @@ export const APPROVAL_RECOVERY_KEY_MISSING_MESSAGE =
   "Recovery key missing. Set up again or contact support.";
 export const APPROVAL_REGISTER_FAILED_MESSAGE =
   "Couldn't register this phone. Check connection and try again.";
+export const APPROVAL_SESSION_EXPIRED_MESSAGE =
+  "Session expired. Sign in again to continue moving this phone.";
 
 export interface DeviceApprovalLog {
   readonly event: string;
@@ -34,6 +37,7 @@ export interface ActivateDeviceApprovalInput {
   readonly rawApprovalQr: string;
   readonly pendingPublicKey: string | null;
   readonly pendingPrivateKey: Uint8Array | null;
+  readonly authStateStatus: string;
   readonly registerPublicKey: (
     publicKey: PublicKeyString,
     rotationSignature: SignatureString,
@@ -44,6 +48,7 @@ export interface ActivateDeviceApprovalInput {
     publicKey: PublicKeyString,
   ) => void;
   readonly log: DeviceApprovalLogger;
+  readonly getTokenFn?: () => Promise<string | null>;
 }
 
 export interface DeviceApprovalSuccess {
@@ -81,10 +86,12 @@ export async function activateDeviceApproval({
   rawApprovalQr,
   pendingPublicKey,
   pendingPrivateKey,
+  authStateStatus,
   registerPublicKey,
   promotePendingRecoveryKeypair,
   completeOnboarding,
   log,
+  getTokenFn = getToken,
 }: ActivateDeviceApprovalInput): Promise<DeviceApprovalResult> {
   if (!pendingPublicKey || !pendingPrivateKey) {
     log({
@@ -110,10 +117,23 @@ export async function activateDeviceApproval({
 
   const approval = parsed.approval;
   const suffix = shortKeySuffix(approval.newPublicKey);
+  const token = await getTokenFn();
+  const tokenPresent = Boolean(token);
+  log({
+    event: "device_approval.activation_auth_context",
+    context: { authStateStatus, tokenPresent, publicKeySuffix: suffix },
+  });
+  if (!tokenPresent) {
+    return {
+      ok: false,
+      routeTarget: null,
+      message: APPROVAL_SESSION_EXPIRED_MESSAGE,
+    };
+  }
 
   log({
     event: "device_approval.register_public_key_started",
-    context: { publicKeySuffix: suffix },
+    context: { publicKeySuffix: suffix, authStateStatus, tokenPresent },
   });
   try {
     await registerPublicKey(approval.newPublicKey, approval.rotationSignature);
@@ -122,10 +142,18 @@ export async function activateDeviceApproval({
       context: { publicKeySuffix: suffix },
     });
   } catch (error) {
+    const errorContext = safeErrorContext(error);
     log({
       event: "device_approval.register_public_key_failed",
-      context: { publicKeySuffix: suffix, ...safeErrorContext(error) },
+      context: { publicKeySuffix: suffix, authStateStatus, ...errorContext },
     });
+    if ("status" in errorContext && errorContext.status === 401) {
+      return {
+        ok: false,
+        routeTarget: null,
+        message: APPROVAL_SESSION_EXPIRED_MESSAGE,
+      };
+    }
     return {
       ok: false,
       routeTarget: null,
