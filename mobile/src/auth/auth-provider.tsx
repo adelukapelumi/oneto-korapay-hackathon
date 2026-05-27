@@ -255,8 +255,25 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
       wipeInMemoryKey();
       void (async () => {
         await clearToken();
-        const keypairPresent = await hasKeypair();
+        const [keypairPresent, pendingRecoveryKeypairPresent] =
+          await Promise.all([hasKeypair(), hasPendingRecoveryKeypair()]);
         if (!isMounted.current) return;
+        if (pendingRecoveryKeypairPresent) {
+          setState((prev) => {
+            const user =
+              prev.status === "authed" ||
+              prev.status === "locked" ||
+              prev.status === "onboarding" ||
+              prev.status === "recovery_pending"
+                ? prev.user
+                : loadCachedMeProfile();
+            if (!user) {
+              return { status: "unauthed" };
+            }
+            return { status: "recovery_pending", user };
+          });
+          return;
+        }
         if (!keypairPresent) {
           setState({ status: "unauthed" });
         } else {
