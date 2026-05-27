@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -11,7 +11,9 @@ import { CameraView, useCameraPermissions } from "expo-camera";
 import { useRouter } from "expo-router";
 import { Screen } from "../../components/Screen";
 import { registerPublicKey } from "../../src/api/keys";
+import { getToken } from "../../src/auth/token-store";
 import { useAuth } from "../../src/auth/auth-state";
+import { RECOVERY_APPROVAL_RETURN_TO } from "../../src/auth/recovery-reauth";
 import {
   PinIncorrectError,
   PinLockedError,
@@ -27,10 +29,12 @@ import { describeAttemptState, formatMmSs } from "../../src/lib/pin-attempts";
 import {
   APPROVAL_FAILED_RESCAN_MESSAGE,
   APPROVAL_RECOVERY_KEY_MISSING_MESSAGE,
+  APPROVAL_SESSION_EXPIRED_MESSAGE,
   activateDeviceApproval,
   precheckDeviceApproval,
   type DeviceApprovalLog,
 } from "../../src/keys/device-approval-activation";
+import { createApprovalScanLock } from "../../src/keys/approval-scan-lock";
 import { logger } from "../../src/lib/logger";
 import { useThemeMode } from "../../src/theme/theme-provider";
 import {
@@ -54,9 +58,11 @@ type Phase =
 export default function ScanDeviceApprovalScreen(): React.ReactElement {
   const router = useRouter();
   const {
+    state,
     completeOnboarding,
     discardPendingRecoveryKeypair,
     getPendingRecoveryKeypair,
+    reauthenticate,
   } = useAuth();
   const { mode } = useThemeMode();
   const t = getTheme(mode);
@@ -64,12 +70,57 @@ export default function ScanDeviceApprovalScreen(): React.ReactElement {
   const [phase, setPhase] = useState<Phase>({ kind: "scanning" });
   const [pin, setPin] = useState("");
   const [lockSecondsRemaining, setLockSecondsRemaining] = useState(0);
+  const [reauthSending, setReauthSending] = useState(false);
+  const [reauthError, setReauthError] = useState<string | null>(null);
+  const approvalScanLockRef = useRef(createApprovalScanLock());
+  const recoverySessionIdentityRef = useRef<{
+    readonly userId: string | null;
+    readonly email: string | null;
+  } | null>(null);
 
   useEffect(() => {
     if (permission && !permission.granted) {
       void requestPermission();
     }
   }, [permission, requestPermission]);
+
+  useEffect(() => {
+    if (recoverySessionIdentityRef.current !== null) {
+      return;
+    }
+    if (
+      state.status === "recovery_pending" ||
+      state.status === "onboarding" ||
+      state.status === "locked" ||
+      state.status === "authed"
+    ) {
+      recoverySessionIdentityRef.current = {
+        userId: state.user.id,
+        email: state.user.email,
+      };
+      logDeviceApproval({
+        event: "recovery_session_identity_captured",
+        context: {
+          sessionUserId: state.user.id,
+          sessionUserEmail: state.user.email,
+        },
+      });
+    }
+  }, [state]);
+
+  useEffect(() => {
+    void (async () => {
+      const token = await getToken();
+      logDeviceApproval({
+        event: "recovery_screen_auth_context",
+        context: {
+          screen: "scan-device-approval",
+          authStateStatus: state.status,
+          tokenPresent: Boolean(token),
+        },
+      });
+    })();
+  }, [state.status]);
 
   useEffect(() => {
     let cancelled = false;
@@ -108,6 +159,13 @@ export default function ScanDeviceApprovalScreen(): React.ReactElement {
         });
         return;
       }
+      logDeviceApproval({
+        event: "device_approval.pending_public_key_loaded",
+        context: {
+          pendingPublicKeySuffix: shortKeySuffix(pendingPublicKey),
+          hasStagedKeypair: Boolean(staged),
+        },
+      });
 
       if (!staged) {
         const precheck = precheckDeviceApproval({
@@ -131,6 +189,24 @@ export default function ScanDeviceApprovalScreen(): React.ReactElement {
         rawApprovalQr,
         pendingPublicKey: staged.publicKey,
         pendingPrivateKey: staged.privateKey,
+        authStateStatus: state.status,
+        authUserId:
+          state.status === "recovery_pending" ||
+          state.status === "onboarding" ||
+          state.status === "locked" ||
+          state.status === "authed"
+            ? state.user.id
+            : null,
+        authUserEmail:
+          state.status === "recovery_pending" ||
+          state.status === "onboarding" ||
+          state.status === "locked" ||
+          state.status === "authed"
+            ? state.user.email
+            : null,
+        expectedRecoveryUserId: recoverySessionIdentityRef.current?.userId ?? null,
+        expectedRecoveryUserEmail:
+          recoverySessionIdentityRef.current?.email ?? null,
         registerPublicKey,
         promotePendingRecoveryKeypair,
         completeOnboarding,
@@ -169,6 +245,24 @@ export default function ScanDeviceApprovalScreen(): React.ReactElement {
         rawApprovalQr,
         pendingPublicKey: loaded.publicKey,
         pendingPrivateKey: loaded.privateKey,
+        authStateStatus: state.status,
+        authUserId:
+          state.status === "recovery_pending" ||
+          state.status === "onboarding" ||
+          state.status === "locked" ||
+          state.status === "authed"
+            ? state.user.id
+            : null,
+        authUserEmail:
+          state.status === "recovery_pending" ||
+          state.status === "onboarding" ||
+          state.status === "locked" ||
+          state.status === "authed"
+            ? state.user.email
+            : null,
+        expectedRecoveryUserId: recoverySessionIdentityRef.current?.userId ?? null,
+        expectedRecoveryUserEmail:
+          recoverySessionIdentityRef.current?.email ?? null,
         registerPublicKey,
         promotePendingRecoveryKeypair,
         completeOnboarding,
@@ -233,8 +327,33 @@ export default function ScanDeviceApprovalScreen(): React.ReactElement {
   }
 
   function retry(): void {
+    approvalScanLockRef.current.reset();
+    setReauthError(null);
     setPin("");
     setPhase({ kind: "scanning" });
+  }
+
+  async function handleSignInAgain(): Promise<void> {
+    setReauthSending(true);
+    setReauthError(null);
+    try {
+      const email = await reauthenticate();
+      router.push({
+        pathname: "/(auth)/verify",
+        params: {
+          email,
+          returnTo: RECOVERY_APPROVAL_RETURN_TO,
+        },
+      });
+    } catch (error) {
+      logDeviceApproval({
+        event: "reauthenticate_failed",
+        context: { screen: "scan-device-approval" },
+      });
+      setReauthError("Couldn't send OTP. Check your connection and try again.");
+    } finally {
+      setReauthSending(false);
+    }
   }
 
   if (!permission?.granted) {
@@ -333,6 +452,27 @@ export default function ScanDeviceApprovalScreen(): React.ReactElement {
             >
               <Text style={styles.primaryButtonText}>Scan again</Text>
             </Pressable>
+            {phase.message === APPROVAL_SESSION_EXPIRED_MESSAGE ? (
+              <Pressable
+                accessibilityRole="button"
+                disabled={reauthSending}
+                onPress={() => {
+                  void handleSignInAgain();
+                }}
+                style={({ pressed }) => [
+                  styles.secondaryButton,
+                  reauthSending && styles.buttonDisabled,
+                  pressed && !reauthSending && styles.buttonPressed,
+                ]}
+              >
+                <Text style={styles.secondaryButtonText}>
+                  {reauthSending
+                    ? "Sending OTP..."
+                    : "Sign in again to continue"}
+                </Text>
+              </Pressable>
+            ) : null}
+            {reauthError ? <Text style={styles.error}>{reauthError}</Text> : null}
           </View>
         </View>
       </Screen>
@@ -347,6 +487,13 @@ export default function ScanDeviceApprovalScreen(): React.ReactElement {
         onBarcodeScanned={
           phase.kind === "scanning"
             ? ({ data }: { readonly data: string }) => {
+                if (!approvalScanLockRef.current.tryLock(data)) {
+                  return;
+                }
+                logDeviceApproval({
+                  event: "device_approval.scan_locked",
+                  context: { reason: "approval_qr_detected" },
+                });
                 void processApproval(data);
               }
             : undefined
@@ -443,6 +590,22 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.button,
     textAlign: "center",
   },
+  secondaryButton: {
+    minHeight: 52,
+    borderRadius: radii.pill,
+    borderWidth: borders.standard,
+    borderColor: colors.secondary,
+    backgroundColor: colors.secondary,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: spacing.lg,
+  },
+  secondaryButtonText: {
+    color: "#1B1208",
+    fontFamily: fonts.bold,
+    fontSize: fontSizes.button,
+    textAlign: "center",
+  },
   buttonPressed: {
     opacity: 0.9,
     transform: [{ translateY: 1 }],
@@ -511,3 +674,10 @@ const styles = StyleSheet.create({
     lineHeight: 22,
   },
 });
+
+function shortKeySuffix(publicKey: string): string {
+  if (publicKey.length <= 8) {
+    return publicKey;
+  }
+  return publicKey.slice(-8);
+}

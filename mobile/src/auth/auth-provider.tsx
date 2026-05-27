@@ -31,6 +31,7 @@ import {
   resetLocalAppForTesting as resetLocalAppStorageForTesting,
   wipeLocalPaymentKeyOnlyForTesting as wipeLocalPaymentKeyStorageOnlyForTesting,
 } from "./local-test-reset";
+import { shouldClearTokenAfterUnauthorized } from "./unauthorized-policy";
 
 interface ProviderProps {
   readonly children: React.ReactNode;
@@ -254,11 +255,15 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
       // keypair on disk - the user just needs to sign back in.
       wipeInMemoryKey();
       void (async () => {
-        await clearToken();
         const [keypairPresent, pendingRecoveryKeypairPresent] =
           await Promise.all([hasKeypair(), hasPendingRecoveryKeypair()]);
         if (!isMounted.current) return;
-        if (pendingRecoveryKeypairPresent) {
+        if (
+          !shouldClearTokenAfterUnauthorized({ pendingRecoveryKeypairPresent })
+        ) {
+          logger.info("unauthorized_while_recovery_pending", {
+            tokenPreserved: true,
+          });
           setState((prev) => {
             const user =
               prev.status === "authed" ||
@@ -274,6 +279,7 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
           });
           return;
         }
+        await clearToken();
         if (!keypairPresent) {
           setState({ status: "unauthed" });
         } else {
@@ -354,7 +360,7 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
         if (!keypairPresent && pendingRecoveryKeypairPresent && token) {
           // A recovery request is in progress on this device. Keep the user
           // out of the main app until support approves the new key.
-          let user: Me | null = null;
+          let user: Me | null = loadCachedMeProfile();
           try {
             user = await fetchMe();
             persistMeProfile(user);
@@ -373,6 +379,9 @@ export function AuthProvider({ children }: ProviderProps): React.ReactElement {
           if (user) {
             setState({ status: "recovery_pending", user });
           } else {
+            logger.warn(
+              "Recovery pending bootstrap missing user profile; forcing sign-in",
+            );
             await clearToken();
             if (!isMounted.current) return;
             setState({ status: "unauthed" });

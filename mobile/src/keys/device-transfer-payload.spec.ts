@@ -194,10 +194,17 @@ describe("device transfer payloads", () => {
 
   it("signs approval only after PIN unlock", async () => {
     const privateKey = new Uint8Array(32).fill(7);
-    const unlockKeypairWithPin = jest.fn().mockResolvedValue({ privateKey });
+    const unlockKeypairWithPin = jest.fn().mockResolvedValue({
+      privateKey,
+      publicKey: VALID_PUBLIC_KEY,
+    });
     const signRotation = jest
       .fn()
       .mockReturnValue(VALID_ROTATION_SIGNATURE);
+    const derivePublicKeyFromPrivateKey = jest
+      .fn()
+      .mockReturnValue(VALID_PUBLIC_KEY);
+    const verifyRotationSignature = jest.fn().mockResolvedValue(true);
 
     const request = buildNewDeviceRequestPayload(VALID_PUBLIC_KEY);
     const approval = await buildApprovalQrAfterPinUnlock({
@@ -205,15 +212,30 @@ describe("device transfer payloads", () => {
       pin: "123456",
       unlockKeypairWithPin,
       signRotation,
+      derivePublicKeyFromPrivateKey,
+      verifyRotationSignature,
     });
 
     expect(unlockKeypairWithPin).toHaveBeenCalledWith("123456");
+    expect(derivePublicKeyFromPrivateKey).toHaveBeenCalledWith(privateKey);
     expect(signRotation).toHaveBeenCalledWith(VALID_PUBLIC_KEY, privateKey);
+    expect(verifyRotationSignature).toHaveBeenCalledWith(
+      VALID_PUBLIC_KEY,
+      VALID_PUBLIC_KEY,
+      VALID_ROTATION_SIGNATURE,
+    );
     const unlockCallOrder = unlockKeypairWithPin.mock.invocationCallOrder[0];
+    const deriveCallOrder =
+      derivePublicKeyFromPrivateKey.mock.invocationCallOrder[0];
     const signCallOrder = signRotation.mock.invocationCallOrder[0];
+    const verifyCallOrder = verifyRotationSignature.mock.invocationCallOrder[0];
     expect(unlockCallOrder).toBeDefined();
+    expect(deriveCallOrder).toBeDefined();
     expect(signCallOrder).toBeDefined();
+    expect(verifyCallOrder).toBeDefined();
     expect(unlockCallOrder as number).toBeLessThan(signCallOrder as number);
+    expect(deriveCallOrder as number).toBeLessThan(signCallOrder as number);
+    expect(signCallOrder as number).toBeLessThan(verifyCallOrder as number);
     expect(approval).toEqual(
       buildNewDeviceApprovalPayload(
         VALID_PUBLIC_KEY,
@@ -226,6 +248,8 @@ describe("device transfer payloads", () => {
   it("does not sign when PIN unlock fails", async () => {
     const unlockKeypairWithPin = jest.fn().mockRejectedValue(new Error("no"));
     const signRotation = jest.fn();
+    const derivePublicKeyFromPrivateKey = jest.fn();
+    const verifyRotationSignature = jest.fn();
     const request = buildNewDeviceRequestPayload(VALID_PUBLIC_KEY);
 
     await expect(
@@ -234,9 +258,79 @@ describe("device transfer payloads", () => {
         pin: "000000",
         unlockKeypairWithPin,
         signRotation,
+        derivePublicKeyFromPrivateKey,
+        verifyRotationSignature,
       }),
     ).rejects.toThrow("no");
 
+    expect(derivePublicKeyFromPrivateKey).not.toHaveBeenCalled();
     expect(signRotation).not.toHaveBeenCalled();
+    expect(verifyRotationSignature).not.toHaveBeenCalled();
+  });
+
+  it("does not generate approval when private key does not match stored public key", async () => {
+    const privateKey = new Uint8Array(32).fill(7);
+    const unlockKeypairWithPin = jest.fn().mockResolvedValue({
+      privateKey,
+      publicKey: VALID_PUBLIC_KEY,
+    });
+    const signRotation = jest
+      .fn()
+      .mockReturnValue(VALID_ROTATION_SIGNATURE);
+    const derivePublicKeyFromPrivateKey = jest
+      .fn()
+      .mockReturnValue(OTHER_PUBLIC_KEY);
+    const verifyRotationSignature = jest.fn().mockResolvedValue(true);
+    const request = buildNewDeviceRequestPayload(VALID_PUBLIC_KEY);
+
+    await expect(
+      buildApprovalQrAfterPinUnlock({
+        rawRequestQr: stringifyDeviceTransferPayload(request),
+        pin: "123456",
+        unlockKeypairWithPin,
+        signRotation,
+        derivePublicKeyFromPrivateKey,
+        verifyRotationSignature,
+      }),
+    ).rejects.toThrow(
+      "This phone's payment key is inconsistent. Use account recovery.",
+    );
+
+    expect(signRotation).not.toHaveBeenCalled();
+    expect(verifyRotationSignature).not.toHaveBeenCalled();
+    expect(Array.from(privateKey)).toEqual(Array.from(new Uint8Array(32)));
+  });
+
+  it("does not generate approval when local rotation signature verification fails", async () => {
+    const privateKey = new Uint8Array(32).fill(7);
+    const unlockKeypairWithPin = jest.fn().mockResolvedValue({
+      privateKey,
+      publicKey: VALID_PUBLIC_KEY,
+    });
+    const signRotation = jest
+      .fn()
+      .mockReturnValue(VALID_ROTATION_SIGNATURE);
+    const derivePublicKeyFromPrivateKey = jest
+      .fn()
+      .mockReturnValue(VALID_PUBLIC_KEY);
+    const verifyRotationSignature = jest.fn().mockResolvedValue(false);
+    const request = buildNewDeviceRequestPayload(VALID_PUBLIC_KEY);
+
+    await expect(
+      buildApprovalQrAfterPinUnlock({
+        rawRequestQr: stringifyDeviceTransferPayload(request),
+        pin: "123456",
+        unlockKeypairWithPin,
+        signRotation,
+        derivePublicKeyFromPrivateKey,
+        verifyRotationSignature,
+      }),
+    ).rejects.toThrow(
+      "Could not create a valid approval. Use account recovery.",
+    );
+
+    expect(signRotation).toHaveBeenCalledTimes(1);
+    expect(verifyRotationSignature).toHaveBeenCalledTimes(1);
+    expect(Array.from(privateKey)).toEqual(Array.from(new Uint8Array(32)));
   });
 });

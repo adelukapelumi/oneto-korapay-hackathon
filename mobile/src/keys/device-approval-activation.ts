@@ -1,5 +1,11 @@
 import type { PublicKeyString, SignatureString } from "@oneto/shared";
 import { ApiError, NetworkError } from "../api/errors";
+import { getToken } from "../auth/token-store";
+import { isJwtExpired } from "../auth/jwt-decode";
+import {
+  hasRecoveryActivationIdentityMismatch,
+  RECOVERY_ACTIVATION_USER_MISMATCH_MESSAGE,
+} from "../auth/recovery-reauth";
 import {
   DeviceTransferPayloadError,
   assertApprovalMatchesPendingPublicKey,
@@ -16,6 +22,12 @@ export const APPROVAL_RECOVERY_KEY_MISSING_MESSAGE =
   "Recovery key missing. Set up again or contact support.";
 export const APPROVAL_REGISTER_FAILED_MESSAGE =
   "Couldn't register this phone. Check connection and try again.";
+export const APPROVAL_SESSION_EXPIRED_MESSAGE =
+  "Session expired. Sign in again to continue moving this phone.";
+export const APPROVAL_INVALID_OLD_PHONE_MESSAGE =
+  "Approval code is invalid or this old phone is no longer the active Oneto phone. Try again from the active phone or use recovery.";
+export const APPROVAL_USER_MISMATCH_MESSAGE =
+  RECOVERY_ACTIVATION_USER_MISMATCH_MESSAGE;
 
 export interface DeviceApprovalLog {
   readonly event: string;
@@ -34,6 +46,11 @@ export interface ActivateDeviceApprovalInput {
   readonly rawApprovalQr: string;
   readonly pendingPublicKey: string | null;
   readonly pendingPrivateKey: Uint8Array | null;
+  readonly authStateStatus: string;
+  readonly authUserId?: string | null;
+  readonly authUserEmail?: string | null;
+  readonly expectedRecoveryUserId?: string | null;
+  readonly expectedRecoveryUserEmail?: string | null;
   readonly registerPublicKey: (
     publicKey: PublicKeyString,
     rotationSignature: SignatureString,
@@ -44,6 +61,7 @@ export interface ActivateDeviceApprovalInput {
     publicKey: PublicKeyString,
   ) => void;
   readonly log: DeviceApprovalLogger;
+  readonly getTokenFn?: () => Promise<string | null>;
 }
 
 export interface DeviceApprovalSuccess {
@@ -81,10 +99,16 @@ export async function activateDeviceApproval({
   rawApprovalQr,
   pendingPublicKey,
   pendingPrivateKey,
+  authStateStatus,
+  authUserId = null,
+  authUserEmail = null,
+  expectedRecoveryUserId = null,
+  expectedRecoveryUserEmail = null,
   registerPublicKey,
   promotePendingRecoveryKeypair,
   completeOnboarding,
   log,
+  getTokenFn = getToken,
 }: ActivateDeviceApprovalInput): Promise<DeviceApprovalResult> {
   if (!pendingPublicKey || !pendingPrivateKey) {
     log({
@@ -110,10 +134,54 @@ export async function activateDeviceApproval({
 
   const approval = parsed.approval;
   const suffix = shortKeySuffix(approval.newPublicKey);
+  const pendingSuffix = shortKeySuffix(pendingPublicKey);
+  const token = await getTokenFn();
+  const tokenPresent = Boolean(token);
+  const tokenExpired = token ? isJwtExpired(token) : false;
+  const recoveryIdentityMismatch = hasRecoveryActivationIdentityMismatch({
+    expectedUserId: expectedRecoveryUserId,
+    expectedEmail: expectedRecoveryUserEmail,
+    currentUserId: authUserId,
+    currentEmail: authUserEmail,
+  });
+  log({
+    event: "device_approval.activation_auth_context",
+    context: {
+      authStateStatus,
+      authUserId: authUserId ?? null,
+      authUserEmail: authUserEmail ?? null,
+      expectedRecoveryUserId: expectedRecoveryUserId ?? null,
+      expectedRecoveryUserEmail: expectedRecoveryUserEmail ?? null,
+      recoveryIdentityMismatch,
+      tokenPresent,
+      tokenExpired,
+      pendingPublicKeySuffix: pendingSuffix,
+      approvalPublicKeySuffix: suffix,
+    },
+  });
+  if (recoveryIdentityMismatch) {
+    return {
+      ok: false,
+      routeTarget: null,
+      message: APPROVAL_USER_MISMATCH_MESSAGE,
+    };
+  }
+  if (!tokenPresent || tokenExpired) {
+    return {
+      ok: false,
+      routeTarget: null,
+      message: APPROVAL_SESSION_EXPIRED_MESSAGE,
+    };
+  }
 
   log({
     event: "device_approval.register_public_key_started",
-    context: { publicKeySuffix: suffix },
+    context: {
+      publicKeySuffix: suffix,
+      authStateStatus,
+      tokenPresent,
+      tokenExpired,
+    },
   });
   try {
     await registerPublicKey(approval.newPublicKey, approval.rotationSignature);
@@ -122,10 +190,28 @@ export async function activateDeviceApproval({
       context: { publicKeySuffix: suffix },
     });
   } catch (error) {
+    const errorContext = safeErrorContext(error);
     log({
       event: "device_approval.register_public_key_failed",
-      context: { publicKeySuffix: suffix, ...safeErrorContext(error) },
+      context: { publicKeySuffix: suffix, authStateStatus, ...errorContext },
     });
+    if ("status" in errorContext && errorContext.status === 401) {
+      if (
+        "errorMessage" in errorContext &&
+        errorContext.errorMessage === "rotation_signature_invalid"
+      ) {
+        return {
+          ok: false,
+          routeTarget: null,
+          message: APPROVAL_INVALID_OLD_PHONE_MESSAGE,
+        };
+      }
+      return {
+        ok: false,
+        routeTarget: null,
+        message: APPROVAL_SESSION_EXPIRED_MESSAGE,
+      };
+    }
     return {
       ok: false,
       routeTarget: null,
@@ -199,15 +285,30 @@ function parseAndMatchApproval({
 }: ParseAndMatchApprovalInput): DeviceApprovalResult {
   try {
     const approval = parseNewDeviceApprovalQr(rawApprovalQr);
-    const suffix = shortKeySuffix(approval.newPublicKey);
+    const pendingSuffix = shortKeySuffix(pendingPublicKey);
+    const approvalSuffix = shortKeySuffix(approval.newPublicKey);
+    const keysMatch = approval.newPublicKey === pendingPublicKey;
     log({
       event: "device_approval.payload_parsed",
-      context: { stage, publicKeySuffix: suffix },
+      context: { stage, approvalPublicKeySuffix: approvalSuffix },
+    });
+    log({
+      event: "device_approval.pending_public_key_check",
+      context: {
+        stage,
+        pendingPublicKeySuffix: pendingSuffix,
+        approvalPublicKeySuffix: approvalSuffix,
+        keysMatch,
+      },
     });
     assertApprovalMatchesPendingPublicKey(approval, pendingPublicKey);
     log({
       event: "device_approval.pending_public_key_matched",
-      context: { stage, publicKeySuffix: suffix },
+      context: {
+        stage,
+        pendingPublicKeySuffix: pendingSuffix,
+        approvalPublicKeySuffix: approvalSuffix,
+      },
     });
     return { ok: true, routeTarget: APP_HOME_ROUTE, approval };
   } catch (error) {
@@ -251,6 +352,7 @@ function safeErrorContext(
       errorName: error.name,
       status: error.status,
       code: error.code ?? null,
+      errorMessage: error.message,
     };
   }
   if (error instanceof NetworkError) {

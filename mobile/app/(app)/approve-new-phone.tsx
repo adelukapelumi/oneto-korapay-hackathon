@@ -11,7 +11,11 @@ import { CameraView, useCameraPermissions } from "expo-camera";
 import { useRouter } from "expo-router";
 import QRCode from "react-native-qrcode-svg";
 import { Screen } from "../../components/Screen";
-import { signRotation } from "../../src/api/keys";
+import {
+  derivePublicKeyFromPrivateKey,
+  signRotation,
+  verifyRotationSignature,
+} from "../../src/api/keys";
 import { useAuth } from "../../src/auth/auth-state";
 import {
   PinIncorrectError,
@@ -30,6 +34,7 @@ import {
   stringifyDeviceTransferPayload,
   type NewDeviceRequestPayload,
 } from "../../src/keys/device-transfer-payload";
+import { logger } from "../../src/lib/logger";
 import { useThemeMode } from "../../src/theme/theme-provider";
 import {
   borders,
@@ -84,9 +89,19 @@ export default function ApproveNewPhoneScreen(): React.ReactElement {
     };
   }, []);
 
+  function logApprovalEvent(
+    event: string,
+    context: Readonly<Record<string, string | number | boolean | null>>,
+  ): void {
+    logger.info(event, context);
+  }
+
   function processRequest(rawRequestQr: string): void {
     try {
       const request = parseNewDeviceRequestQr(rawRequestQr);
+      logApprovalEvent("old_phone_request_qr_parsed", {
+        requestPublicKeySuffix: shortKeySuffix(request.newPublicKey),
+      });
       setPhase({ kind: "confirm", rawRequestQr, request });
     } catch (err) {
       setPhase({ kind: "error", message: approvalErrorMessage(err) });
@@ -104,6 +119,12 @@ export default function ApproveNewPhoneScreen(): React.ReactElement {
         pin,
         unlockKeypairWithPin,
         signRotation,
+        derivePublicKeyFromPrivateKey,
+        verifyRotationSignature,
+        log: logApprovalEvent,
+      });
+      logApprovalEvent("old_phone_approval_payload_created", {
+        approvalPublicKeySuffix: shortKeySuffix(approval.newPublicKey),
       });
       await clearAttempts();
       setPin("");
@@ -345,6 +366,16 @@ function approvalErrorMessage(err: unknown): string {
     return err.message;
   }
   return "This is not a valid Oneto phone move request.";
+}
+
+function shortKeySuffix(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  if (value.length <= 8) {
+    return value;
+  }
+  return value.slice(-8);
 }
 
 const styles = StyleSheet.create({

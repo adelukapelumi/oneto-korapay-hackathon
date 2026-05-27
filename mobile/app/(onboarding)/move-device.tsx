@@ -4,11 +4,13 @@ import { useRouter } from "expo-router";
 import QRCode from "react-native-qrcode-svg";
 import { Screen } from "../../components/Screen";
 import { useAuth } from "../../src/auth/auth-state";
+import { getToken } from "../../src/auth/token-store";
 import { getPendingRecoveryPublicKey } from "../../src/crypto/pin-derive";
 import {
   buildNewDeviceRequestPayload,
   stringifyDeviceTransferPayload,
 } from "../../src/keys/device-transfer-payload";
+import { logger } from "../../src/lib/logger";
 import { useThemeMode } from "../../src/theme/theme-provider";
 import {
   borders,
@@ -27,10 +29,21 @@ type LoadState =
 
 export default function MoveDeviceScreen(): React.ReactElement {
   const router = useRouter();
-  const { getPendingRecoveryKeypair } = useAuth();
+  const { state, getPendingRecoveryKeypair } = useAuth();
   const { mode } = useThemeMode();
   const t = getTheme(mode);
   const [loadState, setLoadState] = useState<LoadState>({ kind: "loading" });
+
+  useEffect(() => {
+    void (async () => {
+      const token = await getToken();
+      logger.info("recovery_screen_auth_context", {
+        screen: "move-device",
+        authStateStatus: state.status,
+        tokenPresent: Boolean(token),
+      });
+    })();
+  }, [state.status]);
 
   useEffect(() => {
     let cancelled = false;

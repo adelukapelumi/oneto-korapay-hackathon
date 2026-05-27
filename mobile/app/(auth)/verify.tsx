@@ -14,7 +14,12 @@ import { Screen } from "../../components/Screen";
 import { fetchMe, requestOtp, verifyOtp } from "../../src/api/auth";
 import { NetworkError, UnauthorizedError } from "../../src/api/errors";
 import { useAuth } from "../../src/auth/auth-state";
-import { setToken } from "../../src/auth/token-store";
+import {
+  isAllowedRecoveryReauthEmail,
+  RECOVERY_REAUTH_EMAIL_MISMATCH_MESSAGE,
+  sanitizeRecoveryReauthReturnTo,
+} from "../../src/auth/recovery-reauth";
+import { clearToken, setToken } from "../../src/auth/token-store";
 import { logger } from "../../src/lib/logger";
 import { BackButton } from "../../components/BackButton";
 import { useCompactLayout } from "../../src/ui/responsive";
@@ -38,9 +43,13 @@ export default function VerifyScreen(): React.ReactElement {
   const router = useRouter();
   const { mode } = useThemeMode();
   const t = getTheme(mode);
-  const params = useLocalSearchParams<{ email?: string }>();
+  const params = useLocalSearchParams<{ email?: string; returnTo?: string }>();
   const email = typeof params.email === "string" ? params.email : "";
-  const { signIn } = useAuth();
+  const returnTo =
+    typeof params.returnTo === "string"
+      ? sanitizeRecoveryReauthReturnTo(params.returnTo)
+      : null;
+  const { signIn, state } = useAuth();
 
   const [code, setCode] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -82,12 +91,52 @@ export default function VerifyScreen(): React.ReactElement {
       setError("Missing email. Go back and try again.");
       return;
     }
+    const expectedRecoveryEmail =
+      state.status === "recovery_pending" ||
+      state.status === "onboarding" ||
+      state.status === "locked" ||
+      state.status === "authed"
+        ? state.user.email
+        : null;
+    const expectedRecoveryUserId =
+      state.status === "recovery_pending" ||
+      state.status === "onboarding" ||
+      state.status === "locked" ||
+      state.status === "authed"
+        ? state.user.id
+        : null;
+    if (
+      !isAllowedRecoveryReauthEmail({
+        recoveryReturnTo: returnTo,
+        requestedEmail: email,
+        expectedEmail: expectedRecoveryEmail,
+      })
+    ) {
+      setError(RECOVERY_REAUTH_EMAIL_MISMATCH_MESSAGE);
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
       const { accessToken } = await verifyOtp(email, value);
       await setToken(accessToken);
       const me = await fetchMe();
+      if (
+        returnTo !== null &&
+        expectedRecoveryUserId !== null &&
+        me.id !== expectedRecoveryUserId
+      ) {
+        await clearToken();
+        logger.warn("recovery_reauth_user_mismatch", {
+          expectedUserId: expectedRecoveryUserId,
+          actualUserId: me.id,
+          expectedEmail: expectedRecoveryEmail,
+          actualEmail: me.email,
+        });
+        setError(RECOVERY_REAUTH_EMAIL_MISMATCH_MESSAGE);
+        setCode("");
+        return;
+      }
 
       // Show verified state briefly before transitioning.
       setVerified(true);
@@ -100,6 +149,9 @@ export default function VerifyScreen(): React.ReactElement {
       await new Promise<void>((resolve) => setTimeout(resolve, 1300));
 
       await signIn(accessToken, me);
+      if (returnTo) {
+        router.replace(returnTo);
+      }
     } catch (err) {
       if (err instanceof NetworkError) {
         setError(err.message);
@@ -119,6 +171,23 @@ export default function VerifyScreen(): React.ReactElement {
 
   async function onResend(): Promise<void> {
     if (!email || resendCooldown > 0) return;
+    const expectedRecoveryEmail =
+      state.status === "recovery_pending" ||
+      state.status === "onboarding" ||
+      state.status === "locked" ||
+      state.status === "authed"
+        ? state.user.email
+        : null;
+    if (
+      !isAllowedRecoveryReauthEmail({
+        recoveryReturnTo: returnTo,
+        requestedEmail: email,
+        expectedEmail: expectedRecoveryEmail,
+      })
+    ) {
+      setError(RECOVERY_REAUTH_EMAIL_MISMATCH_MESSAGE);
+      return;
+    }
     setResendCooldown(RESEND_COOLDOWN_SECONDS);
     setError(null);
     try {

@@ -4,7 +4,7 @@ import { DeviceKeyStatus } from '@prisma/client';
 import { sha512 } from '@noble/hashes/sha512';
 import * as ed from '@noble/ed25519';
 import { buildKeyRotationMessage, generateKeypair } from '@oneto/shared';
-import { KeysController } from './keys.controller';
+import { buildSafeKeyRegisterDiagnostics, KeysController } from './keys.controller';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -12,6 +12,7 @@ ed.etc.sha512Sync = (...messages) => sha512(ed.etc.concatBytes(...messages));
 
 interface MockUserRecord {
   id: string;
+  email: string;
   publicKey: string | null;
 }
 
@@ -86,7 +87,7 @@ describe('KeysController', () => {
   beforeEach(async () => {
     jest.useRealTimers();
 
-    currentUser = { id: userId, publicKey: null };
+    currentUser = { id: userId, email: 'oadeluka.2202531@stu.cu.edu.ng', publicKey: null };
     deviceKeys = [];
     nextDeviceKeyId = 1;
 
@@ -248,7 +249,7 @@ describe('KeysController', () => {
 
   it('treats same-publicKey registration as idempotent when the ACTIVE key already matches', async () => {
     const publicKey = generateKeypair().publicKeyString;
-    currentUser = { id: userId, publicKey };
+    currentUser = { id: userId, email: 'oadeluka.2202531@stu.cu.edu.ng', publicKey };
     addExistingDeviceKey(publicKey, DeviceKeyStatus.ACTIVE);
 
     const result = await controller.register(req, { publicKey });
@@ -264,7 +265,7 @@ describe('KeysController', () => {
     const oldPublicKey = generateKeypair().publicKeyString;
     const newPublicKey = generateKeypair().publicKeyString;
 
-    currentUser = { id: userId, publicKey: oldPublicKey };
+    currentUser = { id: userId, email: 'oadeluka.2202531@stu.cu.edu.ng', publicKey: oldPublicKey };
     addExistingDeviceKey(oldPublicKey, DeviceKeyStatus.ACTIVE);
 
     await expect(controller.register(req, { publicKey: newPublicKey })).rejects.toThrow(
@@ -277,7 +278,7 @@ describe('KeysController', () => {
     const wrongKeypair = generateKeypair();
     const newPublicKey = generateKeypair().publicKeyString;
 
-    currentUser = { id: userId, publicKey: oldKeypair.publicKeyString };
+    currentUser = { id: userId, email: 'oadeluka.2202531@stu.cu.edu.ng', publicKey: oldKeypair.publicKeyString };
     addExistingDeviceKey(oldKeypair.publicKeyString, DeviceKeyStatus.ACTIVE);
 
     const messageBytes = new TextEncoder().encode(buildKeyRotationMessage(newPublicKey));
@@ -296,7 +297,7 @@ describe('KeysController', () => {
     const oldKeypair = generateKeypair();
     const newPublicKey = generateKeypair().publicKeyString;
 
-    currentUser = { id: userId, publicKey: oldKeypair.publicKeyString };
+    currentUser = { id: userId, email: 'oadeluka.2202531@stu.cu.edu.ng', publicKey: oldKeypair.publicKeyString };
     const oldDeviceKey = addExistingDeviceKey(oldKeypair.publicKeyString, DeviceKeyStatus.ACTIVE);
 
     const messageBytes = new TextEncoder().encode(buildKeyRotationMessage(newPublicKey));
@@ -332,7 +333,7 @@ describe('KeysController', () => {
     const oldKeypair = generateKeypair();
     const newPublicKey = generateKeypair().publicKeyString;
 
-    currentUser = { id: userId, publicKey: oldKeypair.publicKeyString };
+    currentUser = { id: userId, email: 'oadeluka.2202531@stu.cu.edu.ng', publicKey: oldKeypair.publicKeyString };
     addExistingDeviceKey(oldKeypair.publicKeyString, DeviceKeyStatus.ACTIVE);
 
     const messageBytes = new TextEncoder().encode(buildKeyRotationMessage(newPublicKey));
@@ -352,5 +353,34 @@ describe('KeysController', () => {
     await expect(
       controller.register(req, { publicKey: generateKeypair().publicKeyString }),
     ).rejects.toThrow(UnauthorizedException);
+  });
+
+  it('buildSafeKeyRegisterDiagnostics redacts full keys and signature content', () => {
+    const diagnostics = buildSafeKeyRegisterDiagnostics({
+      userId: 'u_0123456789abcdef',
+      userEmail: 'oadeluka.2202531@stu.cu.edu.ng',
+      activeDeviceKey:
+        'ed25519:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+      newPublicKey:
+        'ed25519:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210',
+      hasRotationSignature: true,
+      sigOk: false,
+      messageHashSuffix: 'deadbeef',
+      signatureLength: 64,
+    });
+
+    expect(diagnostics).toEqual({
+      userId: 'u_0123456789abcdef',
+      userEmail: 'oadeluka.2202531@stu.cu.edu.ng',
+      activeDeviceKeySuffix: '89abcdef',
+      newPublicKeySuffix: '76543210',
+      hasRotationSignature: true,
+      sigOk: false,
+      messageHashSuffix: 'deadbeef',
+      signatureLength: 64,
+    });
+    const flattened = JSON.stringify(diagnostics);
+    expect(flattened).not.toContain('0123456789abcdef0123456789abcdef');
+    expect(flattened).not.toContain('fedcba9876543210fedcba9876543210');
   });
 });
