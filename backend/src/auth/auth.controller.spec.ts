@@ -4,6 +4,7 @@ import type { Response } from "express";
 import { AuthController } from "./auth.controller";
 import { AdminCookieSessionGuard } from "./admin-cookie-session.guard";
 import { AuthService } from "./auth.service";
+import { PrismaService } from "../prisma/prisma.service";
 import { JwtWrapperService } from "./jwt.service";
 import { JwtAuthGuard } from "./jwt-auth.guard";
 import {
@@ -43,6 +44,7 @@ describe("AuthController", () => {
         { provide: AuthService, useValue: mockAuthService },
         { provide: ConfigService, useValue: mockConfigService },
         { provide: JwtWrapperService, useValue: { verifyToken: jest.fn() } },
+        { provide: PrismaService, useValue: { user: { findUnique: jest.fn() } } },
       ],
     }).compile();
 

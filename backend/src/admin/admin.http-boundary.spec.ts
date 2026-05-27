@@ -11,6 +11,7 @@ import { AdminCookieSessionGuard } from "../auth/admin-cookie-session.guard";
 import { AdminCsrfGuard } from "../auth/admin-csrf.guard";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { JwtWrapperService } from "../auth/jwt.service";
+import { PrismaService } from "../prisma/prisma.service";
 
 const ALLOWED_ORIGIN = "https://admin.getoneto.com";
 const BEARER_ADMIN_TOKEN = "bearer-admin-token";
@@ -71,6 +72,24 @@ describe("Admin HTTP boundary", () => {
     }),
   };
 
+  const mockPrismaService = {
+    user: {
+      findUnique: jest.fn(async ({ where: { id } }: { where: { id: string } }) => {
+        if (id === ADMIN_PAYLOAD.sub) {
+          return {
+            id: ADMIN_PAYLOAD.sub,
+            email: ADMIN_PAYLOAD.email,
+            role: ADMIN_PAYLOAD.role,
+            status: "ACTIVE",
+            publicKey: null,
+          };
+        }
+
+        return null;
+      }),
+    },
+  };
+
   beforeEach(async () => {
     jest.clearAllMocks();
     mockAdminService.getOverview.mockResolvedValue({ totalUsers: 10 });
@@ -112,6 +131,7 @@ describe("Admin HTTP boundary", () => {
         { provide: RecoveryService, useValue: mockRecoveryService },
         { provide: JwtWrapperService, useValue: mockJwtWrapperService },
         { provide: ConfigService, useValue: mockConfigService },
+        { provide: PrismaService, useValue: mockPrismaService },
       ],
     }).compile();
 

@@ -6,6 +6,7 @@ import { CashoutStatus, KorapayPayoutFeeBearer } from '@prisma/client';
 import { Reflector } from '@nestjs/core';
 import { UserThrottlerGuard } from '../common/user-throttler.guard';
 import { MIN_CASHOUT_GROSS_KOBO, MIN_KORAPAY_TRANSFER_KOBO } from '@oneto/shared';
+import { PrismaService } from '../prisma/prisma.service';
 
 describe('CashoutController', () => {
   let controller: CashoutController;
@@ -30,6 +31,7 @@ describe('CashoutController', () => {
       providers: [
         { provide: CashoutService, useValue: mockService },
         { provide: JwtWrapperService, useValue: mockJwtService },
+        { provide: PrismaService, useValue: { user: { findUnique: jest.fn() } } },
       ],
     })
     .overrideGuard(UserThrottlerGuard)

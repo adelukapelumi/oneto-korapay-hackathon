@@ -4,6 +4,7 @@ import { AdminController } from "./admin.controller";
 import { AdminService } from "./admin.service";
 import { CashoutService } from "../cashout/cashout.service";
 import { RecoveryService } from "../recovery/recovery.service";
+import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { JwtWrapperService } from "../auth/jwt.service";
 import { RolesGuard } from "../auth/role.guard";
@@ -48,6 +49,7 @@ describe("AdminController", () => {
         { provide: CashoutService, useValue: mockCashoutService },
         { provide: RecoveryService, useValue: mockRecoveryService },
         { provide: JwtWrapperService, useValue: { verifyToken: jest.fn() } },
+        { provide: PrismaService, useValue: { user: { findUnique: jest.fn() } } },
         {
           provide: ConfigService,
           useValue: {
