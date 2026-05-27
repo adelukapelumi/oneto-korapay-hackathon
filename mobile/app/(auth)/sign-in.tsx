@@ -104,12 +104,12 @@ export default function SignInScreen(): React.ReactElement {
             ]}
           >
             Get started{"\n"}with{" "}
-            <Text style={styles.titleAccent}>oneto</Text>
+            <Text style={styles.titleAccent}>Oneto</Text>
           </Text>
 
           {/* Subtitle */}
           <Text style={[styles.subtitle, { color: t.textSec }]}>
-            Enter your CU email to get started with offline payments.
+            Enter your CU email or pre-registered merchant email to get started with offline payments.
           </Text>
 
           {/* Email input */}
