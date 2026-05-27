@@ -93,6 +93,7 @@ export function verifyAdminOtp(email: string, code: string) {
 export function logoutAdmin() {
   return request<{ success: true }>("/auth/admin/logout", {
     method: "POST",
+    requiresCsrf: true,
   });
 }
 

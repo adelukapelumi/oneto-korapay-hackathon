@@ -3,6 +3,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import type { Response } from "express";
 import { AuthController } from "./auth.controller";
 import { AdminCookieSessionGuard } from "./admin-cookie-session.guard";
+import { AdminCsrfGuard } from "./admin-csrf.guard";
 import { AuthService } from "./auth.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtWrapperService } from "./jwt.service";
@@ -26,6 +27,7 @@ describe("AuthController", () => {
   const mockConfigService = {
     get: jest.fn(),
   };
+  let mockNodeEnv = "development";
 
   function makeResponse(): Pick<Response, "cookie" | "clearCookie"> {
     return {
@@ -36,7 +38,16 @@ describe("AuthController", () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
-    mockConfigService.get.mockReturnValue("development");
+    mockNodeEnv = "development";
+    mockConfigService.get.mockImplementation((key: string) => {
+      if (key === "NODE_ENV") {
+        return mockNodeEnv;
+      }
+      if (key === "ADMIN_WEB_ORIGINS") {
+        return undefined;
+      }
+      return undefined;
+    });
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [AuthController],
@@ -53,7 +64,7 @@ describe("AuthController", () => {
 
   it("admin OTP verify sets HttpOnly admin session cookie and does not return accessToken", async () => {
     const response = makeResponse();
-    mockConfigService.get.mockReturnValue("production");
+    mockNodeEnv = "production";
     mockAuthService.verifyAdminOtp.mockResolvedValue({ accessToken: "admin.jwt" });
 
     const result = await controller.verifyAdminOtp(
@@ -90,7 +101,7 @@ describe("AuthController", () => {
 
   it("admin OTP verify uses non-secure cookie outside production", async () => {
     const response = makeResponse();
-    mockConfigService.get.mockReturnValue("development");
+    mockNodeEnv = "development";
     mockAuthService.verifyAdminOtp.mockResolvedValue({ accessToken: "admin.jwt.dev" });
 
     await controller.verifyAdminOtp(
@@ -105,6 +116,19 @@ describe("AuthController", () => {
         secure: false,
       }),
     );
+  });
+
+  it("uses cookie-only admin guard stack for POST /auth/admin/logout", () => {
+    const methodGuards = Reflect.getMetadata(
+      "__guards__",
+      AuthController.prototype.adminLogout,
+    ) as Array<unknown> | undefined;
+
+    expect(methodGuards).toBeDefined();
+    expect(methodGuards).toContain(JwtAuthGuard);
+    expect(methodGuards).toContain(AdminCookieSessionGuard);
+    expect(methodGuards).toContain(AdminCsrfGuard);
+    expect(methodGuards).toHaveLength(4);
   });
 
   it("admin logout clears session cookie and returns success", async () => {

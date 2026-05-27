@@ -30,6 +30,7 @@ import {
   buildAdminSessionClearCookieOptions,
   buildAdminSessionCookieOptions,
 } from "./admin-session.constants";
+import { AdminCsrfGuard } from "./admin-csrf.guard";
 import { AdminCookieSessionGuard } from "./admin-cookie-session.guard";
 import { JwtAuthGuard, type AuthenticatedRequest } from "./jwt-auth.guard";
 import { RolesGuard } from "./role.guard";
@@ -111,6 +112,7 @@ export class AuthController {
 
   @Post("admin/logout")
   @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard, RolesGuard(["ADMIN"]), AdminCookieSessionGuard, AdminCsrfGuard)
   async adminLogout(@Res({ passthrough: true }) response: Response) {
     const nodeEnv = this.configService.get<string>("NODE_ENV") ?? "development";
     response.clearCookie(
