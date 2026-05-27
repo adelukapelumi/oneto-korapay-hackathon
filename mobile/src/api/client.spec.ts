@@ -81,6 +81,31 @@ describe("api client interceptors", () => {
     expect(mockClear).not.toHaveBeenCalled();
   });
 
+  it("does not signal global unauthorized handler for rotation-signature 401", async () => {
+    const onUnauth = jest.fn();
+    setUnauthorizedHandler(onUnauth);
+
+    const client = createApiClient();
+    const res = (
+      client.interceptors.response as unknown as { handlers: ResHandler[] }
+    ).handlers[0];
+    if (!res) throw new Error("expected response handler");
+
+    await expect(
+      res.rejected({
+        response: {
+          status: 401,
+          data: {
+            message: "rotation_signature_invalid",
+            error: "Unauthorized",
+          },
+        },
+      }),
+    ).rejects.toBeDefined();
+    expect(onUnauth).not.toHaveBeenCalled();
+    expect(mockClear).not.toHaveBeenCalled();
+  });
+
   it("does not signal for non-401 errors", async () => {
     const onUnauth = jest.fn();
     setUnauthorizedHandler(onUnauth);

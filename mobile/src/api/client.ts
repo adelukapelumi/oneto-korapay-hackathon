@@ -43,10 +43,29 @@ export function createApiClient(): AxiosInstance {
   instance.interceptors.response.use(
     (res) => res,
     async (error: unknown) => {
-      const ax = error as { response?: { status?: number } };
+      const ax = error as {
+        config?: { url?: string };
+        response?: {
+          status?: number;
+          data?: { message?: unknown; error?: unknown };
+        };
+      };
       if (ax?.response?.status === 401) {
-        logger.info("api_unauthorized_response", { status: 401 });
-        if (onUnauthorized) {
+        const responseData = ax.response.data;
+        const responseMessage =
+          responseData && typeof responseData.message === "string"
+            ? responseData.message
+            : null;
+        logger.info("api_unauthorized_response", {
+          status: 401,
+          endpoint: ax.config?.url ?? null,
+          errorCode:
+            responseData && typeof responseData.error === "string"
+              ? responseData.error
+              : null,
+          responseMessage,
+        });
+        if (onUnauthorized && responseMessage !== "rotation_signature_invalid") {
           try {
             onUnauthorized();
           } catch (handlerErr) {

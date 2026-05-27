@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -34,6 +34,7 @@ import {
   precheckDeviceApproval,
   type DeviceApprovalLog,
 } from "../../src/keys/device-approval-activation";
+import { createApprovalScanLock } from "../../src/keys/approval-scan-lock";
 import { logger } from "../../src/lib/logger";
 import { useThemeMode } from "../../src/theme/theme-provider";
 import {
@@ -71,6 +72,7 @@ export default function ScanDeviceApprovalScreen(): React.ReactElement {
   const [lockSecondsRemaining, setLockSecondsRemaining] = useState(0);
   const [reauthSending, setReauthSending] = useState(false);
   const [reauthError, setReauthError] = useState<string | null>(null);
+  const approvalScanLockRef = useRef(createApprovalScanLock());
 
   useEffect(() => {
     if (permission && !permission.granted) {
@@ -129,6 +131,13 @@ export default function ScanDeviceApprovalScreen(): React.ReactElement {
         });
         return;
       }
+      logDeviceApproval({
+        event: "device_approval.pending_public_key_loaded",
+        context: {
+          pendingPublicKeySuffix: shortKeySuffix(pendingPublicKey),
+          hasStagedKeypair: Boolean(staged),
+        },
+      });
 
       if (!staged) {
         const precheck = precheckDeviceApproval({
@@ -256,6 +265,7 @@ export default function ScanDeviceApprovalScreen(): React.ReactElement {
   }
 
   function retry(): void {
+    approvalScanLockRef.current.reset();
     setReauthError(null);
     setPin("");
     setPhase({ kind: "scanning" });
@@ -415,6 +425,13 @@ export default function ScanDeviceApprovalScreen(): React.ReactElement {
         onBarcodeScanned={
           phase.kind === "scanning"
             ? ({ data }: { readonly data: string }) => {
+                if (!approvalScanLockRef.current.tryLock(data)) {
+                  return;
+                }
+                logDeviceApproval({
+                  event: "device_approval.scan_locked",
+                  context: { reason: "approval_qr_detected" },
+                });
                 void processApproval(data);
               }
             : undefined
@@ -595,3 +612,10 @@ const styles = StyleSheet.create({
     lineHeight: 22,
   },
 });
+
+function shortKeySuffix(publicKey: string): string {
+  if (publicKey.length <= 8) {
+    return publicKey;
+  }
+  return publicKey.slice(-8);
+}

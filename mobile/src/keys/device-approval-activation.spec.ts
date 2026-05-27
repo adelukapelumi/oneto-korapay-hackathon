@@ -1,6 +1,7 @@
 import { ApiError } from "../api/errors";
 import {
   APPROVAL_DIFFERENT_PHONE_MESSAGE,
+  APPROVAL_INVALID_OLD_PHONE_MESSAGE,
   APPROVAL_RECOVERY_KEY_MISSING_MESSAGE,
   APPROVAL_REGISTER_FAILED_MESSAGE,
   APPROVAL_SESSION_EXPIRED_MESSAGE,
@@ -83,6 +84,39 @@ describe("device approval activation", () => {
       ok: false,
       routeTarget: null,
       message: APPROVAL_SESSION_EXPIRED_MESSAGE,
+    });
+    expect(promotePendingRecoveryKeypair).not.toHaveBeenCalled();
+    expect(completeOnboarding).not.toHaveBeenCalled();
+  });
+
+  it("rotation-signature 401 maps to invalid-approval message", async () => {
+    const registerPublicKey = jest
+      .fn()
+      .mockRejectedValue(new ApiError("rotation_signature_invalid", 401, "Unauthorized"));
+    const promotePendingRecoveryKeypair = jest.fn().mockResolvedValue(undefined);
+    const completeOnboarding = jest.fn();
+    const log = jest.fn();
+    const approval = buildNewDeviceApprovalPayload(
+      VALID_PUBLIC_KEY,
+      VALID_ROTATION_SIGNATURE,
+    );
+
+    const result = await activateDeviceApproval({
+      rawApprovalQr: stringifyDeviceTransferPayload(approval),
+      pendingPublicKey: VALID_PUBLIC_KEY,
+      pendingPrivateKey: new Uint8Array(32).fill(9),
+      authStateStatus: "recovery_pending",
+      registerPublicKey,
+      promotePendingRecoveryKeypair,
+      completeOnboarding,
+      log,
+      getTokenFn: async () => FRESH_TOKEN,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      routeTarget: null,
+      message: APPROVAL_INVALID_OLD_PHONE_MESSAGE,
     });
     expect(promotePendingRecoveryKeypair).not.toHaveBeenCalled();
     expect(completeOnboarding).not.toHaveBeenCalled();
@@ -230,6 +264,7 @@ describe("device approval activation", () => {
     const flattenedLogs = JSON.stringify(log.mock.calls);
     expect(flattenedLogs).not.toContain("privateKey");
     expect(flattenedLogs).not.toContain("pin");
+    expect(flattenedLogs).not.toContain(FRESH_TOKEN);
     expect(flattenedLogs).not.toContain(VALID_ROTATION_SIGNATURE);
     expect(flattenedLogs).not.toContain(VALID_PUBLIC_KEY);
   });

@@ -20,6 +20,8 @@ export const APPROVAL_REGISTER_FAILED_MESSAGE =
   "Couldn't register this phone. Check connection and try again.";
 export const APPROVAL_SESSION_EXPIRED_MESSAGE =
   "Session expired. Sign in again to continue moving this phone.";
+export const APPROVAL_INVALID_OLD_PHONE_MESSAGE =
+  "Approval code is invalid or this old phone is no longer the active Oneto phone. Try again from the active phone or use recovery.";
 
 export interface DeviceApprovalLog {
   readonly event: string;
@@ -118,6 +120,7 @@ export async function activateDeviceApproval({
 
   const approval = parsed.approval;
   const suffix = shortKeySuffix(approval.newPublicKey);
+  const pendingSuffix = shortKeySuffix(pendingPublicKey);
   const token = await getTokenFn();
   const tokenPresent = Boolean(token);
   const tokenExpired = token ? isJwtExpired(token) : false;
@@ -127,7 +130,8 @@ export async function activateDeviceApproval({
       authStateStatus,
       tokenPresent,
       tokenExpired,
-      publicKeySuffix: suffix,
+      pendingPublicKeySuffix: pendingSuffix,
+      approvalPublicKeySuffix: suffix,
     },
   });
   if (!tokenPresent || tokenExpired) {
@@ -160,6 +164,16 @@ export async function activateDeviceApproval({
       context: { publicKeySuffix: suffix, authStateStatus, ...errorContext },
     });
     if ("status" in errorContext && errorContext.status === 401) {
+      if (
+        "errorMessage" in errorContext &&
+        errorContext.errorMessage === "rotation_signature_invalid"
+      ) {
+        return {
+          ok: false,
+          routeTarget: null,
+          message: APPROVAL_INVALID_OLD_PHONE_MESSAGE,
+        };
+      }
       return {
         ok: false,
         routeTarget: null,
@@ -239,15 +253,30 @@ function parseAndMatchApproval({
 }: ParseAndMatchApprovalInput): DeviceApprovalResult {
   try {
     const approval = parseNewDeviceApprovalQr(rawApprovalQr);
-    const suffix = shortKeySuffix(approval.newPublicKey);
+    const pendingSuffix = shortKeySuffix(pendingPublicKey);
+    const approvalSuffix = shortKeySuffix(approval.newPublicKey);
+    const keysMatch = approval.newPublicKey === pendingPublicKey;
     log({
       event: "device_approval.payload_parsed",
-      context: { stage, publicKeySuffix: suffix },
+      context: { stage, approvalPublicKeySuffix: approvalSuffix },
+    });
+    log({
+      event: "device_approval.pending_public_key_check",
+      context: {
+        stage,
+        pendingPublicKeySuffix: pendingSuffix,
+        approvalPublicKeySuffix: approvalSuffix,
+        keysMatch,
+      },
     });
     assertApprovalMatchesPendingPublicKey(approval, pendingPublicKey);
     log({
       event: "device_approval.pending_public_key_matched",
-      context: { stage, publicKeySuffix: suffix },
+      context: {
+        stage,
+        pendingPublicKeySuffix: pendingSuffix,
+        approvalPublicKeySuffix: approvalSuffix,
+      },
     });
     return { ok: true, routeTarget: APP_HOME_ROUTE, approval };
   } catch (error) {
@@ -291,6 +320,7 @@ function safeErrorContext(
       errorName: error.name,
       status: error.status,
       code: error.code ?? null,
+      errorMessage: error.message,
     };
   }
   if (error instanceof NetworkError) {

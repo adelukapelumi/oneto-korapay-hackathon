@@ -9,3 +9,13 @@ export function sanitizeRecoveryReauthReturnTo(
   }
   return null;
 }
+
+export function canAccessRecoveryReauthVerifyRoute(input: {
+  readonly pathname: string;
+  readonly returnTo: string | undefined;
+}): boolean {
+  if (input.pathname !== "/(auth)/verify") {
+    return false;
+  }
+  return sanitizeRecoveryReauthReturnTo(input.returnTo) !== null;
+}

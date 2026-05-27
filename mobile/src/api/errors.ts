@@ -31,8 +31,8 @@ export class NetworkError extends Error {
 }
 
 export class UnauthorizedError extends ApiError {
-  constructor(message = "Unauthorized") {
-    super(message, 401, "UNAUTHORIZED");
+  constructor(message = "Unauthorized", code = "UNAUTHORIZED") {
+    super(message, 401, code);
     this.name = "UnauthorizedError";
   }
 }
@@ -63,13 +63,17 @@ export function toTypedError(err: unknown): ApiError | NetworkError {
     const status = ax.response.status;
     const body: unknown = ax.response.data;
     let message = `Request failed with status ${status}`;
+    let code: string | undefined;
     if (isBackendErrorBody(body) && typeof body.message === "string") {
       message = body.message;
     }
-    if (status === 401) {
-      return new UnauthorizedError(message);
+    if (isBackendErrorBody(body) && typeof body.error === "string") {
+      code = body.error;
     }
-    return new ApiError(message, status);
+    if (status === 401) {
+      return new UnauthorizedError(message, code ?? "UNAUTHORIZED");
+    }
+    return new ApiError(message, status, code);
   }
 
   if (err instanceof Error) {
