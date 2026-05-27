@@ -1,4 +1,5 @@
 import {
+  Logger,
   Controller,
   Post,
   Body,
@@ -8,6 +9,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { DeviceKeyStatus } from '@prisma/client';
+import { createHash } from 'crypto';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { PrismaService } from '../prisma/prisma.service';
 import { RegisterKeySchema } from './schemas';
@@ -24,6 +26,8 @@ const VERIFY_ONLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 @Controller('auth/keys')
 export class KeysController {
+  private readonly logger = new Logger(KeysController.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   @Post('register')
@@ -43,7 +47,7 @@ export class KeysController {
 
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true },
+      select: { id: true, email: true },
     });
 
     if (!user) {
@@ -96,6 +100,24 @@ export class KeysController {
     const sigBytes = fromHex(sigHex);
     const message = buildKeyRotationMessage(newPublicKey);
     const messageBytes = new TextEncoder().encode(message);
+    const messageHashSuffix = createHash('sha256')
+      .update(messageBytes)
+      .digest('hex')
+      .slice(-8);
+
+    this.logger.log(
+      'key_rotation_verify_attempt',
+      buildSafeKeyRegisterDiagnostics({
+        userId,
+        userEmail: user.email,
+        activeDeviceKey: activeDeviceKey.publicKey,
+        newPublicKey,
+        hasRotationSignature: Boolean(rotationSignature),
+        sigOk: null,
+        messageHashSuffix,
+        signatureLength: sigBytes.length,
+      }),
+    );
 
     let sigOk = false;
     try {
@@ -103,6 +125,20 @@ export class KeysController {
     } catch {
       sigOk = false;
     }
+
+    this.logger.log(
+      'key_rotation_verify_result',
+      buildSafeKeyRegisterDiagnostics({
+        userId,
+        userEmail: user.email,
+        activeDeviceKey: activeDeviceKey.publicKey,
+        newPublicKey,
+        hasRotationSignature: Boolean(rotationSignature),
+        sigOk,
+        messageHashSuffix,
+        signatureLength: sigBytes.length,
+      }),
+    );
 
     if (!sigOk) {
       throw new UnauthorizedException('rotation_signature_invalid');
@@ -176,4 +212,48 @@ export class KeysController {
       });
     });
   }
+}
+
+export interface KeyRegisterDiagnosticsInput {
+  readonly userId: string;
+  readonly userEmail: string;
+  readonly activeDeviceKey: string;
+  readonly newPublicKey: string;
+  readonly hasRotationSignature: boolean;
+  readonly sigOk: boolean | null;
+  readonly messageHashSuffix: string;
+  readonly signatureLength: number;
+}
+
+export interface SafeKeyRegisterDiagnostics {
+  readonly userId: string;
+  readonly userEmail: string;
+  readonly activeDeviceKeySuffix: string;
+  readonly newPublicKeySuffix: string;
+  readonly hasRotationSignature: boolean;
+  readonly sigOk: boolean | null;
+  readonly messageHashSuffix: string;
+  readonly signatureLength: number;
+}
+
+export function buildSafeKeyRegisterDiagnostics(
+  input: KeyRegisterDiagnosticsInput,
+): SafeKeyRegisterDiagnostics {
+  return {
+    userId: input.userId,
+    userEmail: input.userEmail,
+    activeDeviceKeySuffix: shortKeySuffix(input.activeDeviceKey),
+    newPublicKeySuffix: shortKeySuffix(input.newPublicKey),
+    hasRotationSignature: input.hasRotationSignature,
+    sigOk: input.sigOk,
+    messageHashSuffix: input.messageHashSuffix,
+    signatureLength: input.signatureLength,
+  };
+}
+
+function shortKeySuffix(value: string): string {
+  if (value.length <= 8) {
+    return value;
+  }
+  return value.slice(-8);
 }

@@ -73,12 +73,40 @@ export default function ScanDeviceApprovalScreen(): React.ReactElement {
   const [reauthSending, setReauthSending] = useState(false);
   const [reauthError, setReauthError] = useState<string | null>(null);
   const approvalScanLockRef = useRef(createApprovalScanLock());
+  const recoverySessionIdentityRef = useRef<{
+    readonly userId: string | null;
+    readonly email: string | null;
+  } | null>(null);
 
   useEffect(() => {
     if (permission && !permission.granted) {
       void requestPermission();
     }
   }, [permission, requestPermission]);
+
+  useEffect(() => {
+    if (recoverySessionIdentityRef.current !== null) {
+      return;
+    }
+    if (
+      state.status === "recovery_pending" ||
+      state.status === "onboarding" ||
+      state.status === "locked" ||
+      state.status === "authed"
+    ) {
+      recoverySessionIdentityRef.current = {
+        userId: state.user.id,
+        email: state.user.email,
+      };
+      logDeviceApproval({
+        event: "recovery_session_identity_captured",
+        context: {
+          sessionUserId: state.user.id,
+          sessionUserEmail: state.user.email,
+        },
+      });
+    }
+  }, [state]);
 
   useEffect(() => {
     void (async () => {
@@ -162,6 +190,23 @@ export default function ScanDeviceApprovalScreen(): React.ReactElement {
         pendingPublicKey: staged.publicKey,
         pendingPrivateKey: staged.privateKey,
         authStateStatus: state.status,
+        authUserId:
+          state.status === "recovery_pending" ||
+          state.status === "onboarding" ||
+          state.status === "locked" ||
+          state.status === "authed"
+            ? state.user.id
+            : null,
+        authUserEmail:
+          state.status === "recovery_pending" ||
+          state.status === "onboarding" ||
+          state.status === "locked" ||
+          state.status === "authed"
+            ? state.user.email
+            : null,
+        expectedRecoveryUserId: recoverySessionIdentityRef.current?.userId ?? null,
+        expectedRecoveryUserEmail:
+          recoverySessionIdentityRef.current?.email ?? null,
         registerPublicKey,
         promotePendingRecoveryKeypair,
         completeOnboarding,
@@ -201,6 +246,23 @@ export default function ScanDeviceApprovalScreen(): React.ReactElement {
         pendingPublicKey: loaded.publicKey,
         pendingPrivateKey: loaded.privateKey,
         authStateStatus: state.status,
+        authUserId:
+          state.status === "recovery_pending" ||
+          state.status === "onboarding" ||
+          state.status === "locked" ||
+          state.status === "authed"
+            ? state.user.id
+            : null,
+        authUserEmail:
+          state.status === "recovery_pending" ||
+          state.status === "onboarding" ||
+          state.status === "locked" ||
+          state.status === "authed"
+            ? state.user.email
+            : null,
+        expectedRecoveryUserId: recoverySessionIdentityRef.current?.userId ?? null,
+        expectedRecoveryUserEmail:
+          recoverySessionIdentityRef.current?.email ?? null,
         registerPublicKey,
         promotePendingRecoveryKeypair,
         completeOnboarding,

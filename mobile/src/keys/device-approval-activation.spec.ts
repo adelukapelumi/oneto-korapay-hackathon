@@ -5,6 +5,7 @@ import {
   APPROVAL_RECOVERY_KEY_MISSING_MESSAGE,
   APPROVAL_REGISTER_FAILED_MESSAGE,
   APPROVAL_SESSION_EXPIRED_MESSAGE,
+  APPROVAL_USER_MISMATCH_MESSAGE,
   activateDeviceApproval,
   precheckDeviceApproval,
 } from "./device-approval-activation";
@@ -342,6 +343,42 @@ describe("device approval activation", () => {
     expect(registerPublicKey).toHaveBeenCalledTimes(1);
     expect(promotePendingRecoveryKeypair).toHaveBeenCalledTimes(1);
     expect(completeOnboarding).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks activation when authenticated user does not match recovery session user", async () => {
+    const registerPublicKey = jest.fn().mockResolvedValue({ success: true });
+    const promotePendingRecoveryKeypair = jest.fn().mockResolvedValue(undefined);
+    const completeOnboarding = jest.fn();
+    const log = jest.fn();
+    const approval = buildNewDeviceApprovalPayload(
+      VALID_PUBLIC_KEY,
+      VALID_ROTATION_SIGNATURE,
+    );
+
+    const result = await activateDeviceApproval({
+      rawApprovalQr: stringifyDeviceTransferPayload(approval),
+      pendingPublicKey: VALID_PUBLIC_KEY,
+      pendingPrivateKey: new Uint8Array(32).fill(8),
+      authStateStatus: "recovery_pending",
+      authUserId: "u_wrong",
+      authUserEmail: "wrong@stu.cu.edu.ng",
+      expectedRecoveryUserId: "u_expected",
+      expectedRecoveryUserEmail: "oadeluka.2202531@stu.cu.edu.ng",
+      registerPublicKey,
+      promotePendingRecoveryKeypair,
+      completeOnboarding,
+      log,
+      getTokenFn: async () => FRESH_TOKEN,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      routeTarget: null,
+      message: APPROVAL_USER_MISMATCH_MESSAGE,
+    });
+    expect(registerPublicKey).not.toHaveBeenCalled();
+    expect(promotePendingRecoveryKeypair).not.toHaveBeenCalled();
+    expect(completeOnboarding).not.toHaveBeenCalled();
   });
 });
 

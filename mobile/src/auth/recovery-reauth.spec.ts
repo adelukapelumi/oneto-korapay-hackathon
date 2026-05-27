@@ -1,4 +1,8 @@
 import {
+  hasRecoveryActivationIdentityMismatch,
+  isAllowedRecoveryReauthEmail,
+  RECOVERY_ACTIVATION_USER_MISMATCH_MESSAGE,
+  RECOVERY_REAUTH_EMAIL_MISMATCH_MESSAGE,
   canAccessRecoveryReauthVerifyRoute,
   RECOVERY_APPROVAL_RETURN_TO,
   sanitizeRecoveryReauthReturnTo,
@@ -35,5 +39,43 @@ describe("recovery re-auth return-to", () => {
         returnTo: RECOVERY_APPROVAL_RETURN_TO,
       }),
     ).toBe(false);
+  });
+
+  it("allows recovery re-auth only for the same expected email", () => {
+    expect(
+      isAllowedRecoveryReauthEmail({
+        recoveryReturnTo: RECOVERY_APPROVAL_RETURN_TO,
+        requestedEmail: "oadeluka.2202531@stu.cu.edu.ng",
+        expectedEmail: "oadeluka.2202531@stu.cu.edu.ng",
+      }),
+    ).toBe(true);
+    expect(
+      isAllowedRecoveryReauthEmail({
+        recoveryReturnTo: RECOVERY_APPROVAL_RETURN_TO,
+        requestedEmail: "other@stu.cu.edu.ng",
+        expectedEmail: "oadeluka.2202531@stu.cu.edu.ng",
+      }),
+    ).toBe(false);
+    expect(RECOVERY_REAUTH_EMAIL_MISMATCH_MESSAGE).toContain("same email");
+  });
+
+  it("detects recovery activation user/email mismatch", () => {
+    expect(
+      hasRecoveryActivationIdentityMismatch({
+        expectedUserId: "u_a",
+        expectedEmail: "a@stu.cu.edu.ng",
+        currentUserId: "u_a",
+        currentEmail: "a@stu.cu.edu.ng",
+      }),
+    ).toBe(false);
+    expect(
+      hasRecoveryActivationIdentityMismatch({
+        expectedUserId: "u_a",
+        expectedEmail: "a@stu.cu.edu.ng",
+        currentUserId: "u_b",
+        currentEmail: "b@stu.cu.edu.ng",
+      }),
+    ).toBe(true);
+    expect(RECOVERY_ACTIVATION_USER_MISMATCH_MESSAGE).toContain("different account");
   });
 });

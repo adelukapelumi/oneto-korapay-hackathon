@@ -3,6 +3,10 @@ import { ApiError, NetworkError } from "../api/errors";
 import { getToken } from "../auth/token-store";
 import { isJwtExpired } from "../auth/jwt-decode";
 import {
+  hasRecoveryActivationIdentityMismatch,
+  RECOVERY_ACTIVATION_USER_MISMATCH_MESSAGE,
+} from "../auth/recovery-reauth";
+import {
   DeviceTransferPayloadError,
   assertApprovalMatchesPendingPublicKey,
   parseNewDeviceApprovalQr,
@@ -22,6 +26,8 @@ export const APPROVAL_SESSION_EXPIRED_MESSAGE =
   "Session expired. Sign in again to continue moving this phone.";
 export const APPROVAL_INVALID_OLD_PHONE_MESSAGE =
   "Approval code is invalid or this old phone is no longer the active Oneto phone. Try again from the active phone or use recovery.";
+export const APPROVAL_USER_MISMATCH_MESSAGE =
+  RECOVERY_ACTIVATION_USER_MISMATCH_MESSAGE;
 
 export interface DeviceApprovalLog {
   readonly event: string;
@@ -41,6 +47,10 @@ export interface ActivateDeviceApprovalInput {
   readonly pendingPublicKey: string | null;
   readonly pendingPrivateKey: Uint8Array | null;
   readonly authStateStatus: string;
+  readonly authUserId?: string | null;
+  readonly authUserEmail?: string | null;
+  readonly expectedRecoveryUserId?: string | null;
+  readonly expectedRecoveryUserEmail?: string | null;
   readonly registerPublicKey: (
     publicKey: PublicKeyString,
     rotationSignature: SignatureString,
@@ -90,6 +100,10 @@ export async function activateDeviceApproval({
   pendingPublicKey,
   pendingPrivateKey,
   authStateStatus,
+  authUserId = null,
+  authUserEmail = null,
+  expectedRecoveryUserId = null,
+  expectedRecoveryUserEmail = null,
   registerPublicKey,
   promotePendingRecoveryKeypair,
   completeOnboarding,
@@ -124,16 +138,34 @@ export async function activateDeviceApproval({
   const token = await getTokenFn();
   const tokenPresent = Boolean(token);
   const tokenExpired = token ? isJwtExpired(token) : false;
+  const recoveryIdentityMismatch = hasRecoveryActivationIdentityMismatch({
+    expectedUserId: expectedRecoveryUserId,
+    expectedEmail: expectedRecoveryUserEmail,
+    currentUserId: authUserId,
+    currentEmail: authUserEmail,
+  });
   log({
     event: "device_approval.activation_auth_context",
     context: {
       authStateStatus,
+      authUserId: authUserId ?? null,
+      authUserEmail: authUserEmail ?? null,
+      expectedRecoveryUserId: expectedRecoveryUserId ?? null,
+      expectedRecoveryUserEmail: expectedRecoveryUserEmail ?? null,
+      recoveryIdentityMismatch,
       tokenPresent,
       tokenExpired,
       pendingPublicKeySuffix: pendingSuffix,
       approvalPublicKeySuffix: suffix,
     },
   });
+  if (recoveryIdentityMismatch) {
+    return {
+      ok: false,
+      routeTarget: null,
+      message: APPROVAL_USER_MISMATCH_MESSAGE,
+    };
+  }
   if (!tokenPresent || tokenExpired) {
     return {
       ok: false,
