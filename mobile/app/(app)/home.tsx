@@ -11,6 +11,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from "expo-router";
 import { useAuth } from "../../src/auth/auth-state";
+import { APP_HOME_RETURN_TO } from "../../src/auth/recovery-reauth";
 import { fetchMe } from "../../src/api/auth";
 import { NetworkError } from "../../src/api/errors";
 import { fetchLedger as fetchServerLedger, type LedgerEntry } from "../../src/api/ledger";
@@ -573,7 +574,10 @@ export default function HomeScreen(): React.ReactElement {
     setReauthError(null);
     try {
       const storedEmail = await reauthenticate();
-      router.push({ pathname: "/(auth)/verify", params: { email: storedEmail } });
+      router.push({
+        pathname: "/(auth)/verify",
+        params: { email: storedEmail, returnTo: APP_HOME_RETURN_TO },
+      });
     } catch (err) {
       logger.info("Re-auth OTP request failed", err);
       setReauthError("Could not send OTP. Check your connection.");

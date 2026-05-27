@@ -1,16 +1,34 @@
 export const RECOVERY_APPROVAL_RETURN_TO =
   "/(onboarding)/scan-device-approval" as const;
+export const APP_HOME_RETURN_TO = "/(app)/home" as const;
+export const APP_SETTINGS_RETURN_TO = "/(app)/settings" as const;
+export const APP_APPROVE_NEW_PHONE_RETURN_TO =
+  "/(app)/approve-new-phone" as const;
 
 export const RECOVERY_REAUTH_EMAIL_MISMATCH_MESSAGE =
-  "This recovery re-auth must use the same email that started this phone move.";
+  "Use the same email for this device.";
 export const RECOVERY_ACTIVATION_USER_MISMATCH_MESSAGE =
   "This recovery session belongs to a different account. Sign in with the original email and try again.";
 
+const ALLOWED_REAUTH_RETURN_TO = [
+  RECOVERY_APPROVAL_RETURN_TO,
+  APP_HOME_RETURN_TO,
+  APP_SETTINGS_RETURN_TO,
+  APP_APPROVE_NEW_PHONE_RETURN_TO,
+] as const;
+
+export type AllowedReauthReturnTo = (typeof ALLOWED_REAUTH_RETURN_TO)[number];
+
 export function sanitizeRecoveryReauthReturnTo(
   value: string | undefined,
-): typeof RECOVERY_APPROVAL_RETURN_TO | null {
-  if (value === RECOVERY_APPROVAL_RETURN_TO) {
-    return RECOVERY_APPROVAL_RETURN_TO;
+): AllowedReauthReturnTo | null {
+  if (
+    value === RECOVERY_APPROVAL_RETURN_TO ||
+    value === APP_HOME_RETURN_TO ||
+    value === APP_SETTINGS_RETURN_TO ||
+    value === APP_APPROVE_NEW_PHONE_RETURN_TO
+  ) {
+    return value;
   }
   return null;
 }
@@ -26,7 +44,7 @@ export function canAccessRecoveryReauthVerifyRoute(input: {
 }
 
 export function isAllowedRecoveryReauthEmail(input: {
-  readonly recoveryReturnTo: typeof RECOVERY_APPROVAL_RETURN_TO | null;
+  readonly recoveryReturnTo: AllowedReauthReturnTo | null;
   readonly requestedEmail: string;
   readonly expectedEmail: string | null;
 }): boolean {
