@@ -11,7 +11,6 @@ import { CameraView, useCameraPermissions } from "expo-camera";
 import { useRouter } from "expo-router";
 import { Screen } from "../../components/Screen";
 import { registerPublicKey } from "../../src/api/keys";
-import { NetworkError } from "../../src/api/errors";
 import { useAuth } from "../../src/auth/auth-state";
 import {
   PinIncorrectError,
@@ -26,11 +25,13 @@ import {
 } from "../../src/crypto/pin-derive";
 import { describeAttemptState, formatMmSs } from "../../src/lib/pin-attempts";
 import {
-  DeviceTransferPayloadError,
-  acceptDeviceApprovalQr,
-  assertApprovalMatchesPendingPublicKey,
-  parseNewDeviceApprovalQr,
-} from "../../src/keys/device-transfer-payload";
+  APPROVAL_FAILED_RESCAN_MESSAGE,
+  APPROVAL_RECOVERY_KEY_MISSING_MESSAGE,
+  activateDeviceApproval,
+  precheckDeviceApproval,
+  type DeviceApprovalLog,
+} from "../../src/keys/device-approval-activation";
+import { logger } from "../../src/lib/logger";
 import { useThemeMode } from "../../src/theme/theme-provider";
 import {
   borders,
@@ -85,6 +86,10 @@ export default function ScanDeviceApprovalScreen(): React.ReactElement {
     };
   }, []);
 
+  function logDeviceApproval(entry: DeviceApprovalLog): void {
+    logger.info(entry.event, entry.context ?? {});
+  }
+
   async function processApproval(rawApprovalQr: string): Promise<void> {
     setPhase({ kind: "checking" });
     try {
@@ -93,34 +98,60 @@ export default function ScanDeviceApprovalScreen(): React.ReactElement {
         ? staged.publicKey
         : await getPendingRecoveryPublicKey();
       if (!pendingPublicKey) {
+        logDeviceApproval({
+          event: "recovery_key_missing",
+          context: { stage: "scan" },
+        });
         setPhase({
           kind: "error",
-          message:
-            "This phone does not have a pending setup key. Start setup again.",
+          message: APPROVAL_RECOVERY_KEY_MISSING_MESSAGE,
         });
         return;
       }
 
       if (!staged) {
-        const approval = parseNewDeviceApprovalQr(rawApprovalQr);
-        assertApprovalMatchesPendingPublicKey(approval, pendingPublicKey);
+        const precheck = precheckDeviceApproval({
+          rawApprovalQr,
+          pendingPublicKey,
+          log: logDeviceApproval,
+        });
+        if (!precheck.ok) {
+          setPhase({
+            kind: "error",
+            message: precheck.message,
+          });
+          return;
+        }
         setPhase({ kind: "needs_pin", rawApprovalQr });
         return;
       }
 
       setPhase({ kind: "activating" });
-      await acceptDeviceApprovalQr({
+      const result = await activateDeviceApproval({
         rawApprovalQr,
         pendingPublicKey: staged.publicKey,
         pendingPrivateKey: staged.privateKey,
         registerPublicKey,
-        promotePendingKeypair: promotePendingRecoveryKeypair,
+        promotePendingRecoveryKeypair,
         completeOnboarding,
+        log: logDeviceApproval,
       });
+      if (!result.ok) {
+        setPhase({ kind: "error", message: result.message });
+        return;
+      }
       await clearPendingRecoveryAttempts();
-      router.replace("/(app)/home");
+      logDeviceApproval({
+        event: "route_replace",
+        context: { routeTarget: result.routeTarget },
+      });
+      router.replace(result.routeTarget);
     } catch (err) {
-      setPhase({ kind: "error", message: approvalErrorMessage(err) });
+      logDeviceApproval({
+        event: "process_approval_failed",
+        context: { stage: "scan" },
+      });
+      setPhase({ kind: "error", message: APPROVAL_FAILED_RESCAN_MESSAGE });
     }
   }
 
@@ -134,16 +165,25 @@ export default function ScanDeviceApprovalScreen(): React.ReactElement {
       | null = null;
     try {
       loaded = await loadAndDecryptPendingRecoveryKeypair(pin);
-      await acceptDeviceApprovalQr({
+      const result = await activateDeviceApproval({
         rawApprovalQr,
         pendingPublicKey: loaded.publicKey,
         pendingPrivateKey: loaded.privateKey,
         registerPublicKey,
-        promotePendingKeypair: promotePendingRecoveryKeypair,
+        promotePendingRecoveryKeypair,
         completeOnboarding,
+        log: logDeviceApproval,
       });
+      if (!result.ok) {
+        setPhase({ kind: "error", message: result.message });
+        return;
+      }
       await clearPendingRecoveryAttempts();
-      router.replace("/(app)/home");
+      logDeviceApproval({
+        event: "route_replace",
+        context: { routeTarget: result.routeTarget },
+      });
+      router.replace(result.routeTarget);
     } catch (err) {
       if (err instanceof PinLockedError) {
         const remaining = Math.max(
@@ -162,9 +202,13 @@ export default function ScanDeviceApprovalScreen(): React.ReactElement {
         if (result.willWipe) {
           discardPendingRecoveryKeypair();
           await wipePendingRecoveryKeypair();
+          logDeviceApproval({
+            event: "recovery_key_missing",
+            context: { stage: "pin_unlock_wipe" },
+          });
           setPhase({
             kind: "error",
-            message: "This phone's pending setup key was removed. Start setup again.",
+            message: APPROVAL_RECOVERY_KEY_MISSING_MESSAGE,
           });
           return;
         }
@@ -176,7 +220,11 @@ export default function ScanDeviceApprovalScreen(): React.ReactElement {
         setPhase({ kind: "needs_pin", rawApprovalQr });
         return;
       }
-      setPhase({ kind: "error", message: approvalErrorMessage(err) });
+      logDeviceApproval({
+        event: "process_approval_failed",
+        context: { stage: "pin_activate" },
+      });
+      setPhase({ kind: "error", message: APPROVAL_FAILED_RESCAN_MESSAGE });
     } finally {
       if (loaded) {
         loaded.privateKey.fill(0);
@@ -327,20 +375,13 @@ export default function ScanDeviceApprovalScreen(): React.ReactElement {
           <Text style={styles.scanText}>
             Only scan the approval code shown by your own old phone.
           </Text>
+          <Text style={styles.scanText}>
+            Your old phone can stay on the approval screen until this phone is active.
+          </Text>
         </View>
       </View>
     </View>
   );
-}
-
-function approvalErrorMessage(err: unknown): string {
-  if (err instanceof DeviceTransferPayloadError) {
-    return err.message;
-  }
-  if (err instanceof NetworkError) {
-    return err.message;
-  }
-  return "Approval failed. Try again or contact support.";
 }
 
 const styles = StyleSheet.create({
