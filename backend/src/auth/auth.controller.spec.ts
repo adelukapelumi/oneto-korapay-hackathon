@@ -1,5 +1,6 @@
 import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
+import { Reflector } from "@nestjs/core";
 import type { Response } from "express";
 import { AuthController } from "./auth.controller";
 import { AdminCookieSessionGuard } from "./admin-cookie-session.guard";
@@ -16,6 +17,7 @@ import type { AuthenticatedRequest } from "./jwt-auth.guard";
 
 describe("AuthController", () => {
   let controller: AuthController;
+  let reflector: Reflector;
 
   const mockAuthService = {
     requestOtp: jest.fn(),
@@ -60,6 +62,7 @@ describe("AuthController", () => {
     }).compile();
 
     controller = module.get<AuthController>(AuthController);
+    reflector = module.get<Reflector>(Reflector);
   });
 
   it("admin OTP verify sets HttpOnly admin session cookie and does not return accessToken", async () => {
@@ -169,5 +172,19 @@ describe("AuthController", () => {
     });
     expect(result).not.toHaveProperty("accessToken");
     expect(result.admin).not.toHaveProperty("token");
+  });
+
+  it("applies strict throttle to public /auth/otp/request", () => {
+    const limit = reflector.get("THROTTLER:LIMITdefault", controller.requestOtp);
+    const ttl = reflector.get("THROTTLER:TTLdefault", controller.requestOtp);
+    expect(limit).toBe(6);
+    expect(ttl).toBe(60000);
+  });
+
+  it("applies strict throttle to public /auth/otp/verify", () => {
+    const limit = reflector.get("THROTTLER:LIMITdefault", controller.verifyOtp);
+    const ttl = reflector.get("THROTTLER:TTLdefault", controller.verifyOtp);
+    expect(limit).toBe(12);
+    expect(ttl).toBe(60000);
   });
 });

@@ -51,6 +51,7 @@ export class AuthController {
   @Post("otp/request")
   @HttpCode(HttpStatus.OK)
   @UsePipes(new ZodValidationPipe(RequestOtpSchema))
+  @Throttle({ default: { limit: 6, ttl: 60000 } })
   async requestOtp(@Body() body: RequestOtpDtoType) {
     await this.authService.requestOtp(body.email);
     return { success: true, message: "OTP sent if the email address is valid" };
@@ -65,6 +66,7 @@ export class AuthController {
   @Post("otp/verify")
   @HttpCode(HttpStatus.OK)
   @UsePipes(new ZodValidationPipe(VerifyOtpSchema))
+  @Throttle({ default: { limit: 12, ttl: 60000 } })
   async verifyOtp(@Body() body: VerifyOtpDtoType) {
     const result = await this.authService.verifyOtp(body.email, body.code);
     return { success: true, accessToken: result.accessToken };
