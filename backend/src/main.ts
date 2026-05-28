@@ -33,8 +33,13 @@ async function bootstrap() {
 
   const configService = app.get(ConfigService);
   const port = configService.get<string>('PORT') || 3000;
+  const nodeEnv = configService.get<string>('NODE_ENV') ?? 'development';
   const adminWebOriginsCsv = configService.get<string>('ADMIN_WEB_ORIGINS');
-  const allowedOrigins = new Set(buildAllowedCorsOrigins(adminWebOriginsCsv));
+  const allowedOrigins = new Set(
+    buildAllowedCorsOrigins(adminWebOriginsCsv, {
+      includeLocalDevOrigins: nodeEnv !== 'production',
+    }),
+  );
 
   // Browser CORS is restricted to explicit allowlisted admin-web origins.
   // Requests without Origin (mobile apps, Postman, server-to-server) remain allowed.

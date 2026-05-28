@@ -114,6 +114,28 @@ describe("envSchema", () => {
     }
   });
 
+  it("fails in production without ADMIN_WEB_ORIGINS", () => {
+    const result = envSchema.safeParse(
+      makeBaseEnv({
+        NODE_ENV: "production",
+        OTP_STORE_BACKEND: "redis",
+        THROTTLER_STORE_BACKEND: "redis",
+        REDIS_URL: "redis://127.0.0.1:6379",
+        REDIS_KEY_PREFIX: "oneto:prod",
+        ADMIN_WEB_ORIGINS: undefined,
+      }),
+    );
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ path: ["ADMIN_WEB_ORIGINS"] }),
+        ]),
+      );
+    }
+  });
+
   it("allows test memory fallback", () => {
     const result = envSchema.safeParse(
       makeBaseEnv({
@@ -137,6 +159,7 @@ describe("envSchema", () => {
         THROTTLER_STORE_BACKEND: "redis",
         REDIS_URL: "redis://127.0.0.1:6379",
         REDIS_KEY_PREFIX: "oneto:prod",
+        ADMIN_WEB_ORIGINS: "https://admin.getoneto.com",
       }),
     );
 

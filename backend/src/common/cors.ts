@@ -29,8 +29,14 @@ export function parseAdminWebOrigins(originsCsv?: string): string[] {
   return Array.from(parsed);
 }
 
-export function buildAllowedCorsOrigins(originsCsv?: string): string[] {
-  const allowedOrigins = new Set<string>(LOCAL_ADMIN_WEB_DEV_ORIGINS);
+export function buildAllowedCorsOrigins(
+  originsCsv?: string,
+  options: { includeLocalDevOrigins?: boolean } = {},
+): string[] {
+  const includeLocalDevOrigins = options.includeLocalDevOrigins ?? true;
+  const allowedOrigins = new Set<string>(
+    includeLocalDevOrigins ? LOCAL_ADMIN_WEB_DEV_ORIGINS : [],
+  );
 
   for (const envOrigin of parseAdminWebOrigins(originsCsv)) {
     allowedOrigins.add(envOrigin);

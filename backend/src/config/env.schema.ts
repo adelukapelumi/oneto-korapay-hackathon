@@ -111,6 +111,14 @@ const baseEnvSchema = z.object({
     }
   }
 
+  if (isProduction && !data.ADMIN_WEB_ORIGINS) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'ADMIN_WEB_ORIGINS is required in production',
+      path: ['ADMIN_WEB_ORIGINS'],
+    });
+  }
+
   if (data.ADMIN_CASHOUT_NOTIFICATION_EMAILS) {
     for (const rawEmail of data.ADMIN_CASHOUT_NOTIFICATION_EMAILS.split(',')) {
       const candidate = rawEmail.trim();

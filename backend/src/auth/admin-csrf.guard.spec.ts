@@ -61,4 +61,27 @@ describe("AdminCsrfGuard", () => {
       ),
     ).toThrow(ForbiddenException);
   });
+
+  it("rejects localhost origin in production when not explicitly allowlisted", () => {
+    const guard = new AdminCsrfGuard({
+      get: jest.fn((key: string) => {
+        if (key === "NODE_ENV") {
+          return "production";
+        }
+        if (key === "ADMIN_WEB_ORIGINS") {
+          return "https://admin.getoneto.com";
+        }
+        return undefined;
+      }),
+    } as unknown as ConfigService);
+
+    expect(() =>
+      guard.canActivate(
+        makeContext("POST", {
+          origin: "http://localhost:5173",
+          "x-oneto-admin-csrf": "1",
+        }),
+      ),
+    ).toThrow(ForbiddenException);
+  });
 });

@@ -16,7 +16,12 @@ export class AdminCsrfGuard implements CanActivate {
 
   constructor(private readonly configService: ConfigService) {
     const originsCsv = this.configService.get<string>("ADMIN_WEB_ORIGINS");
-    this.allowedOrigins = new Set(buildAllowedCorsOrigins(originsCsv));
+    const nodeEnv = this.configService.get<string>("NODE_ENV") ?? "development";
+    this.allowedOrigins = new Set(
+      buildAllowedCorsOrigins(originsCsv, {
+        includeLocalDevOrigins: nodeEnv !== "production",
+      }),
+    );
   }
 
   canActivate(context: ExecutionContext): boolean {
