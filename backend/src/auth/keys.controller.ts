@@ -8,11 +8,13 @@ import {
   BadRequestException,
   UnauthorizedException,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { DeviceKeyStatus } from '@prisma/client';
 import { createHash } from 'crypto';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { PrismaService } from '../prisma/prisma.service';
 import { RegisterKeySchema } from './schemas';
+import { UserThrottlerGuard } from '../common/user-throttler.guard';
 import * as ed from '@noble/ed25519';
 import { fromHex, publicKeyFromString, toPublicKeyString, buildKeyRotationMessage } from '@oneto/shared';
 
@@ -31,7 +33,8 @@ export class KeysController {
   constructor(private readonly prisma: PrismaService) {}
 
   @Post('register')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, UserThrottlerGuard)
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   async register(@Req() req: AuthenticatedRequest, @Body() body: unknown) {
     const userId = req.user?.sub;
     if (!userId) {

@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, ExecutionContext, UnauthorizedException } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { DeviceKeyStatus } from '@prisma/client';
 import { sha512 } from '@noble/hashes/sha512';
 import * as ed from '@noble/ed25519';
@@ -7,6 +8,7 @@ import { buildKeyRotationMessage, generateKeypair } from '@oneto/shared';
 import { buildSafeKeyRegisterDiagnostics, KeysController } from './keys.controller';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { PrismaService } from '../prisma/prisma.service';
+import { UserThrottlerGuard } from '../common/user-throttler.guard';
 
 ed.etc.sha512Sync = (...messages) => sha512(ed.etc.concatBytes(...messages));
 
@@ -44,6 +46,7 @@ type PrismaMock = {
 
 describe('KeysController', () => {
   let controller: KeysController;
+  let reflector: Reflector;
   let currentUser: MockUserRecord | null;
   let deviceKeys: MockUserDeviceKeyRecord[];
   let nextDeviceKeyId: number;
@@ -219,9 +222,12 @@ describe('KeysController', () => {
     })
       .overrideGuard(JwtAuthGuard)
       .useValue(mockJwtGuard)
+      .overrideGuard(UserThrottlerGuard)
+      .useValue({ canActivate: () => true })
       .compile();
 
     controller = module.get<KeysController>(KeysController);
+    reflector = module.get<Reflector>(Reflector);
   });
 
   afterEach(() => {
@@ -382,5 +388,13 @@ describe('KeysController', () => {
     const flattened = JSON.stringify(diagnostics);
     expect(flattened).not.toContain('0123456789abcdef0123456789abcdef');
     expect(flattened).not.toContain('fedcba9876543210fedcba9876543210');
+  });
+
+  it('applies strict per-user throttle on key registration', () => {
+    const limit = reflector.get('THROTTLER:LIMITdefault', controller.register);
+    const ttl = reflector.get('THROTTLER:TTLdefault', controller.register);
+
+    expect(limit).toBe(5);
+    expect(ttl).toBe(60000);
   });
 });
