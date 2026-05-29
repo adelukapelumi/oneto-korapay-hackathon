@@ -17,7 +17,8 @@ export class TopupController {
   constructor(private readonly topupService: TopupService) {}
 
   @Post('korapay/initiate')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, UserThrottlerGuard)
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
   async initiate(
     @Req() req: AuthenticatedRequest,
     @Body() body: InitiateTopupDto

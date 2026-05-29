@@ -61,4 +61,19 @@ describe('TopupController', () => {
     expect(guards).toContain(JwtAuthGuard);
     expect(guards).toContain(UserThrottlerGuard);
   });
+
+  it('initiate route should have the configured throttle', () => {
+    const limit = reflector.get('THROTTLER:LIMITdefault', controller.initiate);
+    const ttl = reflector.get('THROTTLER:TTLdefault', controller.initiate);
+
+    expect(limit).toBe(10);
+    expect(ttl).toBe(60000);
+  });
+
+  it('initiate route should use JwtAuthGuard and UserThrottlerGuard', () => {
+    const guards = Reflect.getMetadata('__guards__', controller.initiate);
+
+    expect(guards).toContain(JwtAuthGuard);
+    expect(guards).toContain(UserThrottlerGuard);
+  });
 });
