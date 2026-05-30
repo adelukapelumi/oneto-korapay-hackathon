@@ -116,14 +116,20 @@ export class ReconcileService {
         return this.reject(envelope.transactionId, 'identity_mismatch', envelope);
       }
 
-      // NEW: MERCHANT role enforcement.
-      // Recipient must be a merchant to receive funds in the closed-loop system.
+      // Recipient must be an approved active merchant to receive funds in the
+      // closed-loop system.
       const recipient = await this.prisma.user.findUnique({
         where: { id: authenticatedUserId },
-        select: { role: true },
+        select: {
+          role: true,
+          status: true,
+          merchantProfile: {
+            select: { verifiedAt: true },
+          },
+        },
       });
 
-      if (!recipient || recipient.role !== 'MERCHANT') {
+      if (!this.isRecipientApprovedMerchant(recipient)) {
         return this.reject(envelope.transactionId, 'recipient_not_merchant', envelope);
       }
 
@@ -290,11 +296,22 @@ export class ReconcileService {
               // Need recipient's current balance for the LedgerEntry.
               const recipient = await tx.user.findUnique({
                 where: { id: envelope.recipientUserId },
-                select: { verifiedBalanceKobo: true },
+                select: {
+                  verifiedBalanceKobo: true,
+                  role: true,
+                  status: true,
+                  merchantProfile: {
+                    select: { verifiedAt: true },
+                  },
+                },
               });
 
               if (!recipient) {
                 throw new Error(`Recipient ${envelope.recipientUserId} not found during transaction`);
+              }
+
+              if (!this.isRecipientApprovedMerchant(recipient)) {
+                throw new Error('recipient_not_merchant');
               }
 
               if (recipient.verifiedBalanceKobo + BigInt(envelope.amountKobo) > BigInt(MAX_USER_BALANCE_KOBO)) {
@@ -356,6 +373,9 @@ export class ReconcileService {
       }
       if (message === 'recipient_balance_cap_exceeded') {
         return this.reject(txId, 'recipient_balance_cap_exceeded', validatedEnvelope);
+      }
+      if (message === 'recipient_not_merchant') {
+        return this.reject(txId, 'recipient_not_merchant', validatedEnvelope);
       }
       
       // If it's a P2034 after max retries, throw so the whole batch is retried later
@@ -546,6 +566,26 @@ export class ReconcileService {
     }
 
     return null;
+  }
+
+  private isRecipientApprovedMerchant(
+    recipient:
+      | {
+          role: string;
+          status: string;
+          merchantProfile: { verifiedAt: Date | null } | null;
+        }
+      | null,
+  ): boolean {
+    if (!recipient) {
+      return false;
+    }
+
+    return (
+      recipient.role === 'MERCHANT' &&
+      recipient.status === 'ACTIVE' &&
+      recipient.merchantProfile?.verifiedAt !== null
+    );
   }
 
   private getClaimDeadlineMs(timestamp: string): number {

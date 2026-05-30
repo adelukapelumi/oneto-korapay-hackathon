@@ -90,12 +90,23 @@ describe('ReconcileService', () => {
   });
 
   // Helpers
-  const createTestUser = (id: string, publicKey: string, balance: number = 1000000, role: 'STUDENT' | 'MERCHANT' = 'MERCHANT') => ({
+  const createTestUser = (
+    id: string,
+    publicKey: string,
+    balance: number = 1000000,
+    role: 'STUDENT' | 'MERCHANT' = 'MERCHANT',
+    status: 'ACTIVE' | 'PENDING_VERIFICATION' | 'FROZEN' | 'FLAGGED' = 'ACTIVE',
+    merchantVerifiedAt: Date | null = new Date('2026-01-01T00:00:00.000Z'),
+  ) => ({
     id,
     publicKey,
     verifiedBalanceKobo: BigInt(balance),
-    status: 'ACTIVE',
+    status,
     role,
+    merchantProfile:
+      role === 'MERCHANT'
+        ? { verifiedAt: merchantVerifiedAt }
+        : null,
   });
 
   const createTestDeviceKey = (
@@ -723,6 +734,61 @@ describe('ReconcileService', () => {
       if (where?.id === senderId) return Promise.resolve(createTestUser(senderId, senderKey.publicKeyString));
       // Recipient is a STUDENT, not a MERCHANT
       if (where?.id === recipientId) return Promise.resolve(createTestUser(recipientId, 'dummy', 1000, 'STUDENT'));
+      return Promise.resolve(null);
+    });
+
+    const result = await service.reconcileOneInternal(recipientId, envelope);
+    expect(result).toMatchObject({ status: 'rejected', reason: 'recipient_not_merchant' });
+  });
+
+  it('rejects reconcile when recipient merchant is not ACTIVE', async () => {
+    const draft = createValidEnvelopeDraft(senderId, recipientId, senderKey.publicKeyString);
+    const envelope = signEnvelope(draft, senderKey.privateKey);
+
+    mockPrisma.user.findUnique.mockImplementation((args: any) => {
+      const where = args?.where;
+      if (where?.id === senderId) {
+        return Promise.resolve(createTestUser(senderId, senderKey.publicKeyString, 1000000, 'STUDENT'));
+      }
+      if (where?.id === recipientId) {
+        return Promise.resolve(
+          createTestUser(
+            recipientId,
+            'dummy',
+            1000,
+            'MERCHANT',
+            'PENDING_VERIFICATION',
+          ),
+        );
+      }
+      return Promise.resolve(null);
+    });
+
+    const result = await service.reconcileOneInternal(recipientId, envelope);
+    expect(result).toMatchObject({ status: 'rejected', reason: 'recipient_not_merchant' });
+  });
+
+  it('rejects reconcile when recipient merchant is unverified', async () => {
+    const draft = createValidEnvelopeDraft(senderId, recipientId, senderKey.publicKeyString);
+    const envelope = signEnvelope(draft, senderKey.privateKey);
+
+    mockPrisma.user.findUnique.mockImplementation((args: any) => {
+      const where = args?.where;
+      if (where?.id === senderId) {
+        return Promise.resolve(createTestUser(senderId, senderKey.publicKeyString, 1000000, 'STUDENT'));
+      }
+      if (where?.id === recipientId) {
+        return Promise.resolve(
+          createTestUser(
+            recipientId,
+            'dummy',
+            1000,
+            'MERCHANT',
+            'ACTIVE',
+            null,
+          ),
+        );
+      }
       return Promise.resolve(null);
     });
 

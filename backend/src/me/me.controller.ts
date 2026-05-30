@@ -7,8 +7,10 @@ import {
   NotFoundException,
   BadRequestException,
 } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PrismaService } from "../prisma/prisma.service";
+import { UserThrottlerGuard } from "../common/user-throttler.guard";
 
 interface AuthedRequest {
   user: { sub: string; email: string; role: string };
@@ -24,7 +26,8 @@ export class MeController {
    * Safe fields only — no public key, no internal flags.
    */
   @Get()
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, UserThrottlerGuard)
+  @Throttle({ default: { limit: 60, ttl: 60000 } })
   async getMe(@Req() req: AuthedRequest) {
     const user = await this.prisma.user.findUnique({
       where: { id: req.user.sub },
@@ -60,7 +63,8 @@ export class MeController {
    * newest first. Uses cursor-based pagination on createdAt.
    */
   @Get("ledger")
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, UserThrottlerGuard)
+  @Throttle({ default: { limit: 30, ttl: 60000 } })
   async getLedger(
     @Req() req: AuthedRequest,
     @Query("cursor") cursor?: string,

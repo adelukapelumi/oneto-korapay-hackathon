@@ -9,6 +9,7 @@ import {
   UnauthorizedException,
   UseGuards,
 } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
 import { AdminService } from "./admin.service";
 import { CashoutService } from "../cashout/cashout.service";
 import { RecoveryService } from "../recovery/recovery.service";
@@ -68,6 +69,7 @@ export class AdminController {
   }
 
   @Post("merchants")
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
   async createMerchant(
     @Body(new ZodValidationPipe(CreateAdminMerchantSchema))
     body: CreateAdminMerchantDto,
@@ -82,6 +84,7 @@ export class AdminController {
   }
 
   @Post("merchants/:userId/approve")
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
   async approveMerchant(
     @Param(new ZodValidationPipe(AdminMerchantUserIdParamSchema))
     params: AdminMerchantUserIdParamDto,
@@ -96,6 +99,7 @@ export class AdminController {
   }
 
   @Patch("merchants/:userId")
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
   async updateMerchant(
     @Param(new ZodValidationPipe(AdminMerchantUserIdParamSchema))
     params: AdminMerchantUserIdParamDto,
@@ -112,6 +116,7 @@ export class AdminController {
   }
 
   @Post("merchants/:userId/deactivate")
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
   async deactivateMerchant(
     @Param(new ZodValidationPipe(AdminMerchantUserIdParamSchema))
     params: AdminMerchantUserIdParamDto,
@@ -126,6 +131,7 @@ export class AdminController {
   }
 
   @Post("merchants/:userId/reactivate")
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
   async reactivateMerchant(
     @Param(new ZodValidationPipe(AdminMerchantUserIdParamSchema))
     params: AdminMerchantUserIdParamDto,
@@ -162,6 +168,7 @@ export class AdminController {
   }
 
   @Post("recovery/:id/approve")
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
   async approveRecoveryRequest(
     @Param(new ZodValidationPipe(RecoveryIdParamSchema))
     params: RecoveryIdParamDto,
@@ -182,6 +189,7 @@ export class AdminController {
   }
 
   @Post("recovery/:id/reject")
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
   async rejectRecoveryRequest(
     @Param(new ZodValidationPipe(RecoveryIdParamSchema))
     params: RecoveryIdParamDto,
@@ -202,6 +210,7 @@ export class AdminController {
   }
 
   @Post("cashouts/:id/approve")
+  @Throttle({ default: { limit: 30, ttl: 60000 } })
   async approveCashout(
     @Param(new ZodValidationPipe(AdminCashoutIdParamSchema))
     params: AdminCashoutIdParamDto,
@@ -215,6 +224,7 @@ export class AdminController {
   }
 
   @Post("cashouts/:id/mark-paid")
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
   async markCashoutPaid(
     @Param(new ZodValidationPipe(AdminCashoutIdParamSchema))
     params: AdminCashoutIdParamDto,
@@ -230,6 +240,7 @@ export class AdminController {
   }
 
   @Post("cashouts/:id/cancel-manual")
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
   async cancelManualCashout(
     @Param(new ZodValidationPipe(AdminCashoutIdParamSchema))
     params: AdminCashoutIdParamDto,

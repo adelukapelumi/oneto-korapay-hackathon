@@ -1,9 +1,11 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { ConfigService } from "@nestjs/config";
+import { Reflector } from "@nestjs/core";
 import { AdminController } from "./admin.controller";
 import { AdminService } from "./admin.service";
 import { CashoutService } from "../cashout/cashout.service";
 import { RecoveryService } from "../recovery/recovery.service";
+import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { JwtWrapperService } from "../auth/jwt.service";
 import { RolesGuard } from "../auth/role.guard";
@@ -13,6 +15,7 @@ import { AuthenticatedRequest } from "../auth/jwt-auth.guard";
 
 describe("AdminController", () => {
   let controller: AdminController;
+  let reflector: Reflector;
   const mockAdminService = {
     getOverview: jest.fn(),
     listMerchants: jest.fn(),
@@ -48,6 +51,7 @@ describe("AdminController", () => {
         { provide: CashoutService, useValue: mockCashoutService },
         { provide: RecoveryService, useValue: mockRecoveryService },
         { provide: JwtWrapperService, useValue: { verifyToken: jest.fn() } },
+        { provide: PrismaService, useValue: { user: { findUnique: jest.fn() } } },
         {
           provide: ConfigService,
           useValue: {
@@ -60,6 +64,7 @@ describe("AdminController", () => {
     }).compile();
 
     controller = module.get<AdminController>(AdminController);
+    reflector = module.get<Reflector>(Reflector);
     jest.clearAllMocks();
   });
 
@@ -282,5 +287,22 @@ describe("AdminController", () => {
       "u_merchant",
       "u_admin",
     );
+  });
+
+  it("applies strict throttles to admin mutation endpoints", () => {
+    expect(reflector.get("THROTTLER:LIMITdefault", controller.createMerchant)).toBe(10);
+    expect(reflector.get("THROTTLER:TTLdefault", controller.createMerchant)).toBe(60000);
+
+    expect(reflector.get("THROTTLER:LIMITdefault", controller.approveMerchant)).toBe(20);
+    expect(reflector.get("THROTTLER:TTLdefault", controller.approveMerchant)).toBe(60000);
+
+    expect(reflector.get("THROTTLER:LIMITdefault", controller.approveRecoveryRequest)).toBe(10);
+    expect(reflector.get("THROTTLER:TTLdefault", controller.approveRecoveryRequest)).toBe(60000);
+
+    expect(reflector.get("THROTTLER:LIMITdefault", controller.approveCashout)).toBe(30);
+    expect(reflector.get("THROTTLER:TTLdefault", controller.approveCashout)).toBe(60000);
+
+    expect(reflector.get("THROTTLER:LIMITdefault", controller.markCashoutPaid)).toBe(20);
+    expect(reflector.get("THROTTLER:TTLdefault", controller.markCashoutPaid)).toBe(60000);
   });
 });

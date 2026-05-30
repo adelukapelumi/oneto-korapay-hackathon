@@ -6,6 +6,7 @@ import { CashoutStatus, KorapayPayoutFeeBearer } from '@prisma/client';
 import { Reflector } from '@nestjs/core';
 import { UserThrottlerGuard } from '../common/user-throttler.guard';
 import { MIN_CASHOUT_GROSS_KOBO, MIN_KORAPAY_TRANSFER_KOBO } from '@oneto/shared';
+import { PrismaService } from '../prisma/prisma.service';
 
 describe('CashoutController', () => {
   let controller: CashoutController;
@@ -30,6 +31,7 @@ describe('CashoutController', () => {
       providers: [
         { provide: CashoutService, useValue: mockService },
         { provide: JwtWrapperService, useValue: mockJwtService },
+        { provide: PrismaService, useValue: { user: { findUnique: jest.fn() } } },
       ],
     })
     .overrideGuard(UserThrottlerGuard)
@@ -144,6 +146,18 @@ describe('CashoutController', () => {
 
     it('approveCashout should use UserThrottlerGuard', () => {
       const guards = Reflect.getMetadata('__guards__', controller.approveCashout);
+      expect(guards).toContain(UserThrottlerGuard);
+    });
+
+    it('getStatus should have correct @Throttle limits (30 req/min)', () => {
+      const limit = reflector.get('THROTTLER:LIMITdefault', controller.getStatus);
+      const ttl = reflector.get('THROTTLER:TTLdefault', controller.getStatus);
+      expect(limit).toBe(30);
+      expect(ttl).toBe(60000);
+    });
+
+    it('getStatus should use UserThrottlerGuard', () => {
+      const guards = Reflect.getMetadata('__guards__', controller.getStatus);
       expect(guards).toContain(UserThrottlerGuard);
     });
   });

@@ -30,6 +30,7 @@ import {
   buildAdminSessionClearCookieOptions,
   buildAdminSessionCookieOptions,
 } from "./admin-session.constants";
+import { AdminCsrfGuard } from "./admin-csrf.guard";
 import { AdminCookieSessionGuard } from "./admin-cookie-session.guard";
 import { JwtAuthGuard, type AuthenticatedRequest } from "./jwt-auth.guard";
 import { RolesGuard } from "./role.guard";
@@ -50,6 +51,7 @@ export class AuthController {
   @Post("otp/request")
   @HttpCode(HttpStatus.OK)
   @UsePipes(new ZodValidationPipe(RequestOtpSchema))
+  @Throttle({ default: { limit: 6, ttl: 60000 } })
   async requestOtp(@Body() body: RequestOtpDtoType) {
     await this.authService.requestOtp(body.email);
     return { success: true, message: "OTP sent if the email address is valid" };
@@ -64,6 +66,7 @@ export class AuthController {
   @Post("otp/verify")
   @HttpCode(HttpStatus.OK)
   @UsePipes(new ZodValidationPipe(VerifyOtpSchema))
+  @Throttle({ default: { limit: 12, ttl: 60000 } })
   async verifyOtp(@Body() body: VerifyOtpDtoType) {
     const result = await this.authService.verifyOtp(body.email, body.code);
     return { success: true, accessToken: result.accessToken };
@@ -111,6 +114,7 @@ export class AuthController {
 
   @Post("admin/logout")
   @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard, RolesGuard(["ADMIN"]), AdminCookieSessionGuard, AdminCsrfGuard)
   async adminLogout(@Res({ passthrough: true }) response: Response) {
     const nodeEnv = this.configService.get<string>("NODE_ENV") ?? "development";
     response.clearCookie(

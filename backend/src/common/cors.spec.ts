@@ -28,10 +28,25 @@ describe('parseAdminWebOrigins', () => {
 });
 
 describe('buildAllowedCorsOrigins', () => {
-  it('always includes local admin-web development origins', () => {
+  it('includes local admin-web development origins by default', () => {
     const result = buildAllowedCorsOrigins();
 
     expect(result).toEqual(
+      expect.arrayContaining([
+        'http://localhost:4173',
+        'http://127.0.0.1:4173',
+        'http://localhost:5173',
+        'http://127.0.0.1:5173',
+      ]),
+    );
+  });
+
+  it('can exclude local admin-web development origins for production allowlists', () => {
+    const result = buildAllowedCorsOrigins(undefined, {
+      includeLocalDevOrigins: false,
+    });
+
+    expect(result).not.toEqual(
       expect.arrayContaining([
         'http://localhost:4173',
         'http://127.0.0.1:4173',
