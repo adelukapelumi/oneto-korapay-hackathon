@@ -81,7 +81,8 @@ export class CashoutController {
   }
 
   @Get('status')
-  @UseGuards(JwtAuthGuard, RolesGuard(['MERCHANT']))
+  @UseGuards(JwtAuthGuard, UserThrottlerGuard, RolesGuard(['MERCHANT']))
+  @Throttle({ default: { limit: 30, ttl: 60000 } })
   async getStatus(@Request() req: AuthenticatedRequest) {
     const cashouts = await this.cashoutService.getRecentCashouts(this.requireUserSub(req));
     return {

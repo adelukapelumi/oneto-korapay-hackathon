@@ -148,5 +148,17 @@ describe('CashoutController', () => {
       const guards = Reflect.getMetadata('__guards__', controller.approveCashout);
       expect(guards).toContain(UserThrottlerGuard);
     });
+
+    it('getStatus should have correct @Throttle limits (30 req/min)', () => {
+      const limit = reflector.get('THROTTLER:LIMITdefault', controller.getStatus);
+      const ttl = reflector.get('THROTTLER:TTLdefault', controller.getStatus);
+      expect(limit).toBe(30);
+      expect(ttl).toBe(60000);
+    });
+
+    it('getStatus should use UserThrottlerGuard', () => {
+      const guards = Reflect.getMetadata('__guards__', controller.getStatus);
+      expect(guards).toContain(UserThrottlerGuard);
+    });
   });
 });

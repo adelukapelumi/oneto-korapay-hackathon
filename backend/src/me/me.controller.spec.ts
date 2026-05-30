@@ -1,12 +1,15 @@
 import { Test } from "@nestjs/testing";
+import { Reflector } from "@nestjs/core";
 import { ExecutionContext } from "@nestjs/common";
 import { MeController } from "./me.controller";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
+import { UserThrottlerGuard } from "../common/user-throttler.guard";
 import { NotFoundException, BadRequestException } from "@nestjs/common";
 
 describe("MeController", () => {
   let controller: MeController;
+  let reflector: Reflector;
   let mockPrisma: {
     user: { findUnique: jest.Mock };
     ledgerEntry: { findMany: jest.Mock };
@@ -46,12 +49,28 @@ describe("MeController", () => {
     })
       .overrideGuard(JwtAuthGuard)
       .useValue(mockJwtGuard)
+      .overrideGuard(UserThrottlerGuard)
+      .useValue({ canActivate: () => true })
       .compile();
 
     controller = module.get(MeController);
+    reflector = module.get(Reflector);
   });
 
   describe("GET /me", () => {
+    it("applies per-user throttle metadata", () => {
+      const limit = reflector.get("THROTTLER:LIMITdefault", controller.getMe);
+      const ttl = reflector.get("THROTTLER:TTLdefault", controller.getMe);
+      expect(limit).toBe(60);
+      expect(ttl).toBe(60000);
+    });
+
+    it("uses JwtAuthGuard and UserThrottlerGuard", () => {
+      const guards = Reflect.getMetadata("__guards__", controller.getMe);
+      expect(guards).toContain(JwtAuthGuard);
+      expect(guards).toContain(UserThrottlerGuard);
+    });
+
     it("returns user profile with BigInt balance as string", async () => {
       mockPrisma.user.findUnique.mockResolvedValue(baseUser);
 
@@ -96,6 +115,19 @@ describe("MeController", () => {
   });
 
   describe("GET /me/ledger", () => {
+    it("applies per-user throttle metadata", () => {
+      const limit = reflector.get("THROTTLER:LIMITdefault", controller.getLedger);
+      const ttl = reflector.get("THROTTLER:TTLdefault", controller.getLedger);
+      expect(limit).toBe(30);
+      expect(ttl).toBe(60000);
+    });
+
+    it("uses JwtAuthGuard and UserThrottlerGuard", () => {
+      const guards = Reflect.getMetadata("__guards__", controller.getLedger);
+      expect(guards).toContain(JwtAuthGuard);
+      expect(guards).toContain(UserThrottlerGuard);
+    });
+
     const baseEntry = {
       id: "l_1",
       transactionId: "tx_abc",
