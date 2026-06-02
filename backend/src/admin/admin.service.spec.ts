@@ -103,6 +103,12 @@ describe("AdminService", () => {
       listBanks: jest.fn(),
       resolveBankAccount: jest.fn(),
     };
+    korapayService.resolveBankAccount.mockResolvedValue({
+      accountName: "Campus Cafe Ltd",
+      accountNumber: "1234567890",
+      bankCode: "035",
+      bankName: "Wema Bank",
+    });
 
     jest.clearAllMocks();
     service = new AdminService(prisma as never, korapayService as never);
@@ -291,14 +297,19 @@ describe("AdminService", () => {
         email: " Merchant@GetOneto.com ",
         businessName: "Campus Cafe",
         businessAddress: "CU Plaza",
-        cashoutBankName: "Wema Bank",
-        cashoutBankCode: "035",
+        cashoutBankName: "Submitted Fake Bank",
+        cashoutBankCode: "999",
         cashoutAccountNumber: "1234567890",
-        cashoutAccountName: "Campus Cafe Ltd",
+        cashoutAccountName: "Manual Override Name",
       },
       "u_admin",
     );
 
+    expect(korapayService.resolveBankAccount).toHaveBeenCalledWith({
+      bankCode: "999",
+      accountNumber: "1234567890",
+      currency: "NG",
+    });
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     expect(prisma.user.create).toHaveBeenCalledWith({
       data: {
@@ -306,7 +317,7 @@ describe("AdminService", () => {
         email: "merchant@getoneto.com",
         role: Role.MERCHANT,
         status: Status.ACTIVE,
-        merchantProfile: {
+            merchantProfile: {
           create: {
             businessName: "Campus Cafe",
             businessAddress: "CU Plaza",
@@ -336,6 +347,30 @@ describe("AdminService", () => {
         verifiedAt: "2026-05-18T00:00:00.000Z",
       },
     });
+  });
+
+  it("createMerchant blocks persistence when Korapay resolution fails", async () => {
+    korapayService.resolveBankAccount.mockRejectedValue(
+      new BadRequestException("unable_to_resolve_bank_account"),
+    );
+
+    await expect(
+      service.createMerchant(
+        {
+          email: "merchant@getoneto.com",
+          businessName: "Campus Cafe",
+          businessAddress: "CU Plaza",
+          cashoutBankName: "Submitted Fake Bank",
+          cashoutBankCode: "999",
+          cashoutAccountNumber: "1234567890",
+          cashoutAccountName: "Manual Override Name",
+        },
+        "u_admin",
+      ),
+    ).rejects.toThrow(BadRequestException);
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.user.create).not.toHaveBeenCalled();
   });
 
   it("createMerchant rejects an existing email", async () => {
@@ -409,6 +444,8 @@ describe("AdminService", () => {
         role: Role.MERCHANT,
         merchantProfile: {
           verifiedAt: new Date("2026-05-18T00:00:00.000Z"),
+          cashoutBankCode: "035",
+          cashoutAccountNumber: "1234567890",
         },
       })
       .mockResolvedValueOnce(buildMerchantRecord({
@@ -434,17 +471,110 @@ describe("AdminService", () => {
       "u_admin",
     );
 
+    expect(korapayService.resolveBankAccount).toHaveBeenCalledWith({
+      bankCode: "044",
+      accountNumber: "1234567890",
+      currency: "NG",
+    });
     expect(prisma.merchantProfile.update).toHaveBeenCalledWith({
       where: { userId: "u_merchant" },
       data: {
         businessName: "Updated Cafe",
         businessAddress: "New Address",
-        cashoutBankName: "Access Bank",
-        cashoutBankCode: "044",
+        cashoutBankName: "Wema Bank",
+        cashoutBankCode: "035",
+        cashoutAccountNumber: "1234567890",
+        cashoutAccountName: "Campus Cafe Ltd",
       },
     });
     expect(prisma.user.update).not.toHaveBeenCalled();
     expect(result.merchant.businessName).toBe("Updated Cafe");
+  });
+
+  it("updateMerchant re-resolves when payout fields change and ignores manual account name override", async () => {
+    korapayService.resolveBankAccount.mockResolvedValue({
+      accountName: 'Resolved Merchant Name',
+      accountNumber: '0987654321',
+      bankCode: '058',
+      bankName: 'GTBank',
+    });
+
+    prisma.user.findUnique
+      .mockResolvedValueOnce({
+        id: "u_merchant",
+        role: Role.MERCHANT,
+        merchantProfile: {
+          verifiedAt: new Date("2026-05-18T00:00:00.000Z"),
+          cashoutBankCode: "035",
+          cashoutAccountNumber: "1234567890",
+        },
+      })
+      .mockResolvedValueOnce(
+        buildMerchantRecord({
+          merchantProfile: {
+            businessName: "Campus Cafe",
+            businessAddress: "CU Plaza",
+            cashoutBankName: "GTBank",
+            cashoutBankCode: "058",
+            cashoutAccountNumber: "0987654321",
+            cashoutAccountName: "Resolved Merchant Name",
+            verifiedAt: new Date("2026-05-18T00:00:00.000Z"),
+          },
+        }),
+      );
+
+    await service.updateMerchant(
+      "u_merchant",
+      {
+        cashoutBankCode: "058",
+        cashoutAccountNumber: "0987654321",
+        cashoutAccountName: "Manual Override Name",
+      },
+      "u_admin",
+    );
+
+    expect(korapayService.resolveBankAccount).toHaveBeenCalledWith({
+      bankCode: "058",
+      accountNumber: "0987654321",
+      currency: "NG",
+    });
+    expect(prisma.merchantProfile.update).toHaveBeenCalledWith({
+      where: { userId: "u_merchant" },
+      data: {
+        cashoutBankName: "GTBank",
+        cashoutBankCode: "058",
+        cashoutAccountNumber: "0987654321",
+        cashoutAccountName: "Resolved Merchant Name",
+      },
+    });
+  });
+
+  it("updateMerchant blocks payout detail updates when Korapay resolution fails", async () => {
+    korapayService.resolveBankAccount.mockRejectedValue(
+      new BadRequestException("unable_to_resolve_bank_account"),
+    );
+    prisma.user.findUnique.mockResolvedValue({
+      id: "u_merchant",
+      role: Role.MERCHANT,
+      merchantProfile: {
+        verifiedAt: new Date("2026-05-18T00:00:00.000Z"),
+        cashoutBankCode: "035",
+        cashoutAccountNumber: "1234567890",
+      },
+    });
+
+    await expect(
+      service.updateMerchant(
+        "u_merchant",
+        {
+          cashoutBankCode: "044",
+          cashoutAccountNumber: "1234567890",
+        },
+        "u_admin",
+      ),
+    ).rejects.toThrow(BadRequestException);
+
+    expect(prisma.merchantProfile.update).not.toHaveBeenCalled();
   });
 
   it("updateMerchant rejects non-merchant users", async () => {
