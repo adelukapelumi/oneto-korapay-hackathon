@@ -2,34 +2,30 @@ import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Resend } from "resend";
 import { parseAdminWebOrigins } from "../common/cors";
-import { tryNormalizeEmail } from "../common/email";
+import { parseNotificationRecipients } from "../common/email-redaction";
 
 @Injectable()
 export class AdminCashoutNotificationService {
   private readonly logger = new Logger(AdminCashoutNotificationService.name);
   private readonly resend: Resend | null;
   private readonly fromAddress: string;
+  private readonly cashoutReplyToAddress: string;
 
   constructor(private readonly configService: ConfigService) {
     const apiKey = this.configService.get<string>("RESEND_API_KEY");
     this.resend = apiKey ? new Resend(apiKey) : null;
     this.fromAddress =
-      this.configService.get<string>("RESEND_FROM_ADDRESS") ?? "oneto <noreply@oneto.ng>";
+      this.configService.get<string>("RESEND_FROM_ADDRESS") ??
+      "Oneto Notifications <no-reply@getoneto.com>";
+    this.cashoutReplyToAddress =
+      this.configService.get<string>("CASHOUT_REQUESTS_EMAIL_ADDRESS") ??
+      "cashoutrequests@getoneto.com";
   }
 
   private getNotificationRecipients(): string[] {
-    const configured =
-      this.configService.get<string>("ADMIN_CASHOUT_NOTIFICATION_EMAILS") ?? "";
-    const parsed = new Set<string>();
-
-    for (const rawEmail of configured.split(",")) {
-      const normalized = tryNormalizeEmail(rawEmail.trim());
-      if (normalized) {
-        parsed.add(normalized);
-      }
-    }
-
-    return Array.from(parsed);
+    return parseNotificationRecipients(
+      this.configService.get<string>("ADMIN_CASHOUT_NOTIFICATION_EMAILS"),
+    );
   }
 
   private getDashboardLink(): string | null {
@@ -93,12 +89,13 @@ export class AdminCashoutNotificationService {
     const { error } = await this.resend.emails.send({
       from: this.fromAddress,
       to: recipients,
+      replyTo: this.cashoutReplyToAddress,
       subject: "New Oneto merchant cashout request",
       text: lines.join("\n"),
     });
 
     if (error) {
-      throw new Error(`admin_cashout_notification_failed: ${error.message}`);
+      this.logger.warn(`admin_cashout_notification_failed: ${error.message}`);
     }
   }
 }

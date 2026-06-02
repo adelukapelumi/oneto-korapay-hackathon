@@ -2,10 +2,12 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from "@nestjs/common";
 import {
   DeviceKeyStatus,
+  KeyRecoveryReason,
   KeyRecoveryRequest,
   KeyRecoveryRiskType,
   KeyRecoveryStatus,
@@ -18,8 +20,9 @@ import {
   CreateRecoveryRequestDto,
   RejectRecoveryRequestDto,
 } from "./recovery.schemas";
+import { RecoveryEmailService } from "./recovery-email.service";
 
-const VERIFY_ONLY_WINDOW_MS = 24 * 60 * 60 * 1000;
+export const RECOVERY_VERIFY_ONLY_WINDOW_MS = 48 * 60 * 60 * 1000;
 
 const ADMIN_PENDING_INCLUDE = {
   user: {
@@ -84,18 +87,49 @@ export interface AdminRecoveryRequestResponse extends PublicRecoveryRequestRespo
   };
 }
 
+type RecoveryEmailContext = {
+  readonly requestId: string;
+  readonly userId: string;
+  readonly userEmail: string;
+  readonly userRole: Role;
+  readonly reason: KeyRecoveryReason;
+  readonly riskType: KeyRecoveryRiskType;
+  readonly oldKeyPublicKey: string;
+  readonly requestedNewPublicKey: string;
+  readonly approximateBalanceKobo: string | null;
+  readonly lastMerchantText: string | null;
+  readonly lastTopupAmountKobo: string | null;
+  readonly userNotes: string | null;
+};
+
+type RecoveryRequestRecord = KeyRecoveryRequest & {
+  userEmail: string;
+  userRole: Role;
+  oldKeyPublicKey: string;
+};
+
 @Injectable()
 export class RecoveryService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(RecoveryService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly recoveryEmailService: RecoveryEmailService,
+  ) {}
 
   async createRecoveryRequest(userId: string, input: CreateRecoveryRequestDto) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true },
+      select: { id: true, email: true, role: true },
     });
 
     if (!user) {
       throw new NotFoundException("user_not_found");
+    }
+
+    const existingPending = await this.findPendingRequest(userId);
+    if (existingPending) {
+      return this.mapPublicRequest(existingPending);
     }
 
     const activeKey = await this.prisma.userDeviceKey.findFirst({
@@ -120,30 +154,59 @@ export class RecoveryService {
       throw new ConflictException("requested_key_already_registered");
     }
 
-    const existingPending = await this.findPendingRequest(userId);
-    if (existingPending) {
-      return this.mapPublicRequest(existingPending);
-    }
-
     try {
-      const request = await this.prisma.keyRecoveryRequest.create({
-        data: {
-          userId,
-          oldKeyId: activeKey.id,
-          requestedNewPublicKey: input.requestedNewPublicKey,
-          riskType: input.riskType,
-          reason: input.reason,
-          userNotes: input.userNotes,
-          approximateBalanceKobo:
-            input.approximateBalanceKobo === undefined
-              ? undefined
-              : BigInt(input.approximateBalanceKobo),
-          lastMerchantText: input.lastMerchantText,
-          lastTopupAmountKobo:
-            input.lastTopupAmountKobo === undefined
-              ? undefined
-              : BigInt(input.lastTopupAmountKobo),
+      const createdAt = new Date();
+      const request = await this.prisma.$transaction(
+        async (tx) => {
+          const created = await tx.keyRecoveryRequest.create({
+            data: {
+              userId,
+              oldKeyId: activeKey.id,
+              requestedNewPublicKey: input.requestedNewPublicKey,
+              riskType: input.riskType,
+              reason: input.reason,
+              userNotes: input.userNotes,
+              approximateBalanceKobo:
+                input.approximateBalanceKobo === undefined
+                  ? undefined
+                  : BigInt(input.approximateBalanceKobo),
+              lastMerchantText: input.lastMerchantText,
+              lastTopupAmountKobo:
+                input.lastTopupAmountKobo === undefined
+                  ? undefined
+                  : BigInt(input.lastTopupAmountKobo),
+              createdAt,
+            },
+          });
+
+          if (this.shouldImmediatelyRestrictOldKey(input)) {
+            // High-risk reports must stop the old key from authorizing new
+            // payments immediately. VERIFY_ONLY keeps already-scanned pre-report
+            // envelopes reconcilable while rejecting anything signed later.
+            await tx.userDeviceKey.update({
+              where: { id: activeKey.id },
+              data: {
+                status: DeviceKeyStatus.VERIFY_ONLY,
+                retiredAt: createdAt,
+                verifyUntil: new Date(createdAt.getTime() + RECOVERY_VERIFY_ONLY_WINDOW_MS),
+              },
+            });
+          }
+
+          return created;
         },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
+
+      await this.notifySafely("recovery_request_notification_failed", async () => {
+        const emailContext = this.toEmailContext({
+          request,
+          userEmail: user.email,
+          userRole: user.role,
+          oldKeyPublicKey: activeKey.publicKey,
+        });
+        await this.recoveryEmailService.sendAdminNewRecoveryRequestNotification(emailContext);
+        await this.recoveryEmailService.sendUserRecoveryRequestReceived(emailContext);
       });
 
       return this.mapPublicRequest(request);
@@ -232,15 +295,8 @@ export class RecoveryService {
             where: { id: request.oldKeyId },
           });
 
-          if (!oldKey) {
+          if (!oldKey || oldKey.userId !== request.userId) {
             throw new ConflictException("old_device_key_not_found");
-          }
-
-          if (
-            oldKey.userId !== request.userId ||
-            oldKey.status !== DeviceKeyStatus.ACTIVE
-          ) {
-            throw new ConflictException("old_device_key_not_active");
           }
 
           const duplicateKey = await tx.userDeviceKey.findUnique({
@@ -253,25 +309,14 @@ export class RecoveryService {
           }
 
           const reviewedAt = new Date();
-          const verifyUntil =
-            request.riskType === KeyRecoveryRiskType.LOST_DEVICE
-              ? new Date(reviewedAt.getTime() + VERIFY_ONLY_WINDOW_MS)
-              : null;
-          const oldKeyStatus =
-            request.riskType === KeyRecoveryRiskType.LOST_DEVICE
-              ? DeviceKeyStatus.VERIFY_ONLY
-              : DeviceKeyStatus.REVOKED;
+          const oldKeyUpdate = this.buildOldKeyApprovalUpdate(request, oldKey, reviewedAt);
 
-          // Recovery approval is the first point where a new key is trusted.
           await tx.userDeviceKey.update({
             where: { id: oldKey.id },
-            data: {
-              status: oldKeyStatus,
-              retiredAt: reviewedAt,
-              verifyUntil,
-            },
+            data: oldKeyUpdate,
           });
 
+          // Approval is the first point where the pending key becomes trusted.
           await tx.userDeviceKey.create({
             data: {
               userId: request.userId,
@@ -286,7 +331,7 @@ export class RecoveryService {
             data: { publicKey: request.requestedNewPublicKey },
           });
 
-          return tx.keyRecoveryRequest.update({
+          const updatedRequest = await tx.keyRecoveryRequest.update({
             where: { id: request.id },
             data: {
               status: KeyRecoveryStatus.APPROVED,
@@ -295,9 +340,31 @@ export class RecoveryService {
               decisionNotes: input.decisionNotes,
             },
           });
+
+          const requestUser = await tx.user.findUnique({
+            where: { id: request.userId },
+            select: { email: true, role: true },
+          });
+
+          if (!requestUser) {
+            throw new ConflictException("recovery_request_user_not_found");
+          }
+
+          return {
+            ...updatedRequest,
+            userEmail: requestUser.email,
+            userRole: requestUser.role,
+            oldKeyPublicKey: oldKey.publicKey,
+          } satisfies RecoveryRequestRecord;
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       );
+
+      await this.notifySafely("recovery_approved_notification_failed", async () => {
+        await this.recoveryEmailService.sendUserRecoveryApproved(
+          this.toEmailContext(approved),
+        );
+      });
 
       return this.mapPublicRequest(approved);
     } catch (error) {
@@ -319,29 +386,113 @@ export class RecoveryService {
   ) {
     await this.assertAdminUser(adminUserId);
 
-    const request = await this.prisma.keyRecoveryRequest.findUnique({
-      where: { id: requestId },
-    });
+    const rejected = await this.prisma.$transaction(
+      async (tx) => {
+        const request = await tx.keyRecoveryRequest.findUnique({
+          where: { id: requestId },
+        });
 
-    if (!request) {
-      throw new NotFoundException("recovery_request_not_found");
-    }
+        if (!request) {
+          throw new NotFoundException("recovery_request_not_found");
+        }
 
-    if (request.status !== KeyRecoveryStatus.PENDING) {
-      throw new ConflictException("recovery_request_not_pending");
-    }
+        if (request.status !== KeyRecoveryStatus.PENDING) {
+          throw new ConflictException("recovery_request_not_pending");
+        }
 
-    const rejected = await this.prisma.keyRecoveryRequest.update({
-      where: { id: request.id },
-      data: {
-        status: KeyRecoveryStatus.REJECTED,
-        reviewedByUserId: adminUserId,
-        reviewedAt: new Date(),
-        decisionNotes: input.decisionNotes,
+        const oldKey = await tx.userDeviceKey.findUnique({
+          where: { id: request.oldKeyId },
+        });
+
+        if (!oldKey || oldKey.userId !== request.userId) {
+          throw new ConflictException("old_device_key_not_found");
+        }
+
+        if (
+          request.riskType === KeyRecoveryRiskType.COMPROMISED_DEVICE &&
+          oldKey.status === DeviceKeyStatus.VERIFY_ONLY
+        ) {
+          // Do not auto-reactivate high-risk old keys. If a stolen or
+          // compromised-device report turns out to be wrong, support must make a
+          // deliberate manual decision instead of silently restoring trust.
+        }
+
+        const updatedRequest = await tx.keyRecoveryRequest.update({
+          where: { id: request.id },
+          data: {
+            status: KeyRecoveryStatus.REJECTED,
+            reviewedByUserId: adminUserId,
+            reviewedAt: new Date(),
+            decisionNotes: input.decisionNotes,
+          },
+        });
+
+        const requestUser = await tx.user.findUnique({
+          where: { id: request.userId },
+          select: { email: true, role: true },
+        });
+
+        if (!requestUser) {
+          throw new ConflictException("recovery_request_user_not_found");
+        }
+
+        return {
+          ...updatedRequest,
+          userEmail: requestUser.email,
+          userRole: requestUser.role,
+          oldKeyPublicKey: oldKey.publicKey,
+        } satisfies RecoveryRequestRecord;
       },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+
+    await this.notifySafely("recovery_rejected_notification_failed", async () => {
+      await this.recoveryEmailService.sendUserRecoveryRejected(
+        this.toEmailContext(rejected),
+      );
     });
 
     return this.mapPublicRequest(rejected);
+  }
+
+  private shouldImmediatelyRestrictOldKey(input: CreateRecoveryRequestDto): boolean {
+    return (
+      input.reason === KeyRecoveryReason.STOLEN_PHONE ||
+      input.riskType === KeyRecoveryRiskType.COMPROMISED_DEVICE
+    );
+  }
+
+  private buildOldKeyApprovalUpdate(
+    request: KeyRecoveryRequest,
+    oldKey: {
+      status: DeviceKeyStatus;
+      retiredAt: Date | null;
+      verifyUntil: Date | null;
+    },
+    reviewedAt: Date,
+  ): Prisma.UserDeviceKeyUpdateInput {
+    if (request.riskType === KeyRecoveryRiskType.COMPROMISED_DEVICE) {
+      if (oldKey.status !== DeviceKeyStatus.VERIFY_ONLY || oldKey.retiredAt === null) {
+        throw new ConflictException("compromised_old_device_key_not_restricted");
+      }
+
+      return {
+        status: DeviceKeyStatus.VERIFY_ONLY,
+        retiredAt: oldKey.retiredAt,
+        verifyUntil:
+          oldKey.verifyUntil ?? new Date(oldKey.retiredAt.getTime() + RECOVERY_VERIFY_ONLY_WINDOW_MS),
+      };
+    }
+
+    if (oldKey.status !== DeviceKeyStatus.ACTIVE) {
+      throw new ConflictException("old_device_key_not_active");
+    }
+
+    return {
+      status: DeviceKeyStatus.VERIFY_ONLY,
+      retiredAt: reviewedAt,
+      verifyUntil: new Date(reviewedAt.getTime() + RECOVERY_VERIFY_ONLY_WINDOW_MS),
+    };
   }
 
   private async findPendingRequest(userId: string) {
@@ -360,6 +511,64 @@ export class RecoveryService {
     if (!user || user.role !== Role.ADMIN) {
       throw new ForbiddenException("admin_required");
     }
+  }
+
+  private async notifySafely(
+    logCode: string,
+    work: () => Promise<void>,
+  ): Promise<void> {
+    try {
+      await work();
+    } catch (error) {
+      this.logger.warn(
+        `${logCode}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  private toEmailContext(input: {
+    readonly request: KeyRecoveryRequest;
+    readonly userEmail: string;
+    readonly userRole: Role;
+    readonly oldKeyPublicKey: string;
+  }): RecoveryEmailContext;
+  private toEmailContext(input: RecoveryRequestRecord): RecoveryEmailContext;
+  private toEmailContext(
+    input:
+      | {
+          readonly request: KeyRecoveryRequest;
+          readonly userEmail: string;
+          readonly userRole: Role;
+          readonly oldKeyPublicKey: string;
+        }
+      | RecoveryRequestRecord,
+  ): RecoveryEmailContext {
+    const request = "request" in input ? input.request : input;
+    const userEmail = "request" in input ? input.userEmail : input.userEmail;
+    const userRole = "request" in input ? input.userRole : input.userRole;
+    const oldKeyPublicKey =
+      "request" in input ? input.oldKeyPublicKey : input.oldKeyPublicKey;
+
+    return {
+      requestId: request.id,
+      userId: request.userId,
+      userEmail,
+      userRole,
+      reason: request.reason,
+      riskType: request.riskType,
+      oldKeyPublicKey,
+      requestedNewPublicKey: request.requestedNewPublicKey,
+      approximateBalanceKobo:
+        request.approximateBalanceKobo === null
+          ? null
+          : request.approximateBalanceKobo.toString(),
+      lastMerchantText: request.lastMerchantText,
+      lastTopupAmountKobo:
+        request.lastTopupAmountKobo === null
+          ? null
+          : request.lastTopupAmountKobo.toString(),
+      userNotes: request.userNotes,
+    };
   }
 
   private mapPublicRequest(

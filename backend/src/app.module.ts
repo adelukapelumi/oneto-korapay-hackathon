@@ -21,6 +21,7 @@ import { AdminModule } from "./admin/admin.module";
 import { RedisModule } from "./redis/redis.module";
 import { REDIS_CLIENT } from "./redis/redis.tokens";
 import { RecoveryModule } from "./recovery/recovery.module";
+import { SupportModule } from "./support/support.module";
 
 @Module({
   imports: [
@@ -67,6 +68,7 @@ import { RecoveryModule } from "./recovery/recovery.module";
     MeModule,
     CashoutModule,
     RecoveryModule,
+    SupportModule,
     AdminModule,
     HealthModule,
   ],

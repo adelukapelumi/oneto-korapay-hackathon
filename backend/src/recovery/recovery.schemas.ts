@@ -23,6 +23,7 @@ export const CreateRecoveryRequestSchema = z
     requestedNewPublicKey: PublicKeySchema,
     riskType: z.enum(["LOST_DEVICE", "COMPROMISED_DEVICE"]),
     reason: z.enum([
+      "NEW_PHONE",
       "LOST_PHONE",
       "STOLEN_PHONE",
       "DAMAGED_PHONE",

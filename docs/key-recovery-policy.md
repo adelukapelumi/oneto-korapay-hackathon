@@ -260,14 +260,15 @@ Target flow:
 User logs in with email OTP or contacts support.  
 User chooses "My phone was stolen" or support marks the case compromised.  
 Account is restricted immediately.  
-Old key becomes REVOKED or pending revocation.  
+Old key becomes VERIFY_ONLY immediately at report time.  
 New key can become ACTIVE only after recovery approval.  
-Old offline payments may require dispute review.
+Old offline payments created before the report may still reconcile during a limited verification window.
 
 Rules:
 
-- Do not keep a compromised key as VERIFY_ONLY automatically.
-- Reconciliation involving a compromised key requires stricter treatment.
+- Payments signed after the report time must be rejected.
+- The VERIFY_ONLY window for high-risk reports is an operational compromise for the pilot so already-scanned pre-report payments can still settle.
+- If a compromised/stolen recovery is later rejected, automatic reactivation of the old key is unsafe and must be a manual support action.
 - If Oneto cannot distinguish lost from compromised, choose the safer path: restrict and review.
 
 ## 9. Offline payment treatment during device changes
@@ -321,9 +322,8 @@ To protect your points, we need to confirm before setting up this phone.
 
 Buttons:
 
-- I still have my old phone
-- I lost my old phone
-- My phone was stolen
+- Request account recovery
+- I still have my old phone (feature-flagged during the pilot)
 
 For old-phone move:
 
@@ -436,11 +436,11 @@ Current code only partially implements this policy.
 Current known state:
 
 - mobile creates and stores a PIN-protected keypair
-- backend stores a single public key on the `User` record
-- backend requires a rotation signature when replacing that public key
-- lost-device recovery is currently support/manual
-- old public key history is not yet implemented
-- recovery request records are not yet implemented
-- user-facing recovery screens are not yet complete
+- backend stores an active `User.publicKey` mirror plus `UserDeviceKey` history
+- backend requires a rotation signature for the old-phone approval path
+- default pilot recovery is the admin-reviewed request flow
+- old-phone approval flow still exists but is hidden behind a feature flag by default
+- recovery request records are implemented
+- user-facing recovery screens now default to the support-led flow
 
 Until this policy is fully implemented, key recovery must be handled manually and conservatively.

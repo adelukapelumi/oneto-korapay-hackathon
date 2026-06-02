@@ -6,6 +6,13 @@ const makeBaseEnv = (overrides: Record<string, string | undefined> = {}) => ({
   JWT_SECRET: "12345678901234567890123456789012",
   RESEND_API_KEY: "re_test_key",
   RESEND_FROM_ADDRESS: "noreply@getoneto.com",
+  SUPPORT_EMAIL_ADDRESS: "support@getoneto.com",
+  USER_SUPPORT_FROM_ADDRESS: "Oneto Support <support@getoneto.com>",
+  ADMIN_RECOVERY_NOTIFICATION_EMAILS: "support@getoneto.com",
+  ADMIN_SUPPORT_NOTIFICATION_EMAILS: "support@getoneto.com",
+  CASHOUT_REQUESTS_EMAIL_ADDRESS: "cashoutrequests@getoneto.com",
+  USER_CASHOUT_FROM_ADDRESS: "Oneto Cashout Requests <cashoutrequests@getoneto.com>",
+  ADMIN_CASHOUT_NOTIFICATION_EMAILS: "cashoutrequests@getoneto.com",
   KORAPAY_PUBLIC_KEY: "pk_test_key",
   KORAPAY_SECRET_KEY: "sk_test_key",
   ...overrides,
@@ -209,6 +216,44 @@ describe("envSchema", () => {
         expect.arrayContaining([
           expect.objectContaining({
             path: ["ADMIN_CASHOUT_NOTIFICATION_EMAILS"],
+          }),
+        ]),
+      );
+    }
+  });
+
+  it("rejects invalid support notification email list", () => {
+    const result = envSchema.safeParse(
+      makeBaseEnv({
+        ADMIN_SUPPORT_NOTIFICATION_EMAILS: "support@getoneto.com,not-an-email",
+      }),
+    );
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: ["ADMIN_SUPPORT_NOTIFICATION_EMAILS"],
+          }),
+        ]),
+      );
+    }
+  });
+
+  it("rejects invalid display-address sender values", () => {
+    const result = envSchema.safeParse(
+      makeBaseEnv({
+        USER_SUPPORT_FROM_ADDRESS: "Oneto Support <not-an-email>",
+      }),
+    );
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: ["USER_SUPPORT_FROM_ADDRESS"],
           }),
         ]),
       );

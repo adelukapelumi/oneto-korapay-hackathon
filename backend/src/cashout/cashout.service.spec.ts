@@ -13,6 +13,7 @@ import {
 } from '@prisma/client';
 import { ForbiddenException, BadRequestException, ConflictException } from '@nestjs/common';
 import { AdminCashoutNotificationService } from './admin-cashout-notification.service';
+import { CashoutEmailService } from './cashout-email.service';
 
 describe('CashoutService', () => {
   let service: CashoutService;
@@ -53,6 +54,12 @@ describe('CashoutService', () => {
     sendNewCashoutRequestNotification: jest.fn(),
   };
 
+  const mockCashoutEmailService = {
+    sendRequestReceived: jest.fn(),
+    sendApproved: jest.fn(),
+    sendCompleted: jest.fn(),
+  };
+
   let payoutMode: 'korapay_api' | 'manual' = 'korapay_api';
 
   beforeEach(async () => {
@@ -74,6 +81,10 @@ describe('CashoutService', () => {
           provide: AdminCashoutNotificationService,
           useValue: mockAdminCashoutNotificationService,
         },
+        {
+          provide: CashoutEmailService,
+          useValue: mockCashoutEmailService,
+        },
       ],
     }).compile();
 
@@ -84,6 +95,9 @@ describe('CashoutService', () => {
     mockPrisma.cashout.updateMany.mockResolvedValue({ count: 1 });
     mockKorapay.extractPayoutFeeKobo.mockReturnValue(null);
     mockAdminCashoutNotificationService.sendNewCashoutRequestNotification.mockResolvedValue(undefined);
+    mockCashoutEmailService.sendRequestReceived.mockResolvedValue(undefined);
+    mockCashoutEmailService.sendApproved.mockResolvedValue(undefined);
+    mockCashoutEmailService.sendCompleted.mockResolvedValue(undefined);
   });
 
   const merchantId = 'u_merchant';
@@ -92,6 +106,7 @@ describe('CashoutService', () => {
 
   const mockMerchant = {
     id: merchantId,
+    email: 'merchant@getoneto.com',
     role: Role.MERCHANT,
     status: Status.ACTIVE,
     verifiedBalanceKobo: BigInt(500000),
@@ -246,6 +261,30 @@ describe('CashoutService', () => {
       );
     });
 
+    it('requestCashout sends merchant request-received email from the cashout flow', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue(mockMerchant);
+      mockPrisma.cashout.findFirst.mockResolvedValue(null);
+      mockPrisma.cashout.create.mockResolvedValue({
+        id: 'cashout_notify_merchant',
+        merchantUserId: merchantId,
+        amountKobo: 500_000n,
+        grossAmountKobo: 500_000n,
+        onetoFeeKobo: 12_500n,
+        korapayTransferAmountKobo: 487_500n,
+        cashoutBankName: 'Wema Bank',
+        cashoutAccountName: 'Test Merchant',
+        cashoutAccountNumber: '1234567890',
+      });
+
+      await service.requestCashout(merchantId);
+
+      expect(mockCashoutEmailService.sendRequestReceived).toHaveBeenCalledWith({
+        merchantEmail: mockMerchant.email,
+        requestId: 'cashout_notify_merchant',
+        amountKobo: '500000',
+      });
+    });
+
     it('requestCashout does not fail when admin cashout notification send fails', async () => {
       mockPrisma.user.findUnique.mockResolvedValue(mockMerchant);
       mockPrisma.cashout.findFirst.mockResolvedValue(null);
@@ -332,6 +371,27 @@ describe('CashoutService', () => {
       expect(initiateKorapayPayoutSpy).toHaveBeenCalledWith(cashoutId, expect.stringContaining('cashout_'));
     });
 
+    it('approveCashout sends merchant-approved wording without marking it as completed', async () => {
+      jest.spyOn(service as any, 'initiateKorapayPayout').mockResolvedValue(undefined);
+      mockPrisma.cashout.findUnique.mockResolvedValue({
+        id: cashoutId,
+        status: CashoutStatus.PROCESSING,
+        failureReason: null,
+        amountKobo: 500000n,
+        grossAmountKobo: 500000n,
+        korapayTransferAmountKobo: 487500n,
+        merchant: { email: mockMerchant.email },
+      });
+
+      await service.approveCashout(cashoutId, adminId);
+
+      expect(mockCashoutEmailService.sendApproved).toHaveBeenCalledWith({
+        merchantEmail: mockMerchant.email,
+        requestId: cashoutId,
+        amountKobo: '500000',
+      });
+    });
+
     it('manual mode approve does not call Korapay payout initiation', async () => {
       payoutMode = 'manual';
       const module: TestingModule = await Test.createTestingModule({
@@ -343,6 +403,10 @@ describe('CashoutService', () => {
           {
             provide: AdminCashoutNotificationService,
             useValue: mockAdminCashoutNotificationService,
+          },
+          {
+            provide: CashoutEmailService,
+            useValue: mockCashoutEmailService,
           },
         ],
       }).compile();
@@ -368,6 +432,10 @@ describe('CashoutService', () => {
           {
             provide: AdminCashoutNotificationService,
             useValue: mockAdminCashoutNotificationService,
+          },
+          {
+            provide: CashoutEmailService,
+            useValue: mockCashoutEmailService,
           },
         ],
       }).compile();
@@ -476,6 +544,8 @@ describe('CashoutService', () => {
       });
       mockPrisma.cashout.findUnique.mockResolvedValue({
         id: cashoutId,
+        amountKobo: 500000n,
+        grossAmountKobo: 500000n,
         status: CashoutStatus.PROCESSING,
         korapayResponse: {
           source: 'manual_payout_required',
@@ -484,6 +554,7 @@ describe('CashoutService', () => {
           approvedByUserId: adminId,
           approvedAt: '2026-05-26T10:00:00.000Z',
         },
+        merchant: { email: mockMerchant.email },
       });
       mockPrisma.cashout.updateMany.mockResolvedValue({ count: 1 });
     });
@@ -513,6 +584,11 @@ describe('CashoutService', () => {
           }),
         }),
       );
+      expect(mockCashoutEmailService.sendCompleted).toHaveBeenCalledWith({
+        merchantEmail: mockMerchant.email,
+        requestId: cashoutId,
+        amountKobo: '500000',
+      });
     });
 
     it('mark-paid requires external reference', async () => {
@@ -988,6 +1064,7 @@ describe('CashoutService', () => {
         korapayPayoutFeeDeductedFromRecipient: null,
         korapayTransferAmountKobo: 4_875n,
         status: CashoutStatus.PROCESSING,
+        merchant: { email: mockMerchant.email },
       });
 
       const result = await service.handlePayoutWebhook(payload, signature);
@@ -995,6 +1072,11 @@ describe('CashoutService', () => {
       expect(mockPrisma.cashout.updateMany).toHaveBeenCalledWith({
         where: { id: 'c_123', status: CashoutStatus.PROCESSING },
         data: expect.objectContaining({ status: CashoutStatus.COMPLETED }),
+      });
+      expect(mockCashoutEmailService.sendCompleted).toHaveBeenCalledWith({
+        merchantEmail: mockMerchant.email,
+        requestId: 'c_123',
+        amountKobo: '5000',
       });
     });
 

@@ -18,6 +18,12 @@ const baseEnvSchema = z.object({
   REDIS_KEY_PREFIX: z.string().trim().min(1).optional(),
   RESEND_API_KEY: z.string().optional(),
   RESEND_FROM_ADDRESS: z.string().optional(),
+  SUPPORT_EMAIL_ADDRESS: z.string().optional(),
+  USER_SUPPORT_FROM_ADDRESS: z.string().optional(),
+  ADMIN_RECOVERY_NOTIFICATION_EMAILS: z.string().optional(),
+  ADMIN_SUPPORT_NOTIFICATION_EMAILS: z.string().optional(),
+  CASHOUT_REQUESTS_EMAIL_ADDRESS: z.string().optional(),
+  USER_CASHOUT_FROM_ADDRESS: z.string().optional(),
   KORAPAY_PUBLIC_KEY: z.string().optional(),
   KORAPAY_SECRET_KEY: z.string().optional(),
   KORAPAY_BASE_URL: z.string().default('https://api.korapay.com/merchant/api/v1'),
@@ -131,6 +137,62 @@ const baseEnvSchema = z.object({
           code: z.ZodIssueCode.custom,
           message: 'ADMIN_CASHOUT_NOTIFICATION_EMAILS must be a comma-separated list of valid email addresses',
           path: ['ADMIN_CASHOUT_NOTIFICATION_EMAILS'],
+        });
+        break;
+      }
+    }
+  }
+
+  const emailFields = [
+    'SUPPORT_EMAIL_ADDRESS',
+    'USER_SUPPORT_FROM_ADDRESS',
+    'CASHOUT_REQUESTS_EMAIL_ADDRESS',
+    'USER_CASHOUT_FROM_ADDRESS',
+    'RESEND_FROM_ADDRESS',
+  ] as const;
+
+  for (const field of emailFields) {
+    const rawValue = data[field];
+    if (!rawValue) {
+      continue;
+    }
+
+    const candidate = rawValue.includes('<') && rawValue.includes('>')
+      ? rawValue.slice(rawValue.lastIndexOf('<') + 1, rawValue.lastIndexOf('>')).trim()
+      : rawValue.trim();
+
+    const isValid = z.string().email().safeParse(candidate).success;
+    if (!isValid) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `${field} must contain a valid email address`,
+        path: [field],
+      });
+    }
+  }
+
+  const emailListFields = [
+    'ADMIN_RECOVERY_NOTIFICATION_EMAILS',
+    'ADMIN_SUPPORT_NOTIFICATION_EMAILS',
+  ] as const;
+
+  for (const field of emailListFields) {
+    const configured = data[field];
+    if (!configured) {
+      continue;
+    }
+
+    for (const rawEmail of configured.split(',')) {
+      const candidate = rawEmail.trim();
+      if (candidate.length === 0) {
+        continue;
+      }
+      const isValid = z.string().email().safeParse(candidate).success;
+      if (!isValid) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `${field} must be a comma-separated list of valid email addresses`,
+          path: [field],
         });
         break;
       }

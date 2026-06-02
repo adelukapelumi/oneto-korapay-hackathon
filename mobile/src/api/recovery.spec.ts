@@ -46,7 +46,7 @@ describe("recovery api", () => {
       {
         requestedNewPublicKey: sampleRequest.requestedNewPublicKey,
         riskType: "LOST_DEVICE",
-        reason: "DAMAGED_PHONE",
+        reason: "NEW_PHONE",
         approximateBalanceKobo: 123400,
         lastMerchantText: "Books and Bites",
         lastTopupAmountKobo: 25000,
@@ -58,7 +58,7 @@ describe("recovery api", () => {
     expect(post).toHaveBeenCalledWith("/recovery/request", {
       requestedNewPublicKey: sampleRequest.requestedNewPublicKey,
       riskType: "LOST_DEVICE",
-      reason: "DAMAGED_PHONE",
+      reason: "NEW_PHONE",
       approximateBalanceKobo: 123400,
       lastMerchantText: "Books and Bites",
       lastTopupAmountKobo: 25000,

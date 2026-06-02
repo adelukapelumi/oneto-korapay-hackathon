@@ -7,8 +7,9 @@ describe("AdminCashoutNotificationService", () => {
     get: jest.fn((key: string) => {
       const values: Record<string, string | undefined> = {
         RESEND_API_KEY: "re_test_key",
-        RESEND_FROM_ADDRESS: "oneto <noreply@getoneto.com>",
-        ADMIN_CASHOUT_NOTIFICATION_EMAILS: "admin1@getoneto.com,admin2@getoneto.com",
+        RESEND_FROM_ADDRESS: "Oneto Notifications <no-reply@getoneto.com>",
+        ADMIN_CASHOUT_NOTIFICATION_EMAILS: "cashoutrequests@getoneto.com",
+        CASHOUT_REQUESTS_EMAIL_ADDRESS: "cashoutrequests@getoneto.com",
         ADMIN_WEB_ORIGINS: "https://admin.getoneto.com",
       };
       return values[key];
@@ -37,8 +38,15 @@ describe("AdminCashoutNotificationService", () => {
     });
 
     expect(sendMock).toHaveBeenCalledTimes(1);
-    const payload = sendMock.mock.calls[0]?.[0] as { text: string };
+    const payload = sendMock.mock.calls[0]?.[0] as {
+      text: string;
+      to: string[];
+      replyTo: string;
+    };
     expect(payload.text).toContain("******7890");
     expect(payload.text).not.toContain("1234567890");
+    expect(payload.to).toEqual(["cashoutrequests@getoneto.com"]);
+    expect(payload.replyTo).toBe("cashoutrequests@getoneto.com");
+    expect(payload.to).not.toContain("support@getoneto.com");
   });
 });

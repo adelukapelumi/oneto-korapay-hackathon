@@ -4,12 +4,17 @@ import { useRouter } from "expo-router";
 import { Screen } from "../../components/Screen";
 import { useAuth } from "../../src/auth/auth-state";
 import { getToken } from "../../src/auth/token-store";
+import { env } from "../../src/lib/env";
 import {
   getRecoveryStatus,
   shouldRedirectToRecoveryStatus,
 } from "../../src/api/recovery";
 import { NetworkError } from "../../src/api/errors";
 import { logger } from "../../src/lib/logger";
+import {
+  getDeviceLinkedActions,
+  SUPPORT_EMAIL_ADDRESS,
+} from "../../src/recovery/recovery-ui";
 import { useThemeMode } from "../../src/theme/theme-provider";
 import {
   borders,
@@ -31,6 +36,7 @@ export default function DeviceLinkedScreen(): React.ReactElement {
   const { state, resetLocalAppForTesting } = useAuth();
   const { mode } = useThemeMode();
   const t = getTheme(mode);
+  const recoveryActions = getDeviceLinkedActions(env.ENABLE_OLD_PHONE_APPROVAL);
   const [existingRequestState, setExistingRequestState] =
     useState<ExistingRequestState>({ kind: "checking" });
   const [reloadToken, setReloadToken] = useState(0);
@@ -129,10 +135,10 @@ export default function DeviceLinkedScreen(): React.ReactElement {
             This account is already linked to another phone
           </Text>
           <Text style={[styles.body, { color: t.textSec }]}>
-            To protect your Oneto points, we need to confirm before setting up this phone.
+            Tell us what happened so Oneto Support can safely move your account to this phone.
           </Text>
           <Text style={[styles.footer, { color: t.textMut }]}>
-            This helps stop someone from taking over your account with only your email.
+            Your request will be sent to Oneto Support at {SUPPORT_EMAIL_ADDRESS}.
           </Text>
         </View>
 
@@ -164,30 +170,24 @@ export default function DeviceLinkedScreen(): React.ReactElement {
         ) : null}
 
         <View style={styles.actions}>
-          <ActionButton
-            label="I lost access to my old phone"
-            onPress={() =>
-              router.push({
-                pathname: "/(onboarding)/recovery-request",
-                params: { riskType: "LOST_DEVICE" },
-              })
-            }
-          />
-          <ActionButton
-            label="My phone was stolen"
-            secondary
-            onPress={() =>
-              router.push({
-                pathname: "/(onboarding)/recovery-request",
-                params: { riskType: "COMPROMISED_DEVICE" },
-              })
-            }
-          />
-          <ActionButton
-            label="I still have my old phone"
-            tertiary
-            onPress={() => router.push("/(onboarding)/move-device")}
-          />
+          {recoveryActions.map((action, index) => (
+            <ActionButton
+              key={action.label}
+              label={action.label}
+              secondary={index > 0}
+              onPress={() => {
+                if (action.pathname === "/(onboarding)/move-device") {
+                  router.push("/(onboarding)/move-device");
+                  return;
+                }
+
+                router.push({
+                  pathname: "/(onboarding)/recovery-request",
+                  params: action.params,
+                });
+              }}
+            />
+          ))}
         </View>
 
         <View style={[styles.testingResetCard, { backgroundColor: t.cardAlt, borderColor: colors.error }]}>
@@ -222,12 +222,10 @@ function ActionButton({
   label,
   onPress,
   secondary = false,
-  tertiary = false,
 }: {
   readonly label: string;
   readonly onPress: () => void;
   readonly secondary?: boolean;
-  readonly tertiary?: boolean;
 }): React.ReactElement {
   const { mode } = useThemeMode();
   const t = getTheme(mode);
@@ -238,18 +236,16 @@ function ActionButton({
       onPress={onPress}
       style={({ pressed }) => [
         styles.button,
-        tertiary
-          ? [styles.buttonTertiary, { borderColor: t.border, backgroundColor: t.cardAlt }]
-          : secondary
-            ? [styles.buttonSecondary, { borderColor: colors.secondary, backgroundColor: colors.secondary }]
-            : [styles.buttonPrimary, { borderColor: t.border }],
+        secondary
+          ? [styles.buttonSecondary, { borderColor: t.border, backgroundColor: t.cardAlt }]
+          : [styles.buttonPrimary, { borderColor: t.border }],
         pressed && styles.buttonPressed,
       ]}
     >
       <Text
         style={[
           styles.buttonText,
-          tertiary ? { color: t.text } : secondary ? styles.buttonTextDark : styles.buttonTextLight,
+          secondary ? { color: t.text } : styles.buttonTextLight,
         ]}
       >
         {label}
@@ -317,7 +313,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
   },
   buttonSecondary: {},
-  buttonTertiary: {},
   buttonPressed: {
     opacity: 0.9,
     transform: [{ translateY: 1 }],
@@ -332,9 +327,6 @@ const styles = StyleSheet.create({
   },
   buttonTextLight: {
     color: colors.primaryText,
-  },
-  buttonTextDark: {
-    color: "#1B1208",
   },
   noticeCard: {
     borderWidth: borders.standard,

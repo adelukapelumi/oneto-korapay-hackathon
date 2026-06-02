@@ -18,10 +18,15 @@ const EnvSchema = z.object({
       (u) => !u.endsWith("/"),
       "EXPO_PUBLIC_API_URL must not end with a trailing slash",
     ),
+  EXPO_PUBLIC_ENABLE_OLD_PHONE_APPROVAL: z
+    .enum(["true", "false"])
+    .optional()
+    .default("false"),
 });
 
 export type Env = {
   readonly API_URL: string;
+  readonly ENABLE_OLD_PHONE_APPROVAL: boolean;
 };
 
 function loadEnv(): Env {
@@ -36,7 +41,11 @@ function loadEnv(): Env {
       `Invalid environment configuration. Check mobile/.env:\n${issues}`,
     );
   }
-  return { API_URL: parsed.data.EXPO_PUBLIC_API_URL };
+  return {
+    API_URL: parsed.data.EXPO_PUBLIC_API_URL,
+    ENABLE_OLD_PHONE_APPROVAL:
+      parsed.data.EXPO_PUBLIC_ENABLE_OLD_PHONE_APPROVAL === "true",
+  };
 }
 
 export const env: Env = loadEnv();

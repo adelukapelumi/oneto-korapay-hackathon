@@ -53,6 +53,7 @@ import {
   type TransactionStatusTone,
 } from "../../src/payment/transaction-list";
 import { logger } from "../../src/lib/logger";
+import { DASHBOARD_SUPPORT_LABEL } from "../../src/support/support-ui";
 import { useThemeMode } from "../../src/theme/theme-provider";
 import {
   getTheme,
@@ -829,6 +830,21 @@ export default function HomeScreen(): React.ReactElement {
 
           {activitySection}
 
+          <View style={styles.section}>
+            <Pressable
+              style={({ pressed }) => [
+                styles.listItem,
+                { backgroundColor: t.card, borderColor: t.border },
+                t.shadow,
+                pressed && styles.listItemPressed,
+              ]}
+              onPress={() => router.push("/(app)/support")}
+            >
+              <Text style={[styles.listItemText, { color: t.text }]}>{DASHBOARD_SUPPORT_LABEL}</Text>
+              <Text style={[styles.listItemArrow, { color: t.textMut }]}>→</Text>
+            </Pressable>
+          </View>
+
           {recentConfirmedPaymentCount >= 10 && recentConfirmedPaymentCount < 25 && (
             <View style={[styles.milestoneCard, t.shadow]}>
               <Text style={styles.milestoneIcon}>🎯</Text>
@@ -1084,6 +1100,18 @@ export default function HomeScreen(): React.ReactElement {
             onPress={() => router.push("/(app)/history")}
           >
             <Text style={[styles.listItemText, { color: t.text }]}>Transaction History</Text>
+            <Text style={[styles.listItemArrow, { color: t.textMut }]}>→</Text>
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [
+              styles.listItem,
+              { backgroundColor: t.card, borderColor: t.border },
+              t.shadow,
+              pressed && styles.listItemPressed,
+            ]}
+            onPress={() => router.push("/(app)/support")}
+          >
+            <Text style={[styles.listItemText, { color: t.text }]}>{DASHBOARD_SUPPORT_LABEL}</Text>
             <Text style={[styles.listItemArrow, { color: t.textMut }]}>→</Text>
           </Pressable>
         </View>
