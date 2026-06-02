@@ -29,6 +29,8 @@ describe("Admin HTTP boundary", () => {
 
   const mockAdminService = {
     getOverview: jest.fn(),
+    listBanks: jest.fn(),
+    resolveBankAccount: jest.fn(),
     listMerchants: jest.fn(),
     createMerchant: jest.fn(),
     getPendingMerchants: jest.fn(),
@@ -93,6 +95,13 @@ describe("Admin HTTP boundary", () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     mockAdminService.getOverview.mockResolvedValue({ totalUsers: 10 });
+    mockAdminService.listBanks.mockResolvedValue([{ name: "Wema Bank", code: "035", countryCode: "NG" }]);
+    mockAdminService.resolveBankAccount.mockResolvedValue({
+      accountName: "Campus Cafe Ltd",
+      accountNumber: "1234567890",
+      bankCode: "035",
+      bankName: "Wema Bank",
+    });
     mockAdminService.listMerchants.mockResolvedValue([{ userId: "u_merchant" }]);
     mockAdminService.createMerchant.mockResolvedValue({
       merchant: { userId: "u_new_merchant", status: "ACTIVE" },
@@ -172,6 +181,27 @@ describe("Admin HTTP boundary", () => {
     expect(mockAdminService.listMerchants).toHaveBeenCalledTimes(1);
   });
 
+  it("rejects GET /admin/banks/ng with Bearer ADMIN token", async () => {
+    await request(app.getHttpServer())
+      .get("/admin/banks/ng")
+      .set("Authorization", `Bearer ${BEARER_ADMIN_TOKEN}`)
+      .expect(401);
+
+    expect(mockAdminService.listBanks).not.toHaveBeenCalled();
+  });
+
+  it("accepts GET /admin/banks/ng with admin session cookie", async () => {
+    const response = await request(app.getHttpServer())
+      .get("/admin/banks/ng")
+      .set("Cookie", `${ADMIN_SESSION_COOKIE_NAME}=${COOKIE_ADMIN_TOKEN}`)
+      .expect(200);
+
+    expect(response.body).toEqual({
+      banks: [{ name: "Wema Bank", code: "035", countryCode: "NG" }],
+    });
+    expect(mockAdminService.listBanks).toHaveBeenCalledWith("NG");
+  });
+
   it("rejects GET /admin/network/outbound-ip with Bearer ADMIN token", async () => {
     await request(app.getHttpServer())
       .get("/admin/network/outbound-ip")
@@ -239,6 +269,46 @@ describe("Admin HTTP boundary", () => {
       }),
       ADMIN_PAYLOAD.sub,
     );
+  });
+
+  it("rejects POST /admin/banks/resolve without admin CSRF header", async () => {
+    await request(app.getHttpServer())
+      .post("/admin/banks/resolve")
+      .set("Cookie", `${ADMIN_SESSION_COOKIE_NAME}=${COOKIE_ADMIN_TOKEN}`)
+      .set("Origin", ALLOWED_ORIGIN)
+      .send({
+        bankCode: "035",
+        accountNumber: "1234567890",
+      })
+      .expect(403);
+
+    expect(mockAdminService.resolveBankAccount).not.toHaveBeenCalled();
+  });
+
+  it("allows POST /admin/banks/resolve with cookie auth, allowlisted Origin and CSRF header", async () => {
+    const response = await request(app.getHttpServer())
+      .post("/admin/banks/resolve")
+      .set("Cookie", `${ADMIN_SESSION_COOKIE_NAME}=${COOKIE_ADMIN_TOKEN}`)
+      .set("Origin", ALLOWED_ORIGIN)
+      .set("X-Oneto-Admin-CSRF", "1")
+      .send({
+        bankCode: "035",
+        accountNumber: "1234567890",
+      })
+      .expect(201);
+
+    expect(response.body).toEqual({
+      account: {
+        accountName: "Campus Cafe Ltd",
+        accountNumber: "1234567890",
+        bankCode: "035",
+        bankName: "Wema Bank",
+      },
+    });
+    expect(mockAdminService.resolveBankAccount).toHaveBeenCalledWith({
+      bankCode: "035",
+      accountNumber: "1234567890",
+    });
   });
 
   it("rejects POST /admin/merchants/:userId/approve without admin CSRF header", async () => {

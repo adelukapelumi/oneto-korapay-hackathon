@@ -19,6 +19,10 @@ import {
   UpdateAdminMerchantDto,
 } from "./admin.schemas";
 import { generateOnetoUserId } from "../common/user-id";
+import {
+  KorapayGatewayError,
+  KorapayService,
+} from "../topup/korapay.service";
 
 const OPERATING_USER_ID = "u_operating";
 const OUTBOUND_IP_FETCH_TIMEOUT_MS = 5_000;
@@ -64,8 +68,51 @@ export class AdminService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly korapayService: KorapayService,
     private readonly configService?: ConfigService,
   ) {}
+
+  async listBanks(countryCode: string = "NG") {
+    const banks = await this.korapayService.listBanks(countryCode);
+
+    return banks.map((bank) => ({
+      name: bank.name,
+      code: bank.code,
+      countryCode: bank.countryCode,
+    }));
+  }
+
+  async resolveBankAccount(input: {
+    bankCode: string;
+    accountNumber: string;
+  }) {
+    try {
+      const resolvedAccount = await this.korapayService.resolveBankAccount({
+        bankCode: input.bankCode,
+        accountNumber: input.accountNumber,
+        currency: "NG",
+      });
+
+      return {
+        accountName: resolvedAccount.accountName,
+        accountNumber: resolvedAccount.accountNumber,
+        bankCode: resolvedAccount.bankCode,
+        bankName: resolvedAccount.bankName,
+      };
+    } catch (error) {
+      if (
+        error instanceof KorapayGatewayError &&
+        error.category === "http_error" &&
+        error.statusCode !== null &&
+        error.statusCode >= 400 &&
+        error.statusCode < 500
+      ) {
+        throw new BadRequestException("Unable to resolve bank account. Check bank and account number.");
+      }
+
+      throw error;
+    }
+  }
 
   async getOverview() {
     const [

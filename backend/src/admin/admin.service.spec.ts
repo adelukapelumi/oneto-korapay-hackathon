@@ -6,6 +6,7 @@ import {
 import { CashoutStatus, KorapayPayoutFeeBearer, Role, Status } from "@prisma/client";
 import { AdminService } from "./admin.service";
 import { generateOnetoUserId } from "../common/user-id";
+import { KorapayGatewayError } from "../topup/korapay.service";
 
 jest.mock("../common/user-id", () => ({
   generateOnetoUserId: jest.fn(),
@@ -13,6 +14,10 @@ jest.mock("../common/user-id", () => ({
 
 describe("AdminService", () => {
   let service: AdminService;
+  let korapayService: {
+    listBanks: jest.Mock;
+    resolveBankAccount: jest.Mock;
+  };
 
   let prisma: {
     user: {
@@ -94,8 +99,13 @@ describe("AdminService", () => {
       $transaction: jest.fn(async (callback: (tx: typeof prisma) => unknown) => callback(prisma)),
     };
 
+    korapayService = {
+      listBanks: jest.fn(),
+      resolveBankAccount: jest.fn(),
+    };
+
     jest.clearAllMocks();
-    service = new AdminService(prisma as never);
+    service = new AdminService(prisma as never, korapayService as never);
   });
 
   afterEach(() => {
@@ -205,6 +215,70 @@ describe("AdminService", () => {
       cashoutAccountName: "Campus Cafe Ltd",
       verifiedAt: "2026-05-18T00:00:00.000Z",
     });
+  });
+
+  it("listBanks returns Korapay bank options with safe fields only", async () => {
+    korapayService.listBanks.mockResolvedValue([
+      {
+        name: "Wema Bank",
+        code: "035",
+        countryCode: "NG",
+        slug: "wema-bank",
+      },
+    ]);
+
+    await expect(service.listBanks("NG")).resolves.toEqual([
+      {
+        name: "Wema Bank",
+        code: "035",
+        countryCode: "NG",
+      },
+    ]);
+    expect(korapayService.listBanks).toHaveBeenCalledWith("NG");
+  });
+
+  it("resolveBankAccount sends NG currency and returns normalized account details", async () => {
+    korapayService.resolveBankAccount.mockResolvedValue({
+      accountName: "Campus Cafe Ltd",
+      accountNumber: "1234567890",
+      bankCode: "035",
+      bankName: "Wema Bank",
+    });
+
+    await expect(
+      service.resolveBankAccount({
+        bankCode: "035",
+        accountNumber: "1234567890",
+      }),
+    ).resolves.toEqual({
+      accountName: "Campus Cafe Ltd",
+      accountNumber: "1234567890",
+      bankCode: "035",
+      bankName: "Wema Bank",
+    });
+    expect(korapayService.resolveBankAccount).toHaveBeenCalledWith({
+      bankCode: "035",
+      accountNumber: "1234567890",
+      currency: "NG",
+    });
+  });
+
+  it("resolveBankAccount converts Korapay 4xx errors into clear admin input errors", async () => {
+    korapayService.resolveBankAccount.mockRejectedValue(
+      new KorapayGatewayError({
+        message: "invalid account",
+        category: "http_error",
+        statusCode: 422,
+        responseBody: { message: "invalid account" },
+      }),
+    );
+
+    await expect(
+      service.resolveBankAccount({
+        bankCode: "035",
+        accountNumber: "1234567890",
+      }),
+    ).rejects.toThrow(BadRequestException);
   });
 
   it("createMerchant creates ACTIVE MERCHANT and verified MerchantProfile in one transaction", async () => {

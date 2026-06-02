@@ -5,9 +5,10 @@ import { PrismaModule } from "../prisma/prisma.module";
 import { AuthModule } from "../auth/auth.module";
 import { CashoutModule } from "../cashout/cashout.module";
 import { RecoveryModule } from "../recovery/recovery.module";
+import { TopupModule } from "../topup/topup.module";
 
 @Module({
-  imports: [PrismaModule, AuthModule, CashoutModule, RecoveryModule],
+  imports: [PrismaModule, AuthModule, CashoutModule, RecoveryModule, TopupModule],
   controllers: [AdminController],
   providers: [AdminService],
 })

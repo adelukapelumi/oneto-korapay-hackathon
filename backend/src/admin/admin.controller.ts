@@ -31,6 +31,8 @@ import {
   AdminCashoutIdParamSchema,
   AdminMarkCashoutPaidDto,
   AdminMarkCashoutPaidSchema,
+  AdminResolveBankAccountDto,
+  AdminResolveBankAccountSchema,
   AdminMerchantUserIdParamDto,
   AdminMerchantUserIdParamSchema,
   CreateAdminMerchantDto,
@@ -66,6 +68,22 @@ export class AdminController {
   @Get("merchants")
   async listMerchants() {
     return { merchants: await this.adminService.listMerchants() };
+  }
+
+  @Get("banks/ng")
+  async listNgBanks() {
+    return { banks: await this.adminService.listBanks("NG") };
+  }
+
+  @Post("banks/resolve")
+  @Throttle({ default: { limit: 30, ttl: 60000 } })
+  async resolveBankAccount(
+    @Body(new ZodValidationPipe(AdminResolveBankAccountSchema))
+    body: AdminResolveBankAccountDto,
+  ) {
+    return {
+      account: await this.adminService.resolveBankAccount(body),
+    };
   }
 
   @Post("merchants")

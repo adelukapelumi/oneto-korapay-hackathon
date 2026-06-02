@@ -483,6 +483,7 @@ export function MerchantsPage() {
         merchant={null}
         error={formError}
         isBusy={isSaving}
+        onAuthFailure={markAnonymous}
         onCancel={closeFormModal}
         onSubmit={handleCreateMerchant}
       />
@@ -493,6 +494,7 @@ export function MerchantsPage() {
         merchant={editingMerchant}
         error={formError}
         isBusy={isSaving}
+        onAuthFailure={markAnonymous}
         onCancel={closeFormModal}
         onSubmit={handleEditMerchant}
       />

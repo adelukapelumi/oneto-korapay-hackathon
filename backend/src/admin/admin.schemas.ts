@@ -36,15 +36,20 @@ export const CreateAdminMerchantSchema = z.object({
   businessName: requiredStringField("businessName", 200),
   businessAddress: optionalStringField(500),
   cashoutBankName: requiredStringField("cashoutBankName", 100),
-  cashoutBankCode: z
-    .string()
-    .trim()
-    .regex(/^[0-9]{3}$/, "Bank code must be 3 digits"),
+  cashoutBankCode: requiredStringField("cashoutBankCode", 20),
   cashoutAccountNumber: z
     .string()
     .trim()
     .regex(/^\d{10}$/, "Account number must be 10 digits"),
   cashoutAccountName: requiredStringField("cashoutAccountName", 200),
+});
+
+export const AdminResolveBankAccountSchema = z.object({
+  bankCode: requiredStringField("bankCode", 20),
+  accountNumber: z
+    .string()
+    .trim()
+    .regex(/^\d{10}$/, "Account number must be 10 digits"),
 });
 
 export const UpdateAdminMerchantSchema = CreateAdminMerchantSchema.omit({
@@ -61,3 +66,4 @@ export type AdminCashoutIdParamDto = z.infer<typeof AdminCashoutIdParamSchema>;
 export type AdminMarkCashoutPaidDto = z.infer<typeof AdminMarkCashoutPaidSchema>;
 export type CreateAdminMerchantDto = z.infer<typeof CreateAdminMerchantSchema>;
 export type UpdateAdminMerchantDto = z.infer<typeof UpdateAdminMerchantSchema>;
+export type AdminResolveBankAccountDto = z.infer<typeof AdminResolveBankAccountSchema>;
