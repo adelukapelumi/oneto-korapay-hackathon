@@ -413,7 +413,7 @@ describe('ReconcileService', () => {
     const claimWindowMs = OFFLINE_CLAIM_WINDOW_HOURS * 60 * 60 * 1000;
     const draft = createValidEnvelopeDraft(senderId, recipientId, senderKey.publicKeyString);
     draft.timestamp = new Date(Date.now() - claimWindowMs - 60000).toISOString();
-    draft.expiresAt = new Date(Date.now() - claimWindowMs + 240000).toISOString();
+    draft.expiresAt = new Date(Date.now() - claimWindowMs + 239000).toISOString();
     const envelope = signEnvelope(draft, senderKey.privateKey);
 
     mockPrisma.user.findUnique.mockImplementation((args: any) => {

@@ -46,7 +46,7 @@ describe("RecoveryEmailService", () => {
     lastMerchantText: "Cafe",
     lastTopupAmountKobo: "10000",
     userNotes:
-      "My PIN 123456 stopped working and this is my key ed25519:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "My PIN is 123456 and my OTP code was 654321. this is my key ed25519:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
   } as const;
 
   it("redacts full keys and sensitive secrets from admin recovery emails", async () => {
@@ -61,6 +61,7 @@ describe("RecoveryEmailService", () => {
     expect(payload.text).not.toContain(baseInput.oldKeyPublicKey);
     expect(payload.text).not.toContain(baseInput.requestedNewPublicKey);
     expect(payload.text).not.toContain("123456");
+    expect(payload.text).not.toContain("654321");
     expect(payload.text).not.toContain("ed25519:cccc");
   });
 

@@ -101,6 +101,28 @@ describe("SupportService", () => {
     );
   });
 
+  it("retries ticket number collisions before succeeding", async () => {
+    prisma.supportTicket.create
+      .mockRejectedValueOnce({ code: "P2002" })
+      .mockImplementationOnce(async ({ data }: { data: Record<string, unknown> }) => ({
+        id: "ticket_retry",
+        ticketNumber: data.ticketNumber,
+        status: SupportTicketStatus.OPEN,
+        category: data.category,
+        subject: data.subject,
+        message: data.message,
+      }));
+
+    const result = await service.createTicket("u_123", {
+      category: SupportTicketCategory.CASHOUT_ISSUE,
+      subject: "Cashout stuck",
+      message: "My cashout has been pending for a while.",
+    });
+
+    expect(result.status).toBe(SupportTicketStatus.OPEN);
+    expect(prisma.supportTicket.create).toHaveBeenCalledTimes(2);
+  });
+
   it("throws when the authenticated user is missing", async () => {
     prisma.user.findUnique.mockResolvedValueOnce(null);
 

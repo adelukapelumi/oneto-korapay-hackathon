@@ -108,6 +108,16 @@ type RecoveryRequestRecord = KeyRecoveryRequest & {
   oldKeyPublicKey: string;
 };
 
+function isStolenOrCompromisedRecovery(input: {
+  readonly reason: KeyRecoveryReason;
+  readonly riskType: KeyRecoveryRiskType;
+}): boolean {
+  return (
+    input.reason === KeyRecoveryReason.STOLEN_PHONE ||
+    input.riskType === KeyRecoveryRiskType.COMPROMISED_DEVICE
+  );
+}
+
 @Injectable()
 export class RecoveryService {
   private readonly logger = new Logger(RecoveryService.name);
@@ -179,7 +189,7 @@ export class RecoveryService {
             },
           });
 
-          if (this.shouldImmediatelyRestrictOldKey(input)) {
+          if (isStolenOrCompromisedRecovery(input)) {
             // High-risk reports must stop the old key from authorizing new
             // payments immediately. VERIFY_ONLY keeps already-scanned pre-report
             // envelopes reconcilable while rejecting anything signed later.
@@ -408,10 +418,7 @@ export class RecoveryService {
           throw new ConflictException("old_device_key_not_found");
         }
 
-        if (
-          request.riskType === KeyRecoveryRiskType.COMPROMISED_DEVICE &&
-          oldKey.status === DeviceKeyStatus.VERIFY_ONLY
-        ) {
+        if (isStolenOrCompromisedRecovery(request) && oldKey.status === DeviceKeyStatus.VERIFY_ONLY) {
           // Do not auto-reactivate high-risk old keys. If a stolen or
           // compromised-device report turns out to be wrong, support must make a
           // deliberate manual decision instead of silently restoring trust.
@@ -455,13 +462,6 @@ export class RecoveryService {
     return this.mapPublicRequest(rejected);
   }
 
-  private shouldImmediatelyRestrictOldKey(input: CreateRecoveryRequestDto): boolean {
-    return (
-      input.reason === KeyRecoveryReason.STOLEN_PHONE ||
-      input.riskType === KeyRecoveryRiskType.COMPROMISED_DEVICE
-    );
-  }
-
   private buildOldKeyApprovalUpdate(
     request: KeyRecoveryRequest,
     oldKey: {
@@ -471,7 +471,7 @@ export class RecoveryService {
     },
     reviewedAt: Date,
   ): Prisma.UserDeviceKeyUpdateInput {
-    if (request.riskType === KeyRecoveryRiskType.COMPROMISED_DEVICE) {
+    if (isStolenOrCompromisedRecovery(request)) {
       if (oldKey.status !== DeviceKeyStatus.VERIFY_ONLY || oldKey.retiredAt === null) {
         throw new ConflictException("compromised_old_device_key_not_restricted");
       }

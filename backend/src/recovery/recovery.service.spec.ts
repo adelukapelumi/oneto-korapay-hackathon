@@ -379,10 +379,10 @@ describe("RecoveryService", () => {
     expect(prisma.deviceKeys.get(activeKey.id)?.status).toBe(DeviceKeyStatus.ACTIVE);
   });
 
-  it("moves the old key to VERIFY_ONLY immediately for stolen or compromised reports", async () => {
+  it("moves the old key to VERIFY_ONLY immediately for stolen-phone reports", async () => {
     const result = await service.createRecoveryRequest(user.id, {
       requestedNewPublicKey: publicKey(4),
-      riskType: KeyRecoveryRiskType.COMPROMISED_DEVICE,
+      riskType: KeyRecoveryRiskType.LOST_DEVICE,
       reason: KeyRecoveryReason.STOLEN_PHONE,
     });
 
@@ -421,7 +421,7 @@ describe("RecoveryService", () => {
     expect(recoveryEmailService.sendUserRecoveryApproved).toHaveBeenCalledTimes(1);
   });
 
-  it("preserves the compromised-device report time when approval happens later", async () => {
+  it("preserves the stolen-phone report time when approval happens later", async () => {
     const reportTime = new Date("2026-05-29T08:00:00.000Z");
     prisma.deviceKeys.set(activeKey.id, {
       ...activeKey,
@@ -433,7 +433,7 @@ describe("RecoveryService", () => {
       userId: user.id,
       oldKeyId: activeKey.id,
       requestedNewPublicKey: publicKey(6),
-      riskType: KeyRecoveryRiskType.COMPROMISED_DEVICE,
+      riskType: KeyRecoveryRiskType.LOST_DEVICE,
       reason: KeyRecoveryReason.STOLEN_PHONE,
       createdAt: reportTime,
       updatedAt: reportTime,
@@ -449,7 +449,7 @@ describe("RecoveryService", () => {
     );
   });
 
-  it("rejects recovery and leaves a compromised old key in VERIFY_ONLY for manual follow-up", async () => {
+  it("rejects recovery and leaves a stolen old key in VERIFY_ONLY for manual follow-up", async () => {
     const reportTime = new Date("2026-05-29T08:00:00.000Z");
     prisma.deviceKeys.set(activeKey.id, {
       ...activeKey,
@@ -461,7 +461,7 @@ describe("RecoveryService", () => {
       userId: user.id,
       oldKeyId: activeKey.id,
       requestedNewPublicKey: publicKey(7),
-      riskType: KeyRecoveryRiskType.COMPROMISED_DEVICE,
+      riskType: KeyRecoveryRiskType.LOST_DEVICE,
       reason: KeyRecoveryReason.STOLEN_PHONE,
     });
 
