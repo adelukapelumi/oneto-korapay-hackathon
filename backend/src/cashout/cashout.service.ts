@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { MIN_CASHOUT_GROSS_KOBO, MIN_KORAPAY_TRANSFER_KOBO } from '@oneto/shared';
 import { tryNormalizeEmail } from '../common/email';
 import { AdminCashoutNotificationService } from './admin-cashout-notification.service';
+import { CashoutEmailService } from './cashout-email.service';
 import {
   buildManualPayoutRequiredMetadata,
   type CashoutPayoutMode,
@@ -88,6 +89,7 @@ export class CashoutService {
     private readonly korapayService: KorapayService,
     private readonly configService: ConfigService,
     private readonly adminCashoutNotificationService: AdminCashoutNotificationService,
+    private readonly cashoutEmailService: CashoutEmailService,
   ) {
     this.payoutMode = getCashoutPayoutMode(
       this.configService.get<string>('CASHOUT_PAYOUT_MODE'),
@@ -324,6 +326,70 @@ export class CashoutService {
     return 'payout_gateway_error';
   }
 
+  private async notifySafely(
+    logCode: string,
+    work: () => Promise<void>,
+  ): Promise<void> {
+    try {
+      await work();
+    } catch (error) {
+      this.logger.warn(
+        `${logCode}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  private async sendCashoutRequestReceivedEmail(input: {
+    readonly merchantEmail: string;
+    readonly cashoutId: string;
+    readonly grossAmountKobo: bigint;
+  }): Promise<void> {
+    const merchantEmail = tryNormalizeEmail(input.merchantEmail);
+    if (merchantEmail === null) {
+      return;
+    }
+
+    await this.cashoutEmailService.sendRequestReceived({
+      merchantEmail,
+      requestId: input.cashoutId,
+      amountKobo: input.grossAmountKobo.toString(),
+    });
+  }
+
+  private async sendCashoutApprovedEmail(input: {
+    readonly merchantEmail: string | null | undefined;
+    readonly cashoutId: string;
+    readonly grossAmountKobo: bigint;
+  }): Promise<void> {
+    const merchantEmail = tryNormalizeEmail(input.merchantEmail ?? '');
+    if (merchantEmail === null) {
+      return;
+    }
+
+    await this.cashoutEmailService.sendApproved({
+      merchantEmail,
+      requestId: input.cashoutId,
+      amountKobo: input.grossAmountKobo.toString(),
+    });
+  }
+
+  private async sendCashoutCompletedEmail(input: {
+    readonly merchantEmail: string | null | undefined;
+    readonly cashoutId: string;
+    readonly grossAmountKobo: bigint;
+  }): Promise<void> {
+    const merchantEmail = tryNormalizeEmail(input.merchantEmail ?? '');
+    if (merchantEmail === null) {
+      return;
+    }
+
+    await this.cashoutEmailService.sendCompleted({
+      merchantEmail,
+      requestId: input.cashoutId,
+      amountKobo: input.grossAmountKobo.toString(),
+    });
+  }
+
   async recoverStuckCashouts() {
     try {
       const fiveMinsAgo = new Date(Date.now() - 5 * 60 * 1000);
@@ -373,8 +439,9 @@ export class CashoutService {
     if (!user.merchantProfile) {
       throw new BadRequestException('merchant_profile_missing');
     }
+    const merchantProfile = user.merchantProfile;
 
-    if (user.merchantProfile.verifiedAt === null) {
+    if (merchantProfile.verifiedAt === null) {
       throw new ForbiddenException('merchant_not_approved');
     }
 
@@ -410,18 +477,18 @@ export class CashoutService {
         netPayoutKobo: null,
         korapayTransferAmountKobo,
         status: CashoutStatus.PENDING,
-        cashoutBankName: user.merchantProfile.cashoutBankName,
-        cashoutBankCode: user.merchantProfile.cashoutBankCode,
-        cashoutAccountNumber: user.merchantProfile.cashoutAccountNumber,
-        cashoutAccountName: user.merchantProfile.cashoutAccountName,
+        cashoutBankName: merchantProfile.cashoutBankName,
+        cashoutBankCode: merchantProfile.cashoutBankCode,
+        cashoutAccountNumber: merchantProfile.cashoutAccountNumber,
+        cashoutAccountName: merchantProfile.cashoutAccountName,
       },
     });
 
-    try {
+    await this.notifySafely("cashout_request_notification_failed", async () => {
       await this.adminCashoutNotificationService.sendNewCashoutRequestNotification({
         cashoutId: cashout.id,
         merchantUserId: cashout.merchantUserId,
-        merchantBusinessName: user.merchantProfile.businessName,
+        merchantBusinessName: merchantProfile.businessName,
         grossAmountKobo,
         onetoFeeKobo,
         amountToPayKobo: korapayTransferAmountKobo,
@@ -429,13 +496,12 @@ export class CashoutService {
         cashoutAccountName: cashout.cashoutAccountName,
         cashoutAccountNumber: cashout.cashoutAccountNumber,
       });
-    } catch (error) {
-      this.logger.error(
-        `Failed admin cashout request notification for ${cashout.id}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
+      await this.sendCashoutRequestReceivedEmail({
+        merchantEmail: user.email,
+        cashoutId: cashout.id,
+        grossAmountKobo,
+      });
+    });
 
     return cashout;
   }
@@ -610,11 +676,29 @@ export class CashoutService {
     const latestCashout = await this.prisma.cashout.findUnique({
       where: { id: cashoutId },
       select: {
+        id: true,
         status: true,
         failureReason: true,
+        amountKobo: true,
+        grossAmountKobo: true,
         korapayTransferAmountKobo: true,
+        merchant: {
+          select: {
+            email: true,
+          },
+        },
       },
     });
+
+    if (latestCashout?.status === CashoutStatus.PROCESSING) {
+      await this.notifySafely("cashout_approved_email_failed", async () => {
+        await this.sendCashoutApprovedEmail({
+          merchantEmail: latestCashout.merchant?.email,
+          cashoutId: latestCashout.id,
+          grossAmountKobo: this.getGrossAmountKobo(latestCashout),
+        });
+      });
+    }
 
     return {
       success: true,
@@ -785,8 +869,15 @@ export class CashoutService {
       where: { id: cashoutId },
       select: {
         id: true,
+        amountKobo: true,
+        grossAmountKobo: true,
         status: true,
         korapayResponse: true,
+        merchant: {
+          select: {
+            email: true,
+          },
+        },
       },
     });
 
@@ -823,6 +914,14 @@ export class CashoutService {
     if (transition.count === 0) {
       throw new BadRequestException('cashout_not_processing');
     }
+
+    await this.notifySafely("cashout_completed_email_failed", async () => {
+      await this.sendCashoutCompletedEmail({
+        merchantEmail: cashout.merchant?.email,
+        cashoutId: cashout.id,
+        grossAmountKobo: this.getGrossAmountKobo(cashout),
+      });
+    });
 
     return {
       success: true,
@@ -969,6 +1068,13 @@ export class CashoutService {
 
     const cashout = await this.prisma.cashout.findUnique({
       where: { korapayReference: reference },
+      include: {
+        merchant: {
+          select: {
+            email: true,
+          },
+        },
+      },
     });
 
     if (!cashout) {
@@ -994,7 +1100,7 @@ export class CashoutService {
       });
       // Atomic state transition: PROCESSING -> COMPLETED.
       // If count is 0, webhook is duplicate/out-of-order and becomes a no-op.
-      await this.prisma.cashout.updateMany({
+      const transition = await this.prisma.cashout.updateMany({
         where: { id: cashout.id, status: CashoutStatus.PROCESSING },
         data: {
           status: CashoutStatus.COMPLETED,
@@ -1008,6 +1114,16 @@ export class CashoutService {
           netPayoutKobo: feeAccounting.netPayoutKobo,
         },
       });
+
+      if (transition.count === 1) {
+        await this.notifySafely("cashout_completed_email_failed", async () => {
+          await this.sendCashoutCompletedEmail({
+            merchantEmail: cashout.merchant?.email,
+            cashoutId: cashout.id,
+            grossAmountKobo,
+          });
+        });
+      }
     } else if (event === 'transfer.failed') {
       await this.prisma.$transaction(
         async (tx) => {

@@ -17,6 +17,10 @@ import {
 import { NetworkError } from "../../src/api/errors";
 import { useAuth } from "../../src/auth/auth-state";
 import { getPendingRecoveryPublicKey } from "../../src/crypto/pin-derive";
+import {
+  RECOVERY_REASON_OPTIONS,
+  RECOVERY_REQUEST_WARNINGS,
+} from "../../src/recovery/recovery-ui";
 import { useThemeMode } from "../../src/theme/theme-provider";
 import {
   borders,
@@ -27,21 +31,6 @@ import {
   radii,
   spacing,
 } from "../../src/theme/tokens";
-
-const REASON_OPTIONS: readonly {
-  readonly value: RecoveryReason;
-  readonly label: string;
-}[] = [
-  { value: "LOST_PHONE", label: "Lost phone" },
-  { value: "STOLEN_PHONE", label: "Phone was stolen" },
-  { value: "DAMAGED_PHONE", label: "Phone was damaged" },
-  { value: "APP_UNINSTALLED", label: "App was uninstalled" },
-  { value: "APP_DATA_CLEARED", label: "App data was cleared" },
-  { value: "FACTORY_RESET", label: "Factory reset" },
-  { value: "FORGOT_PIN", label: "Forgot PIN" },
-  { value: "KEYPAIR_WIPED", label: "Keypair was wiped" },
-  { value: "OTHER", label: "Other" },
-];
 
 function sanitizeOptionalText(value: string): string | undefined {
   const trimmed = value.trim();
@@ -71,7 +60,7 @@ export default function RecoveryRequestScreen(): React.ReactElement {
 
   const [riskType, setRiskType] = useState<RecoveryRiskType>(defaultRiskType);
   const [reason, setReason] = useState<RecoveryReason>(
-    defaultRiskType === "COMPROMISED_DEVICE" ? "STOLEN_PHONE" : "LOST_PHONE",
+    defaultRiskType === "COMPROMISED_DEVICE" ? "STOLEN_PHONE" : "NEW_PHONE",
   );
   const [approximateBalanceKobo, setApproximateBalanceKobo] = useState("");
   const [lastMerchantText, setLastMerchantText] = useState("");
@@ -91,7 +80,7 @@ export default function RecoveryRequestScreen(): React.ReactElement {
         : {
             title: "Recover your Oneto account",
             body:
-              "We'll help you set up Oneto on this phone. For safety, we need to confirm it's really you first.",
+              "We'll help you set up Oneto on this phone. Tell us what happened so support can review it safely.",
           },
     [riskType],
   );
@@ -112,6 +101,12 @@ export default function RecoveryRequestScreen(): React.ReactElement {
         return;
       }
 
+      const whatHappened = sanitizeOptionalText(userNotes);
+      if (!whatHappened) {
+        setError('"What happened?" is required.');
+        return;
+      }
+
       // Recovery only sends account-history hints plus the pending public key.
       // The PIN never leaves this phone.
       const request = await createRecoveryRequest({
@@ -121,7 +116,7 @@ export default function RecoveryRequestScreen(): React.ReactElement {
         approximateBalanceKobo: sanitizeOptionalKobo(approximateBalanceKobo),
         lastMerchantText: sanitizeOptionalText(lastMerchantText),
         lastTopupAmountKobo: sanitizeOptionalKobo(lastTopupAmountKobo),
-        userNotes: sanitizeOptionalText(userNotes),
+        userNotes: whatHappened,
       });
 
       if (request.status === "PENDING") {
@@ -165,13 +160,13 @@ export default function RecoveryRequestScreen(): React.ReactElement {
           <ToggleButton
             label="Lost device"
             selected={riskType === "LOST_DEVICE"}
-            onPress={() => {
-              setRiskType("LOST_DEVICE");
-              if (reason === "STOLEN_PHONE") {
-                setReason("LOST_PHONE");
-              }
-            }}
-          />
+              onPress={() => {
+                setRiskType("LOST_DEVICE");
+                if (reason === "STOLEN_PHONE") {
+                  setReason("NEW_PHONE");
+                }
+              }}
+            />
           <ToggleButton
             label="Compromised device"
             selected={riskType === "COMPROMISED_DEVICE"}
@@ -185,7 +180,7 @@ export default function RecoveryRequestScreen(): React.ReactElement {
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: t.text }]}>What happened?</Text>
           <View style={styles.reasonGrid}>
-            {REASON_OPTIONS.map((option) => (
+            {RECOVERY_REASON_OPTIONS.map((option) => (
               <ReasonChip
                 key={option.value}
                 label={option.label}
@@ -194,6 +189,12 @@ export default function RecoveryRequestScreen(): React.ReactElement {
               />
             ))}
           </View>
+          <InputField
+            label="What happened?"
+            value={userNotes}
+            onChangeText={setUserNotes}
+            multiline
+          />
         </View>
 
         <View style={styles.section}>
@@ -215,24 +216,21 @@ export default function RecoveryRequestScreen(): React.ReactElement {
             onChangeText={setLastTopupAmountKobo}
             keyboardType="number-pad"
           />
-          <InputField
-            label="Notes"
-            value={userNotes}
-            onChangeText={setUserNotes}
-            multiline
-          />
         </View>
 
         <View style={[styles.warningCard, { backgroundColor: t.cardAlt, borderColor: t.border }]}>
           <Text style={[styles.warningTitle, { color: t.text }]}>Important</Text>
-          <Text style={[styles.warningBody, { color: t.textSec }]}>
-            Do not uninstall Oneto or clear app data while recovery is pending.
-            The new secure payment key for this phone is stored locally and will
-            be needed after approval.
-          </Text>
-          <Text style={[styles.warningFootnote, { color: t.textMut }]}>
-            Oneto support will never ask for your OTP. Do not include your PIN here.
-          </Text>
+          {RECOVERY_REQUEST_WARNINGS.map((line, index) => (
+            <Text
+              key={line}
+              style={[
+                index === 0 ? styles.warningFootnote : styles.warningBody,
+                { color: index === 0 ? t.textMut : t.textSec },
+              ]}
+            >
+              {line}
+            </Text>
+          ))}
         </View>
 
         {error ? <Text style={styles.error}>{error}</Text> : null}

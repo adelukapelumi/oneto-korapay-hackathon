@@ -5,6 +5,7 @@ import { ApiError, toTypedError } from "./errors";
 
 const RecoveryRiskTypeSchema = z.enum(["LOST_DEVICE", "COMPROMISED_DEVICE"]);
 const RecoveryReasonSchema = z.enum([
+  "NEW_PHONE",
   "LOST_PHONE",
   "STOLEN_PHONE",
   "DAMAGED_PHONE",

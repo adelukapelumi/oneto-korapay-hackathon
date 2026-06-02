@@ -38,6 +38,11 @@ import {
   radii,
   spacing,
 } from "../../src/theme/tokens";
+import {
+  RECOVERY_PENDING_MESSAGES,
+  RECOVERY_REJECTED_MESSAGE,
+  SUPPORT_EMAIL_ADDRESS,
+} from "../../src/recovery/recovery-ui";
 
 type LoadState =
   | { kind: "loading" }
@@ -113,7 +118,7 @@ export default function RecoveryPendingScreen(): React.ReactElement {
       case "PENDING":
         return {
           title: "Recovery request submitted",
-          body: "We're reviewing your request. Payments may stay paused until your account is secured.",
+          body: RECOVERY_PENDING_MESSAGES[0],
         };
       case "APPROVED":
         return {
@@ -123,7 +128,7 @@ export default function RecoveryPendingScreen(): React.ReactElement {
       case "REJECTED":
         return {
           title: "Recovery could not be approved",
-          body: "We could not confirm enough details to safely move your account.",
+          body: RECOVERY_REJECTED_MESSAGE,
         };
       case "CANCELLED":
         return {
@@ -235,9 +240,11 @@ export default function RecoveryPendingScreen(): React.ReactElement {
           <Text style={styles.eyebrow}>RECOVERY STATUS</Text>
           <Text style={[styles.title, { color: t.text }]}>{description.title}</Text>
           <Text style={[styles.body, { color: t.textSec }]}>{description.body}</Text>
-          <Text style={[styles.warning, { color: t.textMut }]}>
-            Do not uninstall Oneto or clear app data while recovery is pending.
-          </Text>
+          {RECOVERY_PENDING_MESSAGES.slice(1).map((line) => (
+            <Text key={line} style={[styles.warning, { color: t.textMut }]}>
+              {line}
+            </Text>
+          ))}
         </View>
 
         {loadState.kind === "loading" ? (
@@ -260,7 +267,7 @@ export default function RecoveryPendingScreen(): React.ReactElement {
           <View style={[styles.noticeCard, { backgroundColor: t.cardAlt, borderColor: t.border }]}>
             <Text style={[styles.noticeTitle, { color: t.text }]}>Review in progress</Text>
             <Text style={[styles.noticeBody, { color: t.textSec }]}>
-              We'll notify you when this phone can be activated. Need help? Contact support@getoneto.com.
+              You'll receive an email when your account is active on this device.
             </Text>
             <Pressable
               accessibilityRole="button"
@@ -345,7 +352,7 @@ export default function RecoveryPendingScreen(): React.ReactElement {
           <View style={[styles.noticeCard, { backgroundColor: t.cardAlt, borderColor: t.border }]}>
             <Text style={[styles.noticeTitle, { color: t.text }]}>Need help?</Text>
             <Text style={[styles.noticeBody, { color: t.textSec }]}>
-              Contact support@getoneto.com if you want us to review this case with you.
+              Contact {SUPPORT_EMAIL_ADDRESS} if you want us to review this case with you.
             </Text>
             <Pressable
               accessibilityRole="button"

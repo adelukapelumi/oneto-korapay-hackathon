@@ -50,7 +50,8 @@ Backend feature-complete. Live at https://api.getoneto.com
 - `/backend/src/auth/auth.service.ts`: email OTP flow (request + verify), user upsert on first successful verify, status gating for FROZEN and FLAGGED accounts, ADMIN role blocked from public OTP login (silent success to prevent enumeration), JWT issuance. 27+ tests passing.
 - `/backend/src/auth/merchant-auth.service.ts` + `/backend/src/auth/merchant-auth.controller.ts`: separate merchant signup flow with MerchantProfile (cashoutBankCode + cashoutBankName + account details), in-memory stash with TTL during OTP verification, role=MERCHANT and status=PENDING_VERIFICATION on activation. 12 tests passing.
 - `/backend/src/auth/keys.controller.ts`: public key registration with first-time bootstrap and signed rotation for replacement (Option A — strict replacement). 6 tests passing.
-- `/backend/src/recovery/`: user-initiated key recovery requests and admin review/approval/rejection flow, with DeviceKey status transitions (`ACTIVE` -> `VERIFY_ONLY` or `REVOKED`) and new active key activation on approval.
+- `/backend/src/recovery/`: user-initiated key recovery requests and admin review/approval/rejection flow, with support emails, `NEW_PHONE` support, 48-hour verify-only windows, immediate VERIFY_ONLY restriction for stolen/compromised reports, and new active key activation on approval.
+- `/backend/src/support/`: authenticated support ticket submission endpoint with persisted ticket records and support email notifications.
 - `/backend/src/admin/` + `/admin-web/`: authenticated admin operations surface and web UI for merchant lifecycle, cashout operations, reconciliation reporting, and recovery review.
 - `/backend/src/topup/`: Korapay checkout initiation + webhook handler. Webhook handler now (a) verifies HMAC-SHA256 signature on raw payload, (b) validates payload against KorapayWebhookSchema (Zod) — rejects malformed, (c) inside Serializable transaction: debits u_operating + credits user (Ghost Money fix), enforces MAX_USER_BALANCE_KOBO regulatory cap (FAILED PaymentTopup recorded if exceeded), creates double-entry ledger rows. Idempotent via unique constraint on PaymentTopup.reference. Throws InternalServerErrorException on transaction failure to trigger Korapay retries (does not silently swallow). 23 tests passing.
 - `/backend/src/topup/korapay-webhook.schema.ts`: Zod schema validating Korapay webhook payload structure. Uses `unknown` at boundary, narrowed inside service.
@@ -61,7 +62,7 @@ Backend feature-complete. Live at https://api.getoneto.com
 - `/backend/src/instrument.ts` + Sentry integration: production error capture via @sentry/nestjs SDK. Wraps all uncaught exceptions with stack traces and request context. Free tier sufficient for pilot.
 - `/backend/src/main.ts`: helmet middleware sets HTTP security headers (HSTS, nosniff, X-Frame-Options, CSP, etc.) before any route handler.
 - `/backend/src/app.module.ts`: global IP-keyed throttler (100 req/min default) as defense-in-depth layer above per-user limits on sensitive endpoints. Per-route throttle decorators: /reconcile (20/min/user), /cashout/request (5/min/user), /cashout/approve/:id (30/min/user). SentryGlobalFilter registered as APP_FILTER.
-- Prisma schema: User, UserDeviceKey, KeyRecoveryRequest, LedgerEntry, PaymentTopup, ProcessedSequence, OfflinePaymentResolution, MerchantProfile, Cashout models. Compound unique constraint `@@unique([transactionId, userId])` on LedgerEntry prevents double-spend at the database layer.
+- Prisma schema: User, UserDeviceKey, KeyRecoveryRequest, SupportTicket, LedgerEntry, PaymentTopup, ProcessedSequence, OfflinePaymentResolution, MerchantProfile, Cashout models. Compound unique constraint `@@unique([transactionId, userId])` on LedgerEntry prevents double-spend at the database layer.
 - Email infrastructure: `getoneto.com` domain verified with SPF + DKIM. Real emails delivering to CU inboxes instantly.
 
 Current local verification snapshot (2026-05-27):
@@ -450,6 +451,7 @@ POST  /cashout/approve/:id          auth/admin    legacy direct admin approval e
 POST  /recovery/request             auth          create key recovery request
 GET   /recovery/status              auth          latest key recovery status
 POST  /recovery/:id/cancel          auth          cancel pending key recovery request
+POST  /support/tickets              auth          create support ticket
 
 GET   /admin/overview               auth/admin    dashboard summary
 GET   /admin/merchants/pending      auth/admin

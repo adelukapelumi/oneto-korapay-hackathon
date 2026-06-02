@@ -6,6 +6,7 @@ describe("EnvSchema", () => {
   it("accepts a well-formed https URL", () => {
     const r = EnvSchema.safeParse({
       EXPO_PUBLIC_API_URL: "https://oneto-production.up.railway.app",
+      EXPO_PUBLIC_ENABLE_OLD_PHONE_APPROVAL: "false",
     });
     expect(r.success).toBe(true);
   });
@@ -42,5 +43,28 @@ describe("EnvSchema", () => {
       EXPO_PUBLIC_API_URL: "ftp://example.com",
     });
     expect(r.success).toBe(false);
+  });
+
+  it("accepts the old-phone approval feature flag values", () => {
+    const enabled = EnvSchema.safeParse({
+      EXPO_PUBLIC_API_URL: "https://example.com",
+      EXPO_PUBLIC_ENABLE_OLD_PHONE_APPROVAL: "true",
+    });
+    const disabled = EnvSchema.safeParse({
+      EXPO_PUBLIC_API_URL: "https://example.com",
+      EXPO_PUBLIC_ENABLE_OLD_PHONE_APPROVAL: "false",
+    });
+
+    expect(enabled.success).toBe(true);
+    expect(disabled.success).toBe(true);
+  });
+
+  it("rejects invalid old-phone approval feature flag values", () => {
+    const result = EnvSchema.safeParse({
+      EXPO_PUBLIC_API_URL: "https://example.com",
+      EXPO_PUBLIC_ENABLE_OLD_PHONE_APPROVAL: "yes",
+    });
+
+    expect(result.success).toBe(false);
   });
 });
