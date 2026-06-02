@@ -60,6 +60,19 @@ export type UpdateAdminMerchantInput = Partial<
   Omit<CreateAdminMerchantInput, "email">
 >;
 
+export type AdminBankOption = {
+  name: string;
+  code: string;
+  countryCode: string;
+};
+
+export type ResolvedBankAccount = {
+  accountName: string;
+  accountNumber: string;
+  bankCode: string;
+  bankName: string;
+};
+
 export type PendingCashout = {
   id: string;
   merchantUserId: string;

@@ -1,10 +1,12 @@
 import type {
   AdminMerchant,
+  AdminBankOption,
   AdminOverview,
   CreateAdminMerchantInput,
   PendingCashout,
   PendingMerchant,
   ReconciliationReport,
+  ResolvedBankAccount,
   UpdateAdminMerchantInput,
 } from "./types";
 
@@ -216,6 +218,33 @@ export async function getMerchants(onAuthFailure: OnAuthFailure) {
   );
 
   return result.merchants;
+}
+
+export async function getNgBanks(onAuthFailure: OnAuthFailure) {
+  const result = await request<{ banks: AdminBankOption[] }>(
+    "/admin/banks/ng",
+    {
+      method: "GET",
+    },
+    onAuthFailure,
+  );
+
+  return result.banks;
+}
+
+export function resolveBankAccount(
+  input: { bankCode: string; accountNumber: string },
+  onAuthFailure: OnAuthFailure,
+) {
+  return request<{ account: ResolvedBankAccount }>(
+    "/admin/banks/resolve",
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+      requiresCsrf: true,
+    },
+    onAuthFailure,
+  );
 }
 
 export function createMerchant(

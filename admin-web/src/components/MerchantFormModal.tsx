@@ -1,5 +1,11 @@
-import { useEffect, useState, type FormEvent } from "react";
-import type { AdminMerchant, CreateAdminMerchantInput } from "../types";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { getNgBanks, resolveBankAccount } from "../api";
+import type {
+  AdminBankOption,
+  AdminMerchant,
+  CreateAdminMerchantInput,
+  ResolvedBankAccount,
+} from "../types";
 
 type MerchantFormModalProps = {
   open: boolean;
@@ -7,8 +13,16 @@ type MerchantFormModalProps = {
   merchant: AdminMerchant | null;
   error: string | null;
   isBusy: boolean;
+  onAuthFailure: () => void;
   onCancel: () => void;
   onSubmit: (values: CreateAdminMerchantInput) => void;
+};
+
+type ResolvedSnapshot = {
+  bankCode: string;
+  accountNumber: string;
+  accountName: string;
+  bankName: string;
 };
 
 const EMPTY_VALUES: CreateAdminMerchantInput = {
@@ -37,16 +51,96 @@ function buildInitialValues(merchant: AdminMerchant | null): CreateAdminMerchant
   };
 }
 
+function buildInitialResolution(merchant: AdminMerchant | null): ResolvedSnapshot | null {
+  if (
+    !merchant?.cashoutBankCode ||
+    !merchant.cashoutBankName ||
+    !merchant.cashoutAccountNumber ||
+    !merchant.cashoutAccountName
+  ) {
+    return null;
+  }
+
+  return {
+    bankCode: merchant.cashoutBankCode,
+    bankName: merchant.cashoutBankName,
+    accountNumber: merchant.cashoutAccountNumber,
+    accountName: merchant.cashoutAccountName,
+  };
+}
+
+export function buildBankOptions(
+  banks: readonly AdminBankOption[],
+  merchant: AdminMerchant | null,
+): AdminBankOption[] {
+  const currentBankCode = merchant?.cashoutBankCode?.trim() ?? "";
+  const currentBankName = merchant?.cashoutBankName?.trim() ?? "";
+
+  if (currentBankCode.length === 0 || currentBankName.length === 0) {
+    return [...banks];
+  }
+
+  const alreadyPresent = banks.some((bank) => bank.code === currentBankCode);
+  if (alreadyPresent) {
+    return [...banks];
+  }
+
+  return [
+    {
+      name: currentBankName,
+      code: currentBankCode,
+      countryCode: "NG",
+    },
+    ...banks,
+  ];
+}
+
+export function isResolvedForCurrentValues(
+  values: CreateAdminMerchantInput,
+  resolution: ResolvedSnapshot | null,
+): boolean {
+  if (!resolution) {
+    return false;
+  }
+
+  return (
+    values.cashoutBankCode.trim() === resolution.bankCode &&
+    values.cashoutAccountNumber.trim() === resolution.accountNumber &&
+    values.cashoutAccountName.trim() === resolution.accountName &&
+    values.cashoutBankName.trim() === resolution.bankName
+  );
+}
+
+export function applyResolvedAccount(
+  values: CreateAdminMerchantInput,
+  account: ResolvedBankAccount,
+): CreateAdminMerchantInput {
+  return {
+    ...values,
+    cashoutBankCode: account.bankCode,
+    cashoutBankName: account.bankName,
+    cashoutAccountNumber: account.accountNumber,
+    cashoutAccountName: account.accountName,
+  };
+}
+
 export function MerchantFormModal({
   open,
   mode,
   merchant,
   error,
   isBusy,
+  onAuthFailure,
   onCancel,
   onSubmit,
 }: MerchantFormModalProps) {
   const [values, setValues] = useState<CreateAdminMerchantInput>(EMPTY_VALUES);
+  const [banks, setBanks] = useState<AdminBankOption[]>([]);
+  const [isLoadingBanks, setIsLoadingBanks] = useState(false);
+  const [bankLoadError, setBankLoadError] = useState<string | null>(null);
+  const [resolveError, setResolveError] = useState<string | null>(null);
+  const [isResolving, setIsResolving] = useState(false);
+  const [resolution, setResolution] = useState<ResolvedSnapshot | null>(null);
 
   useEffect(() => {
     if (!open) {
@@ -54,7 +148,83 @@ export function MerchantFormModal({
     }
 
     setValues(mode === "create" ? EMPTY_VALUES : buildInitialValues(merchant));
+    setResolution(mode === "create" ? null : buildInitialResolution(merchant));
+    setResolveError(null);
+    setBankLoadError(null);
   }, [merchant, mode, open]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadBanks = async () => {
+      setIsLoadingBanks(true);
+
+      try {
+        const nextBanks = await getNgBanks(onAuthFailure);
+        if (!cancelled) {
+          setBanks(nextBanks);
+        }
+      } catch (loadError) {
+        if (!cancelled) {
+          setBankLoadError(
+            loadError instanceof Error ? loadError.message : "Failed to load bank list.",
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingBanks(false);
+        }
+      }
+    };
+
+    void loadBanks();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [onAuthFailure, open]);
+
+  const bankOptions = useMemo(() => buildBankOptions(banks, merchant), [banks, merchant]);
+
+  useEffect(() => {
+    const selectedBank = bankOptions.find((bank) => bank.code === values.cashoutBankCode.trim());
+    if (!selectedBank) {
+      return;
+    }
+
+    if (selectedBank.name === values.cashoutBankName) {
+      return;
+    }
+
+    setValues((current) => ({
+      ...current,
+      cashoutBankName: selectedBank.name,
+    }));
+  }, [bankOptions, values.cashoutBankCode, values.cashoutBankName]);
+
+  useEffect(() => {
+    if (!resolution) {
+      return;
+    }
+
+    if (
+      values.cashoutBankCode.trim() === resolution.bankCode &&
+      values.cashoutAccountNumber.trim() === resolution.accountNumber
+    ) {
+      return;
+    }
+
+    setResolution(null);
+    setResolveError(null);
+    setValues((current) => ({
+      ...current,
+      cashoutAccountName: "",
+    }));
+  }, [resolution, values.cashoutAccountNumber, values.cashoutBankCode]);
 
   if (!open) {
     return null;
@@ -70,12 +240,80 @@ export function MerchantFormModal({
     }));
   };
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    onSubmit(values);
+  const isCreateMode = mode === "create";
+  const isResolved = isResolvedForCurrentValues(values, resolution);
+
+  const canResolve =
+    values.cashoutBankCode.trim().length > 0 &&
+    /^\d{10}$/.test(values.cashoutAccountNumber.trim()) &&
+    !isLoadingBanks &&
+    !isBusy &&
+    !isResolving;
+
+  const canSubmit =
+    !isBusy &&
+    !isLoadingBanks &&
+    isResolved &&
+    values.cashoutBankName.trim().length > 0 &&
+    values.cashoutBankCode.trim().length > 0 &&
+    /^\d{10}$/.test(values.cashoutAccountNumber.trim());
+
+  const handleResolve = async () => {
+    if (values.cashoutBankCode.trim().length === 0) {
+      setResolveError("Select a bank before resolving the account.");
+      return;
+    }
+
+    if (!/^\d{10}$/.test(values.cashoutAccountNumber.trim())) {
+      setResolveError("Enter a valid 10-digit account number before resolving.");
+      return;
+    }
+
+    setResolveError(null);
+    setIsResolving(true);
+
+    try {
+      const result = await resolveBankAccount(
+        {
+          bankCode: values.cashoutBankCode.trim(),
+          accountNumber: values.cashoutAccountNumber.trim(),
+        },
+        onAuthFailure,
+      );
+
+      setValues((current) => applyResolvedAccount(current, result.account));
+      setResolution({
+        bankCode: result.account.bankCode,
+        bankName: result.account.bankName,
+        accountNumber: result.account.accountNumber,
+        accountName: result.account.accountName,
+      });
+    } catch (resolveAccountError) {
+      setResolution(null);
+      setValues((current) => ({
+        ...current,
+        cashoutAccountName: "",
+      }));
+      setResolveError(
+        resolveAccountError instanceof Error
+          ? resolveAccountError.message
+          : "Failed to resolve bank account.",
+      );
+    } finally {
+      setIsResolving(false);
+    }
   };
 
-  const isCreateMode = mode === "create";
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!isResolved) {
+      setResolveError("Resolve the bank account before saving this merchant.");
+      return;
+    }
+
+    onSubmit(values);
+  };
 
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="merchant-form-title">
@@ -135,30 +373,34 @@ export function MerchantFormModal({
             </div>
 
             <div className="field-group">
-              <label htmlFor="merchant-bank-name">Cashout bank name</label>
+              <label htmlFor="merchant-bank-code">Cashout bank</label>
+              <select
+                id="merchant-bank-code"
+                value={values.cashoutBankCode}
+                onChange={(event) => updateField("cashoutBankCode", event.target.value)}
+                disabled={isBusy || isLoadingBanks}
+                required
+              >
+                <option value="">{isLoadingBanks ? "Loading banks..." : "Select bank"}</option>
+                {bankOptions.map((bank) => (
+                  <option key={`${bank.code}-${bank.name}`} value={bank.code}>
+                    {bank.name}
+                  </option>
+                ))}
+              </select>
+              <p className="field-note">
+                Bank options come from Korapay so the saved bank code matches payout requirements.
+              </p>
+            </div>
+
+            <div className="field-group">
+              <label htmlFor="merchant-bank-name">Resolved bank name</label>
               <input
                 id="merchant-bank-name"
                 type="text"
                 value={values.cashoutBankName}
-                onChange={(event) => updateField("cashoutBankName", event.target.value)}
-                disabled={isBusy}
-                required
-                maxLength={100}
-              />
-            </div>
-
-            <div className="field-group">
-              <label htmlFor="merchant-bank-code">Cashout bank code</label>
-              <input
-                id="merchant-bank-code"
-                type="text"
-                value={values.cashoutBankCode}
-                onChange={(event) => updateField("cashoutBankCode", event.target.value)}
-                disabled={isBusy}
-                required
-                inputMode="numeric"
-                pattern="[0-9]{3}"
-                maxLength={3}
+                disabled
+                readOnly
               />
             </div>
 
@@ -184,20 +426,43 @@ export function MerchantFormModal({
                 type="text"
                 value={values.cashoutAccountName}
                 onChange={(event) => updateField("cashoutAccountName", event.target.value)}
-                disabled={isBusy}
+                disabled={isBusy || isResolved}
+                readOnly={isResolved}
                 required
                 maxLength={200}
               />
             </div>
+
+            <div className="field-group form-grid-span-2">
+              <div className="inline-action-row">
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => {
+                    void handleResolve();
+                  }}
+                  disabled={!canResolve}
+                >
+                  {isResolving ? "Resolving..." : "Resolve account"}
+                </button>
+                <span className={isResolved ? "status-text success-text" : "status-text"}>
+                  {isResolved
+                    ? "Account resolved. The account name is now locked to the Korapay result."
+                    : "Resolve this account before saving the merchant."}
+                </span>
+              </div>
+            </div>
           </div>
 
+          {bankLoadError ? <p className="error">{bankLoadError}</p> : null}
+          {resolveError ? <p className="error">{resolveError}</p> : null}
           {error ? <p className="error">{error}</p> : null}
 
           <div className="modal-actions">
             <button type="button" className="secondary" onClick={onCancel} disabled={isBusy}>
               Cancel
             </button>
-            <button type="submit" disabled={isBusy}>
+            <button type="submit" disabled={!canSubmit}>
               {isBusy
                 ? "Saving..."
                 : isCreateMode

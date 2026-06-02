@@ -19,6 +19,10 @@ import {
   UpdateAdminMerchantDto,
 } from "./admin.schemas";
 import { generateOnetoUserId } from "../common/user-id";
+import {
+  KorapayGatewayError,
+  KorapayService,
+} from "../topup/korapay.service";
 
 const OPERATING_USER_ID = "u_operating";
 const OUTBOUND_IP_FETCH_TIMEOUT_MS = 5_000;
@@ -64,8 +68,49 @@ export class AdminService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly korapayService: KorapayService,
     private readonly configService?: ConfigService,
   ) {}
+
+  async listBanks(countryCode: string = "NG") {
+    const banks = await this.korapayService.listBanks(countryCode);
+
+    return banks.map((bank) => ({
+      name: bank.name,
+      code: bank.code,
+      countryCode: bank.countryCode,
+    }));
+  }
+
+  async resolveBankAccount(input: {
+    bankCode: string;
+    accountNumber: string;
+  }) {
+    try {
+      const resolvedAccount = await this.korapayService.resolveBankAccount({
+        bankCode: input.bankCode,
+        accountNumber: input.accountNumber,
+        currency: "NG",
+      });
+
+      return {
+        accountName: resolvedAccount.accountName,
+        accountNumber: resolvedAccount.accountNumber,
+        bankCode: resolvedAccount.bankCode,
+        bankName: resolvedAccount.bankName,
+      };
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+
+      if (error instanceof KorapayGatewayError) {
+        throw new BadRequestException("unable_to_resolve_bank_account");
+      }
+
+      throw new BadRequestException("unable_to_resolve_bank_account");
+    }
+  }
 
   async getOverview() {
     const [
@@ -364,18 +409,22 @@ export class AdminService {
   async createMerchant(input: CreateAdminMerchantDto, adminUserId: string) {
     const normalizedEmail = this.normalizeMerchantEmail(input.email);
     const verifiedAt = new Date();
+    const existingUser = await this.prisma.user.findUnique({
+      where: { email: normalizedEmail },
+      select: { id: true },
+    });
+
+    if (existingUser) {
+      throw new ConflictException("email_already_registered");
+    }
+
+    const resolvedPayoutDetails = await this.resolveBankAccount({
+      bankCode: input.cashoutBankCode,
+      accountNumber: input.cashoutAccountNumber,
+    });
 
     try {
       const merchant = await this.prisma.$transaction(async (tx) => {
-        const existingUser = await tx.user.findUnique({
-          where: { email: normalizedEmail },
-          select: { id: true },
-        });
-
-        if (existingUser) {
-          throw new ConflictException("email_already_registered");
-        }
-
         return tx.user.create({
           data: {
             id: generateOnetoUserId(),
@@ -386,10 +435,10 @@ export class AdminService {
               create: {
                 businessName: input.businessName,
                 businessAddress: input.businessAddress,
-                cashoutBankName: input.cashoutBankName,
-                cashoutBankCode: input.cashoutBankCode,
-                cashoutAccountNumber: input.cashoutAccountNumber,
-                cashoutAccountName: input.cashoutAccountName,
+                cashoutBankName: resolvedPayoutDetails.bankName,
+                cashoutBankCode: resolvedPayoutDetails.bankCode,
+                cashoutAccountNumber: resolvedPayoutDetails.accountNumber,
+                cashoutAccountName: resolvedPayoutDetails.accountName,
                 verifiedAt,
               },
             },
@@ -421,7 +470,7 @@ export class AdminService {
     adminUserId: string,
   ) {
     const merchantUserId = this.requireMerchantUserId(userId);
-    const profileUpdateData = this.buildMerchantProfileUpdateData(input);
+    let updatedFieldNames: string[] = [];
 
     const merchant = await this.prisma.$transaction(async (tx) => {
       const existingUser = await tx.user.findUnique({
@@ -430,6 +479,11 @@ export class AdminService {
       });
 
       this.assertMerchantWithProfile(existingUser);
+      const profileUpdateData = await this.buildMerchantProfileUpdateData(
+        input,
+        existingUser.merchantProfile,
+      );
+      updatedFieldNames = Object.keys(profileUpdateData).sort();
 
       await tx.merchantProfile.update({
         where: { userId: merchantUserId },
@@ -449,9 +503,7 @@ export class AdminService {
     });
 
     this.logger.log(
-      `Admin updated merchant userId=${merchantUserId} by adminUserId=${adminUserId} fields=${Object.keys(profileUpdateData)
-        .sort()
-        .join(",")}`,
+      `Admin updated merchant userId=${merchantUserId} by adminUserId=${adminUserId} fields=${updatedFieldNames.join(",")}`,
     );
 
     return { merchant: this.mapAdminMerchant(merchant) };
@@ -646,7 +698,15 @@ export class AdminService {
     }
   }
 
-  private buildMerchantProfileUpdateData(input: UpdateAdminMerchantDto) {
+  private async buildMerchantProfileUpdateData(
+    input: UpdateAdminMerchantDto,
+    existingProfile: {
+      cashoutBankName?: string | null;
+      cashoutBankCode?: string | null;
+      cashoutAccountNumber?: string | null;
+      cashoutAccountName?: string | null;
+    },
+  ) {
     const data: Prisma.MerchantProfileUpdateInput = {};
 
     if (input.businessName !== undefined) {
@@ -655,17 +715,32 @@ export class AdminService {
     if (input.businessAddress !== undefined) {
       data.businessAddress = input.businessAddress;
     }
-    if (input.cashoutBankName !== undefined) {
-      data.cashoutBankName = input.cashoutBankName;
-    }
-    if (input.cashoutBankCode !== undefined) {
-      data.cashoutBankCode = input.cashoutBankCode;
-    }
-    if (input.cashoutAccountNumber !== undefined) {
-      data.cashoutAccountNumber = input.cashoutAccountNumber;
-    }
-    if (input.cashoutAccountName !== undefined) {
-      data.cashoutAccountName = input.cashoutAccountName;
+
+    const payoutFieldTouched =
+      input.cashoutBankName !== undefined ||
+      input.cashoutBankCode !== undefined ||
+      input.cashoutAccountNumber !== undefined ||
+      input.cashoutAccountName !== undefined;
+
+    if (payoutFieldTouched) {
+      const bankCode =
+        input.cashoutBankCode ?? existingProfile.cashoutBankCode ?? undefined;
+      const accountNumber =
+        input.cashoutAccountNumber ?? existingProfile.cashoutAccountNumber ?? undefined;
+
+      if (!bankCode || !accountNumber) {
+        throw new BadRequestException("unable_to_resolve_bank_account");
+      }
+
+      const resolvedPayoutDetails = await this.resolveBankAccount({
+        bankCode,
+        accountNumber,
+      });
+
+      data.cashoutBankName = resolvedPayoutDetails.bankName;
+      data.cashoutBankCode = resolvedPayoutDetails.bankCode;
+      data.cashoutAccountNumber = resolvedPayoutDetails.accountNumber;
+      data.cashoutAccountName = resolvedPayoutDetails.accountName;
     }
 
     return data;

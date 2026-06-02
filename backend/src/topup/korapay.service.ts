@@ -65,6 +65,25 @@ export interface KorapayPayoutInitiation {
   rawResponse: unknown;
 }
 
+export interface KorapayBank {
+  name: string;
+  code: string;
+  countryCode: string;
+}
+
+export interface ResolveBankAccountParams {
+  bankCode: string;
+  accountNumber: string;
+  currency?: string;
+}
+
+export interface KorapayResolvedBankAccount {
+  accountName: string;
+  accountNumber: string;
+  bankCode: string;
+  bankName: string;
+}
+
 type KorapayGatewayErrorCategory =
   | 'http_error'
   | 'invalid_response'
@@ -103,6 +122,85 @@ const KorapayVerifyTransactionResponseSchema = z.object({
     currency: z.string().optional(),
   }).passthrough().optional(),
 }).passthrough();
+
+const KorapayBankRecordSchema = z
+  .object({
+    name: z.string().trim().min(1).optional(),
+    code: z.string().trim().min(1).optional(),
+    country: z.string().trim().min(1).optional(),
+    bank_name: z.string().trim().min(1).optional(),
+    bank_code: z.string().trim().min(1).optional(),
+    country_code: z.string().trim().min(1).optional(),
+    countryCode: z.string().trim().min(1).optional(),
+  })
+  .passthrough()
+  .transform((value, ctx) => {
+    const name = value.name ?? value.bank_name;
+    const code = value.code ?? value.bank_code;
+    const countryCode = value.countryCode ?? value.country_code ?? value.country;
+
+    if (!name || !code || !countryCode) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Korapay bank record is missing required fields",
+      });
+      return z.NEVER;
+    }
+
+    return {
+      name,
+      code,
+      countryCode,
+    } satisfies KorapayBank;
+  });
+
+const KorapayListBanksResponseSchema = z
+  .object({
+    status: z.boolean(),
+    data: z.array(KorapayBankRecordSchema),
+  })
+  .passthrough();
+
+const KorapayResolvedBankAccountSchema = z
+  .object({
+    account_name: z.string().trim().min(1).optional(),
+    account_number: z.string().trim().min(1).optional(),
+    bank_name: z.string().trim().min(1).optional(),
+    bank_code: z.string().trim().min(1).optional(),
+    accountName: z.string().trim().min(1).optional(),
+    accountNumber: z.string().trim().min(1).optional(),
+    bankName: z.string().trim().min(1).optional(),
+    bankCode: z.string().trim().min(1).optional(),
+  })
+  .passthrough()
+  .transform((value, ctx) => {
+    const accountName = value.account_name ?? value.accountName;
+    const accountNumber = value.account_number ?? value.accountNumber;
+    const bankName = value.bank_name ?? value.bankName;
+    const bankCode = value.bank_code ?? value.bankCode;
+
+    if (!accountName || !accountNumber || !bankName || !bankCode) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Korapay bank resolution payload is missing required fields",
+      });
+      return z.NEVER;
+    }
+
+    return {
+      accountName,
+      accountNumber,
+      bankName,
+      bankCode,
+    } satisfies KorapayResolvedBankAccount;
+  });
+
+const KorapayResolveBankAccountResponseSchema = z
+  .object({
+    status: z.boolean(),
+    data: KorapayResolvedBankAccountSchema,
+  })
+  .passthrough();
 
 export interface KorapayTransactionVerification {
   status: string;
@@ -290,6 +388,108 @@ export class KorapayService {
     }
   }
 
+  async listBanks(countryCode: string = 'NG'): Promise<KorapayBank[]> {
+    const normalizedCountryCode = countryCode.trim().toUpperCase();
+
+    try {
+      const response = await this.fetchWithTimeout(
+        `${this.baseUrl}/misc/banks?countryCode=${encodeURIComponent(normalizedCountryCode)}`,
+        {
+          method: 'GET',
+          headers: this.buildAuthHeaders(),
+        },
+      );
+
+      if (!response.ok) {
+        const responseBody = await this.readResponseBody(response);
+        throw new KorapayGatewayError({
+          message: `Korapay bank list request failed with HTTP ${response.status}`,
+          category: 'http_error',
+          statusCode: response.status,
+          responseBody,
+        });
+      }
+
+      const json = await response.json();
+      const parsed = KorapayListBanksResponseSchema.safeParse(json);
+      if (!parsed.success) {
+        throw new KorapayGatewayError({
+          message: 'Korapay bank list returned an invalid response payload',
+          category: 'invalid_response',
+          statusCode: response.status,
+          responseBody: json,
+        });
+      }
+
+      return parsed.data.data;
+    } catch (error) {
+      if (error instanceof KorapayGatewayError) {
+        throw error;
+      }
+
+      throw new KorapayGatewayError({
+        message: 'Failed to communicate with Korapay bank list endpoint',
+        category: 'network_error',
+        responseBody: error instanceof Error ? { message: error.message } : { error: String(error) },
+      });
+    }
+  }
+
+  async resolveBankAccount(
+    params: ResolveBankAccountParams,
+  ): Promise<KorapayResolvedBankAccount> {
+    const currency = (params.currency ?? 'NG').trim().toUpperCase();
+    const payload = {
+      bank: params.bankCode,
+      account: params.accountNumber,
+      currency,
+    };
+
+    try {
+      const response = await this.fetchWithTimeout(`${this.baseUrl}/misc/banks/resolve`, {
+        method: 'POST',
+        headers: {
+          ...this.buildAuthHeaders(),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const responseBody = await this.readResponseBody(response);
+        throw new KorapayGatewayError({
+          message: `Korapay bank resolution failed with HTTP ${response.status}`,
+          category: 'http_error',
+          statusCode: response.status,
+          responseBody,
+        });
+      }
+
+      const json = await response.json();
+      const parsed = KorapayResolveBankAccountResponseSchema.safeParse(json);
+      if (!parsed.success) {
+        throw new KorapayGatewayError({
+          message: 'Korapay bank resolution returned an invalid response payload',
+          category: 'invalid_response',
+          statusCode: response.status,
+          responseBody: json,
+        });
+      }
+
+      return parsed.data.data;
+    } catch (error) {
+      if (error instanceof KorapayGatewayError) {
+        throw error;
+      }
+
+      throw new KorapayGatewayError({
+        message: 'Failed to communicate with Korapay bank resolution endpoint',
+        category: 'network_error',
+        responseBody: error instanceof Error ? { message: error.message } : { error: String(error) },
+      });
+    }
+  }
+
   /**
    * Korapay money fields arrive as major NGN values in some responses
    * (for example "25.00" or 25). We convert to integer kobo and return
@@ -451,6 +651,12 @@ export class KorapayService {
       clearTimeout(timeout);
       removeExternalAbortListener?.();
     }
+  }
+
+  private buildAuthHeaders(): Record<string, string> {
+    return {
+      'Authorization': `Bearer ${this.secretKey}`,
+    };
   }
 
   private async readResponseBody(response: Response): Promise<unknown> {

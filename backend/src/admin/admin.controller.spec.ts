@@ -18,6 +18,8 @@ describe("AdminController", () => {
   let reflector: Reflector;
   const mockAdminService = {
     getOverview: jest.fn(),
+    listBanks: jest.fn(),
+    resolveBankAccount: jest.fn(),
     listMerchants: jest.fn(),
     createMerchant: jest.fn(),
     getPendingMerchants: jest.fn(),
@@ -178,6 +180,42 @@ describe("AdminController", () => {
     expect(mockAdminService.listMerchants).toHaveBeenCalledTimes(1);
   });
 
+  it("delegates GET /admin/banks/ng to AdminService.listBanks", async () => {
+    mockAdminService.listBanks.mockResolvedValue([{ name: "Wema Bank", code: "035" }]);
+
+    const result = await controller.listNgBanks();
+
+    expect(result).toEqual({ banks: [{ name: "Wema Bank", code: "035" }] });
+    expect(mockAdminService.listBanks).toHaveBeenCalledWith("NG");
+  });
+
+  it("delegates POST /admin/banks/resolve to AdminService.resolveBankAccount", async () => {
+    mockAdminService.resolveBankAccount.mockResolvedValue({
+      accountName: "Campus Cafe Ltd",
+      accountNumber: "1234567890",
+      bankCode: "035",
+      bankName: "Wema Bank",
+    });
+
+    const result = await controller.resolveBankAccount({
+      bankCode: "035",
+      accountNumber: "1234567890",
+    });
+
+    expect(result).toEqual({
+      account: {
+        accountName: "Campus Cafe Ltd",
+        accountNumber: "1234567890",
+        bankCode: "035",
+        bankName: "Wema Bank",
+      },
+    });
+    expect(mockAdminService.resolveBankAccount).toHaveBeenCalledWith({
+      bankCode: "035",
+      accountNumber: "1234567890",
+    });
+  });
+
   it("delegates GET /admin/cashouts/operations to AdminService.getCashoutOperations", async () => {
     mockAdminService.getCashoutOperations.mockResolvedValue([{ id: "cash_1" }]);
 
@@ -304,5 +342,8 @@ describe("AdminController", () => {
 
     expect(reflector.get("THROTTLER:LIMITdefault", controller.markCashoutPaid)).toBe(20);
     expect(reflector.get("THROTTLER:TTLdefault", controller.markCashoutPaid)).toBe(60000);
+
+    expect(reflector.get("THROTTLER:LIMITdefault", controller.resolveBankAccount)).toBe(30);
+    expect(reflector.get("THROTTLER:TTLdefault", controller.resolveBankAccount)).toBe(60000);
   });
 });

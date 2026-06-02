@@ -679,6 +679,23 @@ textarea {
   line-height: 1.5;
 }
 
+.inline-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.status-text {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.success-text {
+  color: var(--success);
+}
+
 .page-header-copy {
   display: grid;
   gap: 10px;

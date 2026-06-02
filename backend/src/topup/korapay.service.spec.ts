@@ -358,6 +358,89 @@ describe('KorapayService', () => {
     });
   });
 
+  describe('listBanks', () => {
+    it('calls Korapay bank list endpoint and returns only safe bank fields', async () => {
+      const fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          status: true,
+          data: [
+            {
+              name: 'Wema Bank',
+              code: '035',
+              countryCode: 'NG',
+              slug: 'wema-bank',
+            },
+          ],
+        }),
+      } as Response);
+
+      await expect(service.listBanks()).resolves.toEqual([
+        {
+          name: 'Wema Bank',
+          code: '035',
+          countryCode: 'NG',
+        },
+      ]);
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://api.korapay.com/merchant/api/v1/misc/banks?countryCode=NG',
+        expect.objectContaining({
+          method: 'GET',
+          headers: {
+            Authorization: 'Bearer sk_test_123',
+          },
+        }),
+      );
+    });
+  });
+
+  describe('resolveBankAccount', () => {
+    it('sends bank, account and currency to Korapay and returns normalized account details', async () => {
+      const fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          status: true,
+          data: {
+            account_name: 'Campus Cafe Ltd',
+            account_number: '1234567890',
+            bank_name: 'Wema Bank',
+            bank_code: '035',
+          },
+        }),
+      } as Response);
+
+      await expect(
+        service.resolveBankAccount({
+          bankCode: '035',
+          accountNumber: '1234567890',
+        }),
+      ).resolves.toEqual({
+        accountName: 'Campus Cafe Ltd',
+        accountNumber: '1234567890',
+        bankName: 'Wema Bank',
+        bankCode: '035',
+      });
+
+      const requestInit = fetchSpy.mock.calls[0]?.[1];
+      if (!requestInit?.body || typeof requestInit.body !== 'string') {
+        throw new Error('Expected JSON bank resolve payload');
+      }
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://api.korapay.com/merchant/api/v1/misc/banks/resolve',
+        expect.objectContaining({
+          method: 'POST',
+        }),
+      );
+      expect(JSON.parse(requestInit.body)).toEqual({
+        bank: '035',
+        account: '1234567890',
+        currency: 'NG',
+      });
+    });
+  });
+
   describe('fetchWithTimeout', () => {
     it('aborts hanging fetch and rejects with controlled timeout error', async () => {
       jest.useFakeTimers();
