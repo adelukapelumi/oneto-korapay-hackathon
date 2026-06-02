@@ -51,6 +51,11 @@ import {
   type TransactionStatusIcon,
   type TransactionStatusTone,
 } from "../../src/payment/transaction-list";
+import {
+  getBalanceHiddenPreference,
+  maskNairaAmount,
+  setBalanceHiddenPreference,
+} from "../../src/preferences/balance-visibility";
 import { logger } from "../../src/lib/logger";
 import { useThemeMode } from "../../src/theme/theme-provider";
 import {
@@ -185,6 +190,9 @@ export default function HomeScreen(): React.ReactElement {
   const [refreshing, setRefreshing] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
+  const [balanceHidden, setBalanceHidden] = useState(() =>
+    getBalanceHiddenPreference(),
+  );
   const [syncStatusMessage, setSyncStatusMessage] = useState<string | null>(null);
   const [studentOutgoingSyncMeta, setStudentOutgoingSyncMeta] = useState<{
     readonly markedTerminal: number;
@@ -202,6 +210,15 @@ export default function HomeScreen(): React.ReactElement {
 
   const user = state.status === "authed" ? state.user : null;
   const jwtFresh = state.status === "authed" ? state.jwtFresh : false;
+
+  const formatDashboardNaira = (kobo: number): string =>
+    balanceHidden ? maskNairaAmount() : formatNaira(kobo);
+
+  function toggleBalanceHidden(): void {
+    const next = !balanceHidden;
+    setBalanceHidden(next);
+    setBalanceHiddenPreference(next);
+  }
 
   function updateMerchantProjection(settledBalanceKobo: number): MerchantBalanceProjection {
     const projection = buildMerchantBalanceProjection({
@@ -745,16 +762,33 @@ export default function HomeScreen(): React.ReactElement {
             </View>
             <View style={styles.balanceHeader}>
               <View>
-                <Text style={[styles.balanceLabel, { color: t.textSec }]}>Available Balance</Text>
+                <View style={styles.balanceLabelRow}>
+                  <Text style={[styles.balanceLabel, { color: t.textSec }]}>Available Balance</Text>
+                  <Pressable
+                    onPress={toggleBalanceHidden}
+                    accessibilityRole="button"
+                    accessibilityLabel={balanceHidden ? "Show balance" : "Hide balance"}
+                    hitSlop={8}
+                    style={({ pressed }) => [
+                      styles.balanceVisibilityButton,
+                      { borderColor: t.border, backgroundColor: t.cardAlt },
+                      pressed && styles.buttonPressed,
+                    ]}
+                  >
+                    <Text style={[styles.balanceVisibilityIcon, { color: t.text }]}>
+                      {balanceHidden ? "🙈" : "👁"}
+                    </Text>
+                  </Pressable>
+                </View>
                 <Text style={[styles.balanceAmount, { color: t.text }]}>
-                  {formatNaira(availableBalanceKobo)}
+                  {formatDashboardNaira(availableBalanceKobo)}
                 </Text>
                 <Text style={[styles.balanceUpdated, { color: t.textMut }]}>
                   {studentBalanceStatusText}
                 </Text>
                 {pendingOutgoingKobo > 0 ? (
                   <Text style={[styles.balancePendingSummary, { color: t.textSec }]}>
-                    {formatNaira(pendingOutgoingKobo)} pending offline payment
+                    {formatDashboardNaira(pendingOutgoingKobo)} pending offline payment
                     {pendingOutgoingCount === 1 ? "" : "s"}
                   </Text>
                 ) : null}
@@ -932,9 +966,26 @@ export default function HomeScreen(): React.ReactElement {
           </View>
           <View style={styles.balanceHeader}>
             <View>
-              <Text style={[styles.balanceLabel, { color: t.textSec }]}>Settled Balance</Text>
+              <View style={styles.balanceLabelRow}>
+                <Text style={[styles.balanceLabel, { color: t.textSec }]}>Settled Balance</Text>
+                <Pressable
+                  onPress={toggleBalanceHidden}
+                  accessibilityRole="button"
+                  accessibilityLabel={balanceHidden ? "Show balance" : "Hide balance"}
+                  hitSlop={8}
+                  style={({ pressed }) => [
+                    styles.balanceVisibilityButton,
+                    { borderColor: t.border, backgroundColor: t.cardAlt },
+                    pressed && styles.buttonPressed,
+                  ]}
+                >
+                  <Text style={[styles.balanceVisibilityIcon, { color: t.text }]}>
+                    {balanceHidden ? "🙈" : "👁"}
+                  </Text>
+                </Pressable>
+              </View>
               <Text style={[styles.balanceAmount, { color: t.text }]}>
-                {formatNaira(merchantProjectionForRender.settledBalanceKobo)}
+                {formatDashboardNaira(merchantProjectionForRender.settledBalanceKobo)}
               </Text>
               <Text style={[styles.balanceUpdated, { color: t.textMut }]}>
                 {jwtFresh ? "✓ Updated just now" : "Last known settled balance"}
@@ -942,7 +993,7 @@ export default function HomeScreen(): React.ReactElement {
               {merchantProjectionForRender.hasPendingSync ? (
                 <>
                   <Text style={[styles.balancePendingSummary, { color: t.textSec }]}>
-                    Pending Verification: {formatNaira(merchantProjectionForRender.pendingIncomingKobo)}
+                    Pending Verification: {formatDashboardNaira(merchantProjectionForRender.pendingIncomingKobo)}
                   </Text>
                   <Text style={[styles.balancePendingDetail, { color: t.textMut }]}>
                     from {merchantProjectionForRender.pendingIncomingCount} payment
@@ -952,7 +1003,7 @@ export default function HomeScreen(): React.ReactElement {
                 </>
               ) : null}
               <Text style={[styles.balancePendingSummary, { color: t.textSec }]}>
-                Available for Cashout: {formatNaira(merchantProjectionForRender.cashoutableBalanceKobo)}
+                Available for Cashout: {formatDashboardNaira(merchantProjectionForRender.cashoutableBalanceKobo)}
               </Text>
             </View>
             <View
@@ -977,7 +1028,7 @@ export default function HomeScreen(): React.ReactElement {
             </Text>
             {merchantProjectionForRender.hasPendingSync ? (
               <Text style={[styles.syncAmount, { color: t.textSec }]}>
-                {formatNaira(merchantProjectionForRender.pendingIncomingKobo)} pending sync
+                {formatDashboardNaira(merchantProjectionForRender.pendingIncomingKobo)} pending sync
               </Text>
             ) : null}
           </View>
@@ -1180,6 +1231,23 @@ const styles = StyleSheet.create({
   balanceLabel: {
     fontFamily: fonts.semibold,
     fontSize: fontSizes.sm,
+  },
+  balanceLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  balanceVisibilityButton: {
+    minWidth: 34,
+    height: 30,
+    borderRadius: radii.pill,
+    borderWidth: borders.thin,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: spacing.sm,
+  },
+  balanceVisibilityIcon: {
+    fontSize: 14,
   },
   balanceAmount: {
     fontFamily: fonts.bold,
