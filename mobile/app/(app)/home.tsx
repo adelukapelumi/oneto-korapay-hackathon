@@ -776,7 +776,7 @@ export default function HomeScreen(): React.ReactElement {
                     ]}
                   >
                     <Text style={[styles.balanceVisibilityIcon, { color: t.text }]}>
-                      {balanceHidden ? "🙈" : "👁"}
+                      {balanceHidden ? "🙈" : "👀"}
                     </Text>
                   </Pressable>
                 </View>
@@ -980,7 +980,7 @@ export default function HomeScreen(): React.ReactElement {
                   ]}
                 >
                   <Text style={[styles.balanceVisibilityIcon, { color: t.text }]}>
-                    {balanceHidden ? "🙈" : "👁"}
+                    {balanceHidden ? "🙈" : "👀"}
                   </Text>
                 </Pressable>
               </View>
