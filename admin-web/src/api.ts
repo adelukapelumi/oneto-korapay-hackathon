@@ -56,7 +56,7 @@ async function request<T>(
     headers,
   });
 
-  if (response.status === 401 || response.status === 403) {
+  if (response.status === 401) {
     onAuthFailure?.();
     throw new Error("Your session has expired. Please log in again.");
   }

@@ -1,4 +1,5 @@
 import {
+  BadGatewayException,
   BadRequestException,
   ConflictException,
   NotFoundException,
@@ -243,6 +244,19 @@ describe("AdminService", () => {
     expect(korapayService.listBanks).toHaveBeenCalledWith("NG");
   });
 
+  it("listBanks converts Korapay 401 failures into a gateway error", async () => {
+    korapayService.listBanks.mockRejectedValue(
+      new KorapayGatewayError({
+        message: "unauthorized",
+        category: "http_error",
+        statusCode: 401,
+        responseBody: { message: "Unauthorized" },
+      }),
+    );
+
+    await expect(service.listBanks("NG")).rejects.toThrow(BadGatewayException);
+  });
+
   it("resolveBankAccount sends NG currency and returns normalized account details", async () => {
     korapayService.resolveBankAccount.mockResolvedValue({
       accountName: "Campus Cafe Ltd",
@@ -285,6 +299,24 @@ describe("AdminService", () => {
         accountNumber: "1234567890",
       }),
     ).rejects.toThrow(BadRequestException);
+  });
+
+  it("resolveBankAccount converts Korapay auth/config failures into a gateway error", async () => {
+    korapayService.resolveBankAccount.mockRejectedValue(
+      new KorapayGatewayError({
+        message: "unauthorized",
+        category: "http_error",
+        statusCode: 401,
+        responseBody: { message: "Unauthorized" },
+      }),
+    );
+
+    await expect(
+      service.resolveBankAccount({
+        bankCode: "035",
+        accountNumber: "1234567890",
+      }),
+    ).rejects.toThrow(BadGatewayException);
   });
 
   it("createMerchant creates ACTIVE MERCHANT and verified MerchantProfile in one transaction", async () => {

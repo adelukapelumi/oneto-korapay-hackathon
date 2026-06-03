@@ -1,4 +1,5 @@
 import {
+  BadGatewayException,
   BadRequestException,
   ConflictException,
   Injectable,
@@ -73,13 +74,24 @@ export class AdminService {
   ) {}
 
   async listBanks(countryCode: string = "NG") {
-    const banks = await this.korapayService.listBanks(countryCode);
+    try {
+      const banks = await this.korapayService.listBanks(countryCode);
 
-    return banks.map((bank) => ({
-      name: bank.name,
-      code: bank.code,
-      countryCode: bank.countryCode,
-    }));
+      return banks.map((bank) => ({
+        name: bank.name,
+        code: bank.code,
+        countryCode: bank.countryCode,
+      }));
+    } catch (error) {
+      if (error instanceof KorapayGatewayError) {
+        this.logKorapayGatewayFailure("listBanks", error, {
+          countryCode: countryCode.trim().toUpperCase(),
+        });
+        throw new BadGatewayException("korapay_bank_list_unavailable");
+      }
+
+      throw error;
+    }
   }
 
   async resolveBankAccount(input: {
@@ -105,7 +117,16 @@ export class AdminService {
       }
 
       if (error instanceof KorapayGatewayError) {
-        throw new BadRequestException("unable_to_resolve_bank_account");
+        this.logKorapayGatewayFailure("resolveBankAccount", error, {
+          bankCode: input.bankCode.trim(),
+          accountNumberLast4: input.accountNumber.trim().slice(-4),
+        });
+
+        if (this.isKorapayResolutionValidationFailure(error)) {
+          throw new BadRequestException("unable_to_resolve_bank_account");
+        }
+
+        throw new BadGatewayException("korapay_bank_resolution_unavailable");
       }
 
       throw new BadRequestException("unable_to_resolve_bank_account");
@@ -784,5 +805,30 @@ export class AdminService {
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  private isKorapayResolutionValidationFailure(
+    error: KorapayGatewayError,
+  ): boolean {
+    if (error.category !== "http_error" || error.statusCode === null) {
+      return false;
+    }
+
+    return [400, 404, 422].includes(error.statusCode);
+  }
+
+  private logKorapayGatewayFailure(
+    operation: "listBanks" | "resolveBankAccount",
+    error: KorapayGatewayError,
+    context: Record<string, string>,
+  ) {
+    this.logger.error(
+      JSON.stringify({
+        operation,
+        category: error.category,
+        statusCode: error.statusCode,
+        ...context,
+      }),
+    );
   }
 }

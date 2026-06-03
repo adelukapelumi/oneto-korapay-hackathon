@@ -1,4 +1,4 @@
-import { INestApplication } from "@nestjs/common";
+import { BadGatewayException, INestApplication } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Test } from "@nestjs/testing";
 import request from "supertest";
@@ -200,6 +200,19 @@ describe("Admin HTTP boundary", () => {
       banks: [{ name: "Wema Bank", code: "035", countryCode: "NG" }],
     });
     expect(mockAdminService.listBanks).toHaveBeenCalledWith("NG");
+  });
+
+  it("returns 502 instead of 401 when the bank list gateway fails upstream", async () => {
+    mockAdminService.listBanks.mockRejectedValueOnce(
+      new BadGatewayException("korapay_bank_list_unavailable"),
+    );
+
+    const response = await request(app.getHttpServer())
+      .get("/admin/banks/ng")
+      .set("Cookie", `${ADMIN_SESSION_COOKIE_NAME}=${COOKIE_ADMIN_TOKEN}`)
+      .expect(502);
+
+    expect(response.body.message).toBe("korapay_bank_list_unavailable");
   });
 
   it("rejects GET /admin/network/outbound-ip with Bearer ADMIN token", async () => {

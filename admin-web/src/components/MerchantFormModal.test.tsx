@@ -124,4 +124,69 @@ describe("MerchantFormModal", () => {
       cashoutAccountName: "Campus Cafe Ltd",
     });
   }, 10000);
+
+  it("shows an inline Korapay bank load error without triggering auth failure", async () => {
+    const onAuthFailure = vi.fn();
+    mockGetNgBanks.mockRejectedValue(new Error("korapay_bank_list_unavailable"));
+
+    render(
+      <MerchantFormModal
+        open
+        mode="create"
+        merchant={null}
+        error={null}
+        isBusy={false}
+        onAuthFailure={onAuthFailure}
+        onCancel={vi.fn()}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    expect(
+      await screen.findByText("Could not load Korapay banks. Check Korapay API configuration."),
+    ).toBeInTheDocument();
+    expect(onAuthFailure).not.toHaveBeenCalled();
+  }, 10000);
+
+  it("shows an inline error when Korapay bank resolution is unavailable", async () => {
+    mockResolveBankAccount.mockRejectedValue(
+      new Error("korapay_bank_resolution_unavailable"),
+    );
+
+    render(
+      <MerchantFormModal
+        open
+        mode="create"
+        merchant={null}
+        error={null}
+        isBusy={false}
+        onAuthFailure={vi.fn()}
+        onCancel={vi.fn()}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(mockGetNgBanks).toHaveBeenCalledTimes(1));
+
+    fireEvent.change(screen.getByLabelText("Email"), {
+      target: { value: "merchant@getoneto.com" },
+    });
+    fireEvent.change(screen.getByLabelText("Business name"), {
+      target: { value: "Campus Cafe" },
+    });
+    fireEvent.change(screen.getByLabelText("Cashout bank"), {
+      target: { value: "035" },
+    });
+    fireEvent.change(screen.getByLabelText("Cashout account number"), {
+      target: { value: "1234567890" },
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "Resolve account" }));
+
+    expect(
+      await screen.findByText(
+        "Could not resolve the bank account right now. Check Korapay API configuration.",
+      ),
+    ).toBeInTheDocument();
+  }, 10000);
 });

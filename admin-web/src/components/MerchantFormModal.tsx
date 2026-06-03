@@ -35,6 +35,29 @@ const EMPTY_VALUES: CreateAdminMerchantInput = {
   cashoutAccountName: "",
 };
 
+const BANK_LIST_LOAD_ERROR_MESSAGE =
+  "Could not load Korapay banks. Check Korapay API configuration.";
+const BANK_RESOLUTION_GATEWAY_ERROR_MESSAGE =
+  "Could not resolve the bank account right now. Check Korapay API configuration.";
+
+function toErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
+function mapBankListError(error: unknown): string {
+  return BANK_LIST_LOAD_ERROR_MESSAGE;
+}
+
+function mapResolveError(error: unknown): string {
+  const message = toErrorMessage(error, "Failed to resolve bank account.");
+
+  if (message === "korapay_bank_resolution_unavailable") {
+    return BANK_RESOLUTION_GATEWAY_ERROR_MESSAGE;
+  }
+
+  return message;
+}
+
 function buildInitialValues(merchant: AdminMerchant | null): CreateAdminMerchantInput {
   if (!merchant) {
     return EMPTY_VALUES;
@@ -170,9 +193,7 @@ export function MerchantFormModal({
         }
       } catch (loadError) {
         if (!cancelled) {
-          setBankLoadError(
-            loadError instanceof Error ? loadError.message : "Failed to load bank list.",
-          );
+          setBankLoadError(mapBankListError(loadError));
         }
       } finally {
         if (!cancelled) {
@@ -294,11 +315,7 @@ export function MerchantFormModal({
         ...current,
         cashoutAccountName: "",
       }));
-      setResolveError(
-        resolveAccountError instanceof Error
-          ? resolveAccountError.message
-          : "Failed to resolve bank account.",
-      );
+      setResolveError(mapResolveError(resolveAccountError));
     } finally {
       setIsResolving(false);
     }
