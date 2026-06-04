@@ -6,20 +6,24 @@ import { InternalServerErrorException } from '@nestjs/common';
 
 describe('KorapayService', () => {
   let service: KorapayService;
+  let configService: { get: jest.Mock };
 
   beforeEach(async () => {
+    configService = {
+      get: jest.fn((key: string) => {
+        if (key === 'KORAPAY_PUBLIC_KEY') return 'pk_test_123';
+        if (key === 'KORAPAY_SECRET_KEY') return 'sk_test_123';
+        if (key === 'KORAPAY_BASE_URL') return 'https://api.korapay.com/merchant/api/v1';
+        return null;
+      }),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         KorapayService,
         {
           provide: ConfigService,
-          useValue: {
-            get: jest.fn((key: string) => {
-              if (key === 'KORAPAY_SECRET_KEY') return 'sk_test_123';
-              if (key === 'KORAPAY_BASE_URL') return 'https://api.korapay.com/merchant/api/v1';
-              return null;
-            }),
-          },
+          useValue: configService,
         },
       ],
     }).compile();
@@ -287,6 +291,10 @@ describe('KorapayService', () => {
           }),
         }),
       );
+      expect(requestInit.headers).toEqual({
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer sk_test_123',
+      });
     });
 
     it('allows payout response without fee and records fee as unknown', async () => {
@@ -359,7 +367,7 @@ describe('KorapayService', () => {
   });
 
   describe('listBanks', () => {
-    it('calls Korapay bank list endpoint and returns only safe bank fields', async () => {
+    it('calls Korapay bank list endpoint with the public key and returns only safe bank fields', async () => {
       const fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue({
         ok: true,
         json: async () => ({
@@ -388,15 +396,42 @@ describe('KorapayService', () => {
         expect.objectContaining({
           method: 'GET',
           headers: {
-            Authorization: 'Bearer sk_test_123',
+            Authorization: 'Bearer pk_test_123',
           },
         }),
       );
     });
+
+    it('fails safely when the Korapay public key is missing', async () => {
+      configService.get.mockImplementation((key: string) => {
+        if (key === 'KORAPAY_PUBLIC_KEY') return '';
+        if (key === 'KORAPAY_SECRET_KEY') return 'sk_test_123';
+        if (key === 'KORAPAY_BASE_URL') return 'https://api.korapay.com/merchant/api/v1';
+        return null;
+      });
+
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          KorapayService,
+          {
+            provide: ConfigService,
+            useValue: configService,
+          },
+        ],
+      }).compile();
+
+      const serviceWithoutPublicKey = module.get<KorapayService>(KorapayService);
+
+      await expect(serviceWithoutPublicKey.listBanks()).rejects.toMatchObject({
+        name: 'KorapayGatewayError',
+        category: 'network_error',
+        responseBody: { code: 'missing_korapay_public_key' },
+      } satisfies Partial<KorapayGatewayError>);
+    });
   });
 
   describe('resolveBankAccount', () => {
-    it('sends bank, account and currency to Korapay and returns normalized account details', async () => {
+    it('sends bank, account and currency to Korapay with the public key and returns normalized account details', async () => {
       const fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue({
         ok: true,
         json: async () => ({
@@ -431,6 +466,10 @@ describe('KorapayService', () => {
         'https://api.korapay.com/merchant/api/v1/misc/banks/resolve',
         expect.objectContaining({
           method: 'POST',
+          headers: {
+            Authorization: 'Bearer pk_test_123',
+            'Content-Type': 'application/json',
+          },
         }),
       );
       expect(JSON.parse(requestInit.body)).toEqual({
@@ -438,6 +477,38 @@ describe('KorapayService', () => {
         account: '1234567890',
         currency: 'NG',
       });
+    });
+
+    it('fails safely when the Korapay public key is missing for account resolution', async () => {
+      configService.get.mockImplementation((key: string) => {
+        if (key === 'KORAPAY_PUBLIC_KEY') return '';
+        if (key === 'KORAPAY_SECRET_KEY') return 'sk_test_123';
+        if (key === 'KORAPAY_BASE_URL') return 'https://api.korapay.com/merchant/api/v1';
+        return null;
+      });
+
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          KorapayService,
+          {
+            provide: ConfigService,
+            useValue: configService,
+          },
+        ],
+      }).compile();
+
+      const serviceWithoutPublicKey = module.get<KorapayService>(KorapayService);
+
+      await expect(
+        serviceWithoutPublicKey.resolveBankAccount({
+          bankCode: '035',
+          accountNumber: '1234567890',
+        }),
+      ).rejects.toMatchObject({
+        name: 'KorapayGatewayError',
+        category: 'network_error',
+        responseBody: { code: 'missing_korapay_public_key' },
+      } satisfies Partial<KorapayGatewayError>);
     });
   });
 
