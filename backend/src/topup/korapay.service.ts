@@ -219,10 +219,12 @@ const KORAPAY_FETCH_TIMEOUT_MS = 10_000;
 @Injectable()
 export class KorapayService {
   private readonly logger = new Logger(KorapayService.name);
+  private readonly publicKey: string;
   private readonly secretKey: string;
   private readonly baseUrl: string;
 
   constructor(private readonly configService: ConfigService) {
+    this.publicKey = this.configService.get<string>('KORAPAY_PUBLIC_KEY') || '';
     this.secretKey = this.configService.get<string>('KORAPAY_SECRET_KEY') || '';
     this.baseUrl = this.configService.get<string>('KORAPAY_BASE_URL') || 'https://api.korapay.com/merchant/api/v1';
   }
@@ -280,8 +282,8 @@ export class KorapayService {
       const response = await this.fetchWithTimeout(`${this.baseUrl}/charges/initialize`, {
         method: 'POST',
         headers: {
+          ...this.buildSecretAuthHeaders(),
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.secretKey}`,
         },
         body: JSON.stringify(payload),
       });
@@ -338,8 +340,8 @@ export class KorapayService {
       const response = await this.fetchWithTimeout(`${this.baseUrl}/transactions/disburse`, {
         method: 'POST',
         headers: {
+          ...this.buildSecretAuthHeaders(),
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.secretKey}`,
         },
         body: JSON.stringify(payload),
       });
@@ -392,11 +394,13 @@ export class KorapayService {
     const normalizedCountryCode = countryCode.trim().toUpperCase();
 
     try {
+      this.assertPublicKeyConfigured('bank list');
+
       const response = await this.fetchWithTimeout(
         `${this.baseUrl}/misc/banks?countryCode=${encodeURIComponent(normalizedCountryCode)}`,
         {
           method: 'GET',
-          headers: this.buildAuthHeaders(),
+          headers: this.buildPublicAuthHeaders(),
         },
       );
 
@@ -446,10 +450,12 @@ export class KorapayService {
     };
 
     try {
+      this.assertPublicKeyConfigured('bank resolution');
+
       const response = await this.fetchWithTimeout(`${this.baseUrl}/misc/banks/resolve`, {
         method: 'POST',
         headers: {
-          ...this.buildAuthHeaders(),
+          ...this.buildPublicAuthHeaders(),
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(payload),
@@ -575,9 +581,7 @@ export class KorapayService {
     try {
       const response = await this.fetchWithTimeout(`${this.baseUrl}/charges/${encodeURIComponent(reference)}`, {
         method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${this.secretKey}`,
-        },
+        headers: this.buildSecretAuthHeaders(),
       });
 
       if (!response.ok) {
@@ -653,10 +657,28 @@ export class KorapayService {
     }
   }
 
-  private buildAuthHeaders(): Record<string, string> {
+  private buildPublicAuthHeaders(): Record<string, string> {
+    return {
+      'Authorization': `Bearer ${this.publicKey}`,
+    };
+  }
+
+  private buildSecretAuthHeaders(): Record<string, string> {
     return {
       'Authorization': `Bearer ${this.secretKey}`,
     };
+  }
+
+  private assertPublicKeyConfigured(operation: 'bank list' | 'bank resolution'): void {
+    if (this.publicKey.trim().length > 0) {
+      return;
+    }
+
+    throw new KorapayGatewayError({
+      message: `Korapay public key missing for ${operation}`,
+      category: 'network_error',
+      responseBody: { code: 'missing_korapay_public_key' },
+    });
   }
 
   private async readResponseBody(response: Response): Promise<unknown> {
