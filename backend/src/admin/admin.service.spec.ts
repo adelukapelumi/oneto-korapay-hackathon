@@ -257,7 +257,7 @@ describe("AdminService", () => {
     await expect(service.listBanks("NG")).rejects.toThrow(BadGatewayException);
   });
 
-  it("resolveBankAccount sends NG currency and returns normalized account details", async () => {
+  it("resolveBankAccount sends NGN currency and returns normalized account details", async () => {
     korapayService.resolveBankAccount.mockResolvedValue({
       accountName: "Campus Cafe Ltd",
       accountNumber: "1234567890",
@@ -279,7 +279,7 @@ describe("AdminService", () => {
     expect(korapayService.resolveBankAccount).toHaveBeenCalledWith({
       bankCode: "035",
       accountNumber: "1234567890",
-      currency: "NG",
+      currency: "NGN",
     });
   });
 
@@ -340,7 +340,7 @@ describe("AdminService", () => {
     expect(korapayService.resolveBankAccount).toHaveBeenCalledWith({
       bankCode: "999",
       accountNumber: "1234567890",
-      currency: "NG",
+      currency: "NGN",
     });
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     expect(prisma.user.create).toHaveBeenCalledWith({
@@ -506,7 +506,7 @@ describe("AdminService", () => {
     expect(korapayService.resolveBankAccount).toHaveBeenCalledWith({
       bankCode: "044",
       accountNumber: "1234567890",
-      currency: "NG",
+      currency: "NGN",
     });
     expect(prisma.merchantProfile.update).toHaveBeenCalledWith({
       where: { userId: "u_merchant" },
@@ -568,7 +568,7 @@ describe("AdminService", () => {
     expect(korapayService.resolveBankAccount).toHaveBeenCalledWith({
       bankCode: "058",
       accountNumber: "0987654321",
-      currency: "NG",
+      currency: "NGN",
     });
     expect(prisma.merchantProfile.update).toHaveBeenCalledWith({
       where: { userId: "u_merchant" },

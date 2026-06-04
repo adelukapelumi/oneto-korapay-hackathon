@@ -284,6 +284,7 @@ describe('KorapayService', () => {
           reference: 'cashout_ref',
           destination: expect.objectContaining({
             amount: 975,
+            currency: 'NGN',
             customer: {
               name: 'Campus Cafe',
               email: 'merchant@cu.edu.ng',
@@ -475,7 +476,7 @@ describe('KorapayService', () => {
       expect(JSON.parse(requestInit.body)).toEqual({
         bank: '035',
         account: '1234567890',
-        currency: 'NG',
+        currency: 'NGN',
       });
     });
 

@@ -442,7 +442,7 @@ export class KorapayService {
   async resolveBankAccount(
     params: ResolveBankAccountParams,
   ): Promise<KorapayResolvedBankAccount> {
-    const currency = (params.currency ?? 'NG').trim().toUpperCase();
+    const currency = (params.currency ?? 'NGN').trim().toUpperCase();
     const payload = {
       bank: params.bankCode,
       account: params.accountNumber,

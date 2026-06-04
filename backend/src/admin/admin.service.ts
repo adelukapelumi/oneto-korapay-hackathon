@@ -102,7 +102,7 @@ export class AdminService {
       const resolvedAccount = await this.korapayService.resolveBankAccount({
         bankCode: input.bankCode,
         accountNumber: input.accountNumber,
-        currency: "NG",
+        currency: "NGN",
       });
 
       return {
