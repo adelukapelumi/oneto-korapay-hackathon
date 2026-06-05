@@ -1,0 +1,111 @@
+diff --git a/lib/index.js b/lib/index.js
+index 2b96a69df8f469b613eaac3a5bfe8a5db21f2571..a4999123832b355230f9303e2ec30a852f30021d 100644
+--- a/lib/index.js
++++ b/lib/index.js
+@@ -263,8 +263,38 @@ exports.ByteString = (value, options = {}) => {
+   return x;
+ };
+ 
++function toWellFormedFallback(value) {
++  const codePoints = [];
++  for (let i = 0; i < value.length; ++i) {
++    const codeUnit = value.charCodeAt(i);
++    if (codeUnit < 0xD800 || codeUnit > 0xDFFF) {
++      codePoints.push(String.fromCodePoint(codeUnit));
++    } else if (codeUnit >= 0xDC00) {
++      codePoints.push(String.fromCodePoint(0xFFFD));
++    } else if (i === value.length - 1) {
++      codePoints.push(String.fromCodePoint(0xFFFD));
++    } else {
++      const nextCodeUnit = value.charCodeAt(i + 1);
++      if (nextCodeUnit >= 0xDC00 && nextCodeUnit <= 0xDFFF) {
++        const high = codeUnit & 0x3FF;
++        const low = nextCodeUnit & 0x3FF;
++        codePoints.push(String.fromCodePoint((2 ** 16) + (high << 10) + low));
++        ++i;
++      } else {
++        codePoints.push(String.fromCodePoint(0xFFFD));
++      }
++    }
++  }
++
++  return codePoints.join("");
++}
++
+ exports.USVString = (value, options = {}) => {
+-  return exports.DOMString(value, options).toWellFormed();
++  const string = exports.DOMString(value, options);
++  if (typeof string.toWellFormed === "function") {
++    return string.toWellFormed();
++  }
++  return toWellFormedFallback(string);
+ };
+ 
+ exports.object = (value, options = {}) => {
+@@ -275,10 +305,25 @@ exports.object = (value, options = {}) => {
+   return value;
+ };
+ 
+-const abByteLengthGetter = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "byteLength").get;
+-const sabByteLengthGetter = Object.getOwnPropertyDescriptor(SharedArrayBuffer.prototype, "byteLength").get;
++function getGetter(target, property) {
++  if (target === undefined || target === null) {
++    return undefined;
++  }
++
++  const descriptor = Object.getOwnPropertyDescriptor(target, property);
++  return descriptor && descriptor.get;
++}
++
++const sharedArrayBufferPrototype =
++  typeof SharedArrayBuffer === "undefined" ? undefined : SharedArrayBuffer.prototype;
++const abByteLengthGetter = getGetter(ArrayBuffer.prototype, "byteLength");
++const sabByteLengthGetter = getGetter(sharedArrayBufferPrototype, "byteLength");
+ 
+ function isNonSharedArrayBuffer(value) {
++  if (abByteLengthGetter === undefined) {
++    return false;
++  }
++
+   try {
+     abByteLengthGetter.call(value);
+     return true;
+@@ -288,6 +333,10 @@ function isNonSharedArrayBuffer(value) {
+ }
+ 
+ function isSharedArrayBuffer(value) {
++  if (sabByteLengthGetter === undefined) {
++    return false;
++  }
++
+   try {
+     sabByteLengthGetter.call(value);
+     return true;
+@@ -296,10 +345,14 @@ function isSharedArrayBuffer(value) {
+   }
+ }
+ 
+-const abResizableGetter = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "resizable").get;
+-const sabGrowableGetter = Object.getOwnPropertyDescriptor(SharedArrayBuffer.prototype, "growable").get;
++const abResizableGetter = getGetter(ArrayBuffer.prototype, "resizable");
++const sabGrowableGetter = getGetter(sharedArrayBufferPrototype, "growable");
+ 
+ function isNonSharedArrayBufferResizable(value) {
++  if (abResizableGetter === undefined) {
++    return false;
++  }
++
+   try {
+     return abResizableGetter.call(value);
+   } catch {
+@@ -308,6 +361,10 @@ function isNonSharedArrayBufferResizable(value) {
+ }
+ 
+ function isSharedArrayBufferGrowable(value) {
++  if (sabGrowableGetter === undefined) {
++    return false;
++  }
++
+   try {
+     return sabGrowableGetter.call(value);
+   } catch {
