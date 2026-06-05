@@ -10,7 +10,10 @@
       "prisma",
       "argon2",
       "esbuild"
-    ]
+    ],
+    "patchedDependencies": {
+      "webidl-conversions@8.0.1": "patches/webidl-conversions@8.0.1.patch"
+    }
   },
   "scripts": {
     "test": "pnpm -r test",
@@ -24,7 +27,7 @@
   },
   "packageManager": "pnpm@10.33.0",
   "devDependencies": {
-    "typescript": "^5.5.4",
-    "@types/node": "^20.14.0"
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.4"
   }
 }

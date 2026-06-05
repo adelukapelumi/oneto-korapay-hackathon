@@ -4,6 +4,11 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  webidl-conversions@8.0.1:
+    hash: dd59072c529fe842bde763f083ff273b84bf9d3ae63dde76136af59b21724501
+    path: patches/webidl-conversions@8.0.1.patch
+
 importers:
 
   .:
@@ -11272,7 +11277,7 @@ snapshots:
       tough-cookie: 6.0.1
       undici: 7.27.0
       w3c-xmlserializer: 5.0.0
-      webidl-conversions: 8.0.1
+      webidl-conversions: 8.0.1(patch_hash=dd59072c529fe842bde763f083ff273b84bf9d3ae63dde76136af59b21724501)
       whatwg-mimetype: 5.0.0
       whatwg-url: 16.0.1(@noble/hashes@1.8.0)
       xml-name-validator: 5.0.0
@@ -13143,7 +13148,7 @@ snapshots:
 
   webidl-conversions@5.0.0: {}
 
-  webidl-conversions@8.0.1: {}
+  webidl-conversions@8.0.1(patch_hash=dd59072c529fe842bde763f083ff273b84bf9d3ae63dde76136af59b21724501): {}
 
   webpack-node-externals@3.0.0: {}
 
@@ -13193,7 +13198,7 @@ snapshots:
     dependencies:
       '@exodus/bytes': 1.15.1(@noble/hashes@1.8.0)
       tr46: 6.0.0
-      webidl-conversions: 8.0.1
+      webidl-conversions: 8.0.1(patch_hash=dd59072c529fe842bde763f083ff273b84bf9d3ae63dde76136af59b21724501)
     transitivePeerDependencies:
       - '@noble/hashes'
 

@@ -1,13 +1,23 @@
 import "fast-text-encoding";
 import * as Crypto from "expo-crypto";
 
-// Manually polyfill the standard Web Crypto API for @noble/ed25519
-if (typeof global.crypto !== "object") {
-  (global as any).crypto = {};
+interface MutableCrypto {
+  getRandomValues?: <T extends ArrayBufferView>(array: T) => T;
 }
-if (typeof (global as any).crypto.getRandomValues !== "function") {
-  (global as any).crypto.getRandomValues = function getRandomValues(array: any) {
-    if (!array || !array.byteLength) {
+
+type PolyfillGlobal = {
+  crypto?: MutableCrypto;
+};
+
+const globalScope = globalThis as unknown as PolyfillGlobal;
+
+// Manually polyfill the standard Web Crypto API for @noble/ed25519
+if (typeof globalScope.crypto !== "object") {
+  globalScope.crypto = {} as MutableCrypto;
+}
+if (typeof globalScope.crypto.getRandomValues !== "function") {
+  globalScope.crypto.getRandomValues = function getRandomValues<T extends ArrayBufferView>(array: T): T {
+    if (typeof array !== "object" || array === null || array.byteLength === undefined) {
       throw new Error("crypto.getRandomValues() requires a typed array");
     }
     // Generate secure random bytes synchronously via Expo's native module
