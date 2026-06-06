@@ -26,32 +26,51 @@ pnpm install
 ```
 
 3. Decide build path:
-- Preferred: GitHub Actions release APK build
+- Preferred: GitHub Actions debug APK build for fast submission
+- Backup: GitHub Actions release APK build
 - Backup: EAS build
 - Fallback: local Android release APK from the checked-in `mobile/android` project
 
 ## Option A: Build with GitHub Actions
 
-This repo now includes a manual workflow:
+This repo now includes two manual workflows:
 
-- Workflow name: `Build Android Release APK`
-- Artifact name: `oneto-android-release-apk`
+- Fastest fallback workflow:
+  - Workflow name: `Build Android Development APK`
+  - Artifact name: `oneto-android-debug-apk`
+- Release-style workflow:
+  - Workflow name: `Build Android Release APK`
+  - Artifact name: `oneto-android-release-apk`
+
+Production requirements for the release workflow:
+
+- GitHub secret `ONETO_UPLOAD_KEYSTORE_BASE64`
+- GitHub secret `ONETO_UPLOAD_STORE_PASSWORD`
+- GitHub secret `ONETO_UPLOAD_KEY_ALIAS`
+- GitHub secret `ONETO_UPLOAD_KEY_PASSWORD`
+- GitHub secret `API_SSL_PIN_PRIMARY`
+- GitHub secret `API_SSL_PIN_BACKUP`
+- Optional GitHub secret `API_SSL_PIN_EXTRA`
+
+See `docs/production-release-secrets.md` for the keystore and GitHub secrets setup.
 
 How to use it:
 
 1. Push your current branch to GitHub.
 2. Open the repository on GitHub.
 3. Go to `Actions`.
-4. Open `Build Android Release APK`.
+4. Start with `Build Android Development APK`.
 5. Click `Run workflow`.
 6. Wait for the workflow to finish.
-7. Download the `oneto-android-release-apk` artifact from the run summary.
+7. Download the APK artifact from the run summary.
+8. If the debug workflow fails or you specifically want a release artifact, run `Build Android Release APK` next.
 
 Why this is the best path:
 
 - It avoids local Gradle and Android SDK instability
 - It uses the repo's checked-in Android project
 - It already targets `https://api.getoneto.com`
+- The release workflow enforces production signing and production SSL pinning instead of silently using debug defaults
 
 ## Option B: Build with EAS
 
