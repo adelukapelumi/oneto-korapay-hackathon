@@ -1,5 +1,5 @@
 // Default env for tests. Individual specs override per-case.
-process.env.EXPO_PUBLIC_API_URL = "https://oneto-production.up.railway.app";
+process.env.EXPO_PUBLIC_API_URL = "https://api.getoneto.com";
 
 // expo-secure-store ships a JS-only mock when not running on a device, but
 // some Jest setups still hit the native bridge. Replace with an in-memory

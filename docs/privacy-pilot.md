@@ -1,56 +1,51 @@
-# oneto Privacy Notice and Terms (Pilot Placeholder)
+# Oneto Privacy Notice for Demo and Pilot Use
 
-Last updated: [today's date]
+Last updated: June 6, 2026
 
 ## About this document
 
-This is a placeholder privacy notice for the oneto pilot. A full privacy
-notice and terms of service, reviewed by qualified legal counsel, will be
-published before oneto is made available to real users.
+This is a lightweight privacy notice for the current demo and pilot stage of Oneto, including public-facing hackathon review and limited product testing. It is not a substitute for a full legal privacy policy, which should be published before wider public rollout.
 
 ## Who we are
 
-oneto is a closed-loop campus payment pilot being developed by
-ONETO INFRASTRUCTURE LIMITED (Nigerian company registration in progress).
+Oneto is an offline-capable payment product being developed for campus and merchant payment use cases in Nigeria.
 
 ## What data we collect
 
-- Email address (required for signup)
-- Phone number (optional for students, recommended for merchants)
-- Transaction history (amounts, timestamps, counterparties)
-- Device identifiers and public keys for cryptographic verification
+- Email address
+- Phone number when provided
+- Transaction records such as amount, time, and counterparties
+- Device-linked public-key material used for payment verification and account protection
+- Support and recovery information submitted by users
 
 ## Why we collect it
 
-- To authenticate users and prevent fraud
-- To operate the payment system (record transactions, reconcile balances)
-- To support users when issues arise
+- To authenticate users
+- To verify and reconcile transactions
+- To operate top-up and merchant cashout flows
+- To support recovery and customer support requests
+- To improve the product during demo and pilot testing
 
 ## Who we share it with
 
-- Korapay (for processing naira top-ups and merchant cashouts)
-- Resend (for delivering email one-time codes)
-- Covenant University administration (if required for operational reasons)
-- Regulators, if legally compelled
+- Korapay, for payment collection and payout processing
+- Email delivery providers used for one-time passcodes and support communication
+- Service providers involved in hosting, monitoring, and operating the application
+- Regulators or lawful authorities when legally required
 
-We do not sell your data.
+We do not sell personal data.
 
-## How long we keep it
+## Retention
 
-- Active account data: for the duration of the pilot
-- Transaction records: six months after the pilot ends
-- Then: deleted or anonymized
+- Account and transaction records may be retained for operational, security, and reconciliation purposes during the demo and pilot lifecycle
+- Support and recovery records may be retained for fraud prevention, user protection, and operational review
 
-## Your rights under the Nigeria Data Protection Act 2023
+## User rights
 
-You can ask us to:
-- Show you the data we hold about you
-- Correct inaccurate data
-- Delete your data (subject to regulatory record-keeping requirements)
+Where applicable, users may request access, correction, or deletion of their personal data, subject to legal and operational retention requirements.
 
-Contact: privacy@getoneto.com
+Contact: `privacy@getoneto.com`
 
-## Changes to this document
+## Status
 
-This is a placeholder. A full version will be published before public launch
-and users will be notified by email.
+This notice is intended to explain the current demo and pilot handling of user data at a high level. A fuller production privacy policy should be published before broader public release.

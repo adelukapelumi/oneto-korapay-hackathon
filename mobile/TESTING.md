@@ -4,10 +4,10 @@ This file is the manual smoke-test for the email-OTP sign-in flow. Run it on a r
 
 ## Prerequisites
 
-1. Backend reachable at `https://oneto-production.up.railway.app/health` (returns `{"status":"ok"}`).
+1. Backend reachable at `https://api.getoneto.com/health` (returns `{"status":"ok"}`).
 2. `mobile/.env` contains:
    ```
-   EXPO_PUBLIC_API_URL=https://oneto-production.up.railway.app
+   EXPO_PUBLIC_API_URL=https://api.getoneto.com
    ```
 3. Dependencies installed at the repo root: `pnpm install`.
 4. `expo-cli` is **not** required — use `npx expo start` from `/mobile`.
@@ -45,7 +45,7 @@ Run each on iOS simulator AND Android emulator AND at least one physical device.
 
 - **Changing `.env` requires `npx expo start --clear`.** EXPO_PUBLIC_* values are inlined into the bundle at build time. A warm Metro will keep serving the old values.
 - **iOS simulator + expo-secure-store:** works on SDK 52+, but you may see a warning about Keychain access groups in the dev console. Safe to ignore for the pilot; on real devices it has no warning.
-- **Android emulator + localhost:** if you ever point `EXPO_PUBLIC_API_URL` at a local backend, use `10.0.2.2` (Android's alias for the host loopback), not `localhost`. The pilot URL is the deployed Railway one, so this only matters for offline backend dev.
+- **Android emulator + localhost:** if you ever point `EXPO_PUBLIC_API_URL` at a local backend, use `10.0.2.2` (Android's alias for the host loopback), not `localhost`. The current default points at the deployed backend, so this only matters for offline backend dev.
 - **expo-router redirect loops:** if you see the screen flash between `/sign-in` and `/home`, the auth gate logic in `app/(auth)/_layout.tsx` and `app/(app)/_layout.tsx` got desynced from `auth-state.ts`. The fix is always: render `null` or a spinner during `status === "loading"` instead of redirecting.
 
 ## What's intentionally not covered here
