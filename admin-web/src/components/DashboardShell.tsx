@@ -14,6 +14,7 @@ const navItems = [
   { to: "/overview", label: "Overview" },
   { to: "/merchants", label: "Merchants" },
   { to: "/cashouts/pending", label: "Pending Cashouts" },
+  { to: "/recovery/pending", label: "Recovery Requests" },
 ];
 
 export function DashboardShell({

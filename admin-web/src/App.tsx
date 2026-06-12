@@ -8,6 +8,7 @@ import { LoginPage } from "./pages/LoginPage";
 import { MerchantsPage } from "./pages/MerchantsPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { PendingCashoutsPage } from "./pages/PendingCashoutsPage";
+import { RecoveryRequestsPage } from "./pages/RecoveryRequestsPage";
 
 const THEME_STORAGE_KEY = "oneto-admin-theme";
 
@@ -37,6 +38,7 @@ function AdminLayout({
           <Route path="/merchants" element={<MerchantsPage />} />
           <Route path="/merchants/pending" element={<Navigate to="/merchants" replace />} />
           <Route path="/cashouts/pending" element={<PendingCashoutsPage />} />
+          <Route path="/recovery/pending" element={<RecoveryRequestsPage />} />
           <Route path="*" element={<Navigate to="/overview" replace />} />
         </Routes>
       </div>
