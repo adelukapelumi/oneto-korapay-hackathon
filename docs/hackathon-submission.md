@@ -1,6 +1,6 @@
 # Kora 2.0 Hackathon Submission
 
-This document records the current public submission details for the Oneto hackathon entry so the repository matches the form submission.
+This document records the final public submission details for the Oneto Korapay hackathon entry.
 
 ## Submission Identity
 
@@ -26,10 +26,12 @@ Oneto solves the need for payments to have immediate internet access at the poin
 
 ## Demo and Delivery
 
-- Optional live demo link currently intended for the form: `admin.getoneto.com`
-- Primary mobile submission artifact: `Android APK`
-- Prototype video link: `Pending`
-- SDK/supporting asset upload: `Pending`
+- Primary mobile submission artifact: `Production Android APK`
+- Backend API used by the application: `https://api.getoneto.com`
+- Demo format:
+  `Student onboarding and payment flow on a physical Android device using the production APK`
+  `Merchant onboarding and merchant-side flow on an iOS device using Expo Go`
+  `QR generation and payment walkthrough included in the demo video`
 
 ## Transparency Disclosures
 
@@ -47,10 +49,3 @@ AI assistance was used only for the public `README.md` to improve the clarity of
   `It solves need for payments to have immediate internet at the point of transaction. Basically Offline Payments`
 - Kora API category selection:
   `Payment APIs`
-
-## Remaining Submission Assets
-
-- Build and upload the Android APK file
-- Upload a prototype video link
-- Upload any SDK or supporting project asset required by the form
-- Decide whether to keep `admin.getoneto.com` as the optional live demo link

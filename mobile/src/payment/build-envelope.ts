@@ -36,7 +36,7 @@ import {
 /**
  * Thrown when the student's spendable balance is less than the requested amount.
  *
- * spendableBalance = verifiedBalanceKobo (from server) - sumPendingOutgoingKobo (local)
+ * spendableBalance = availableBalanceKobo (from server) - sumPendingOutgoingKobo (local)
  */
 export class InsufficientBalanceError extends Error {
   public readonly available: number;
@@ -85,27 +85,29 @@ export function buildAndSignEnvelope(
 ): TransactionEnvelope {
   const { paymentRequest, senderUserId, senderPublicKey, privateKey } = input;
 
-  // 1. Read server-verified balance from local state.
+  // 1. Read the server-confirmed spendable balance from local state.
   //    If null, the app hasn't completed a successful GET /me call yet.
   //    The student must be online at least once before making payments.
-  const verifiedBalanceRaw = getLocalState("verified_balance_kobo");
+  const verifiedBalanceRaw =
+    getLocalState("available_balance_kobo") ??
+    getLocalState("verified_balance_kobo");
   if (verifiedBalanceRaw === null) {
     throw new Error(
       "No verified balance stored locally. Open the app while online to sync your balance before making payments.",
     );
   }
 
-  // parseInt with base 10. The stored value was originally user.verifiedBalanceKobo
-  // (a string-encoded integer from the server). Safe to parse as Number for pilot
-  // balances — MAX_USER_BALANCE_KOBO (5_000_000) is far below MAX_SAFE_INTEGER.
+  // parseInt with base 10. The stored value was originally a string-encoded
+  // integer from GET /me. Safe to parse as Number for pilot balances because
+  // MAX_USER_BALANCE_KOBO (5_000_000) is far below MAX_SAFE_INTEGER.
   const verifiedBalance = parseInt(verifiedBalanceRaw, 10);
   if (Number.isNaN(verifiedBalance) || !Number.isInteger(verifiedBalance)) {
     throw new Error(
-      `Stored verified_balance_kobo is not a valid integer: "${verifiedBalanceRaw}"`,
+      `Stored available balance is not a valid integer: "${verifiedBalanceRaw}"`,
     );
   }
 
-  // 2. Compute spendable balance: server balance minus locally-tracked pending debits.
+  // 2. Compute spendable balance: server-available balance minus locally-tracked pending debits.
   //    This is the student's best estimate of what they can spend offline.
   //    The server will re-verify at reconciliation time (CLAUDE.md §7.3 step 9).
   const pendingOutgoing = sumPendingOutgoingKobo();

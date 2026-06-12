@@ -95,6 +95,9 @@ describe("fetchMe", () => {
     role: "STUDENT",
     status: "ACTIVE",
     verifiedBalanceKobo: "0",
+    availableBalanceKobo: "0",
+    recoveryHeldBalanceKobo: "0",
+    recoveryHoldUntil: null,
     createdAt: "2026-05-01T00:00:00.000Z",
   };
 

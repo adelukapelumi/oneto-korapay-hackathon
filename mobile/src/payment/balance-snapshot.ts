@@ -11,6 +11,9 @@ import { persistMeProfile } from "../auth/profile-cache";
 import { syncOutgoingPendingFromServerLedger } from "./sync-outgoing";
 
 export interface StudentBalanceProjection {
+  readonly verifiedBalanceKobo: number;
+  readonly recoveryHeldBalanceKobo: number;
+  readonly recoveryHoldUntil: string | null;
   readonly serverConfirmedBalanceKobo: number;
   readonly pendingOutgoingKobo: number;
   readonly availableBalanceKobo: number;
@@ -45,11 +48,18 @@ function assertValidKobo(value: number, label: string): void {
 }
 
 function buildProjection(
-  serverConfirmedBalanceKobo: number,
+  input: {
+    readonly verifiedBalanceKobo: number;
+    readonly serverConfirmedBalanceKobo: number;
+    readonly recoveryHeldBalanceKobo: number;
+    readonly recoveryHoldUntil: string | null;
+  },
   source: "server" | "local",
   lastSyncedAt: string | null,
 ): StudentBalanceProjection {
-  assertValidKobo(serverConfirmedBalanceKobo, "server-confirmed balance");
+  assertValidKobo(input.verifiedBalanceKobo, "verified balance");
+  assertValidKobo(input.serverConfirmedBalanceKobo, "server-confirmed balance");
+  assertValidKobo(input.recoveryHeldBalanceKobo, "recovery held balance");
 
   const pendingOutgoingKobo = sumPendingOutgoingKobo();
   assertValidKobo(pendingOutgoingKobo, "pending outgoing balance");
@@ -59,10 +69,12 @@ function buildProjection(
     "outgoing",
   ).length;
   const availableBalanceKobo =
-    serverConfirmedBalanceKobo - pendingOutgoingKobo;
+    input.serverConfirmedBalanceKobo - pendingOutgoingKobo;
 
   logger.debug("balance_projection_computed", {
-    serverConfirmedBalanceKobo,
+    verifiedBalanceKobo: input.verifiedBalanceKobo,
+    serverConfirmedBalanceKobo: input.serverConfirmedBalanceKobo,
+    recoveryHeldBalanceKobo: input.recoveryHeldBalanceKobo,
     pendingOutgoingKobo,
     availableBalanceKobo,
     pendingOutgoingCount,
@@ -71,7 +83,10 @@ function buildProjection(
   });
 
   return {
-    serverConfirmedBalanceKobo,
+    verifiedBalanceKobo: input.verifiedBalanceKobo,
+    recoveryHeldBalanceKobo: input.recoveryHeldBalanceKobo,
+    recoveryHoldUntil: input.recoveryHoldUntil,
+    serverConfirmedBalanceKobo: input.serverConfirmedBalanceKobo,
     pendingOutgoingKobo,
     availableBalanceKobo,
     pendingOutgoingCount,
@@ -81,13 +96,28 @@ function buildProjection(
 }
 
 export function getStoredStudentBalanceProjection(): StudentBalanceProjection | null {
-  const storedBalanceKobo = parseStoredKobo(getLocalState("verified_balance_kobo"));
-  if (storedBalanceKobo === null) {
+  const storedVerifiedBalanceKobo = parseStoredKobo(
+    getLocalState("verified_balance_kobo"),
+  );
+  const storedAvailableBalanceKobo = parseStoredKobo(
+    getLocalState("available_balance_kobo"),
+  );
+  if (storedVerifiedBalanceKobo === null) {
     return null;
   }
 
   return buildProjection(
-    storedBalanceKobo,
+    {
+      verifiedBalanceKobo: storedVerifiedBalanceKobo,
+      serverConfirmedBalanceKobo:
+        storedAvailableBalanceKobo ?? storedVerifiedBalanceKobo,
+      recoveryHeldBalanceKobo: Math.max(
+        0,
+        storedVerifiedBalanceKobo -
+          (storedAvailableBalanceKobo ?? storedVerifiedBalanceKobo),
+      ),
+      recoveryHoldUntil: null,
+    },
     "local",
     getLocalState("last_sync_at"),
   );
@@ -97,7 +127,14 @@ export async function getStudentBalanceProjection(
   onFreshProfile?: (me: Me) => void,
   options: StudentBalanceProjectionOptions = {},
 ): Promise<StudentBalanceProjection> {
-  let serverConfirmedBalanceKobo: number | null = null;
+  let projectionBase:
+    | {
+        verifiedBalanceKobo: number;
+        serverConfirmedBalanceKobo: number;
+        recoveryHeldBalanceKobo: number;
+        recoveryHoldUntil: string | null;
+      }
+    | null = null;
   let source: "server" | "local" = "local";
   let lastSyncedAt = getLocalState("last_sync_at");
 
@@ -109,26 +146,51 @@ export async function getStudentBalanceProjection(
     const fresh = await fetchMe();
     persistMeProfile(fresh);
     onFreshProfile?.(fresh);
-    serverConfirmedBalanceKobo = Number(fresh.verifiedBalanceKobo);
-    assertValidKobo(serverConfirmedBalanceKobo, "server balance");
+    projectionBase = {
+      verifiedBalanceKobo: Number(fresh.verifiedBalanceKobo),
+      serverConfirmedBalanceKobo: Number(fresh.availableBalanceKobo),
+      recoveryHeldBalanceKobo: Number(fresh.recoveryHeldBalanceKobo),
+      recoveryHoldUntil: fresh.recoveryHoldUntil,
+    };
+    assertValidKobo(projectionBase.verifiedBalanceKobo, "verified balance");
+    assertValidKobo(projectionBase.serverConfirmedBalanceKobo, "available balance");
+    assertValidKobo(
+      projectionBase.recoveryHeldBalanceKobo,
+      "recovery held balance",
+    );
 
     setLocalState("verified_balance_kobo", fresh.verifiedBalanceKobo);
+    setLocalState("available_balance_kobo", fresh.availableBalanceKobo);
     lastSyncedAt = new Date().toISOString();
     setLocalState("last_sync_at", lastSyncedAt);
     source = "server";
   } catch {
-    serverConfirmedBalanceKobo = parseStoredKobo(
+    const storedVerifiedBalanceKobo = parseStoredKobo(
       getLocalState("verified_balance_kobo"),
     );
+    if (storedVerifiedBalanceKobo !== null) {
+      const storedAvailableBalanceKobo =
+        parseStoredKobo(getLocalState("available_balance_kobo")) ??
+        storedVerifiedBalanceKobo;
+      projectionBase = {
+        verifiedBalanceKobo: storedVerifiedBalanceKobo,
+        serverConfirmedBalanceKobo: storedAvailableBalanceKobo,
+        recoveryHeldBalanceKobo: Math.max(
+          0,
+          storedVerifiedBalanceKobo - storedAvailableBalanceKobo,
+        ),
+        recoveryHoldUntil: null,
+      };
+    }
   }
 
-  if (serverConfirmedBalanceKobo === null) {
+  if (projectionBase === null) {
     throw new Error(
       "No verified balance available. Open the app online to sync your balance.",
     );
   }
 
-  return buildProjection(serverConfirmedBalanceKobo, source, lastSyncedAt);
+  return buildProjection(projectionBase, source, lastSyncedAt);
 }
 
 export async function getSpendableBalanceSnapshot(): Promise<SpendableBalanceSnapshot> {

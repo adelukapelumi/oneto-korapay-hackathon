@@ -22,6 +22,7 @@ import { RedisModule } from "./redis/redis.module";
 import { REDIS_CLIENT } from "./redis/redis.tokens";
 import { RecoveryModule } from "./recovery/recovery.module";
 import { SupportModule } from "./support/support.module";
+import { BalanceModule } from "./balance/balance.module";
 
 @Module({
   imports: [
@@ -60,6 +61,7 @@ import { SupportModule } from "./support/support.module";
     }),
     LoggerModule,
     PrismaModule,
+    BalanceModule,
     AuthModule,
     ReconcileModule,
     TopupModule,

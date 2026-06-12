@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Animated,
   Pressable,
   StyleSheet,
@@ -42,12 +43,13 @@ const NUM_ROWS: (number | "del" | "")[][] = [
 ];
 
 export default function PinEntryScreen(): React.ReactElement {
-  const { unlock, signOut } = useAuth();
+  const { unlock, signOut, resetLocalAppForTesting } = useAuth();
   const { mode } = useThemeMode();
   const t = getTheme(mode); // reactive theme object — updates when user toggles
 
   const [pin, setPin] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [isResettingLocalApp, setIsResettingLocalApp] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [lockSecondsRemaining, setLockSecondsRemaining] = useState(0);
   const inputRef = useRef<TextInput>(null);
@@ -91,18 +93,18 @@ export default function PinEntryScreen(): React.ReactElement {
   };
 
   function onDigit(d: number): void {
-    if (pin.length >= PIN_LENGTH || submitting || lockSecondsRemaining > 0) return;
+    if (pin.length >= PIN_LENGTH || submitting || isResettingLocalApp || lockSecondsRemaining > 0) return;
     onChange(pin + String(d));
   }
 
   function onDelete(): void {
-    if (submitting || lockSecondsRemaining > 0) return;
+    if (submitting || isResettingLocalApp || lockSecondsRemaining > 0) return;
     setPin((p) => p.slice(0, -1));
     setMessage(null);
   }
 
   async function submit(value: string): Promise<void> {
-    if (submitting || lockSecondsRemaining > 0) return;
+    if (submitting || isResettingLocalApp || lockSecondsRemaining > 0) return;
     setSubmitting(true);
     try {
       await unlock(value);
@@ -143,7 +145,51 @@ export default function PinEntryScreen(): React.ReactElement {
     }
   }
 
+  async function performFullLocalReset(): Promise<void> {
+    if (submitting || isResettingLocalApp) {
+      return;
+    }
+
+    setIsResettingLocalApp(true);
+    try {
+      await resetLocalAppForTesting();
+      Alert.alert(
+        "Local app reset",
+        "This device's local keypair and local app state were wiped for testing.",
+      );
+    } catch {
+      Alert.alert(
+        "Reset failed",
+        "Couldn't wipe this device's local state. Close and reopen the app, then try again.",
+      );
+    } finally {
+      setIsResettingLocalApp(false);
+    }
+  }
+
+  function confirmFullLocalReset(): void {
+    if (submitting || isResettingLocalApp) {
+      return;
+    }
+
+    Alert.alert(
+      "TESTING ONLY",
+      "This wipes the local keypair and local app data on this device only. It does not change the backend account.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Wipe this device",
+          style: "destructive",
+          onPress: () => {
+            void performFullLocalReset();
+          },
+        },
+      ],
+    );
+  }
+
   const isLocked = lockSecondsRemaining > 0;
+  const controlsDisabled = submitting || isResettingLocalApp;
 
   return (
     <Screen scroll contentContainerStyle={{ paddingBottom: spacing["2xl"] }}>
@@ -237,17 +283,17 @@ export default function PinEntryScreen(): React.ReactElement {
         )}
 
         {/* Submitting */}
-        {submitting && (
+        {(submitting || isResettingLocalApp) && (
           <View style={styles.loadingOverlay}>
             <ActivityIndicator size="large" color={colors.primary} />
             <Text style={[styles.loadingText, { color: t.textSec }]}>
-              Unlocking...
+              {isResettingLocalApp ? "Resetting this app..." : "Unlocking..."}
             </Text>
           </View>
         )}
 
         {/* Numpad */}
-        {!submitting && (
+        {!controlsDisabled && (
           <View style={[styles.numPad, { gap: compact.numPadRowGap }]}>
             {NUM_ROWS.map((row, ri) => (
               <View key={ri} style={[styles.numRow, { gap: compact.numPadColGap }]}>
@@ -266,7 +312,7 @@ export default function PinEntryScreen(): React.ReactElement {
                       />
                     );
                   }
-                  const disabled = isLocked;
+                  const disabled = isLocked || controlsDisabled;
                   return (
                     <Pressable
                       key={ki}
@@ -306,6 +352,28 @@ export default function PinEntryScreen(): React.ReactElement {
             ))}
           </View>
         )}
+
+        <Pressable
+          style={({ pressed }) => [
+            styles.testingResetButton,
+            { borderColor: colors.error, backgroundColor: colors.error + "14" },
+            pressed && !controlsDisabled && styles.testingResetButtonPressed,
+            controlsDisabled && styles.testingResetButtonDisabled,
+          ]}
+          onPress={confirmFullLocalReset}
+          disabled={controlsDisabled}
+          accessibilityRole="button"
+        >
+          <Text style={styles.testingResetEyebrow}>TESTING ONLY</Text>
+          <Text style={styles.testingResetTitle}>Wipe keypair and local app state</Text>
+          <Text style={styles.testingResetBody}>
+            Clears this device&apos;s local keypair, PIN attempt state, cached profile, token, and local
+            storage for testing.
+          </Text>
+          <Text style={styles.testingResetAction}>
+            {isResettingLocalApp ? "Resetting this app..." : "Tap to wipe this device"}
+          </Text>
+        </Pressable>
 
         {/* Footer */}
         {/* <View style={styles.footer}>
@@ -420,6 +488,47 @@ const styles = StyleSheet.create({
   numKeyDisabled: { opacity: 0.4 },
   numKeyEmpty: {},
   numKeyText: { fontFamily: fonts.semibold, fontSize: fontSizes.numPad },
+
+  testingResetButton: {
+    marginTop: spacing["2xl"],
+    borderRadius: radii.xl,
+    borderWidth: borders.standard,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.lg,
+    gap: spacing.sm,
+    width: "100%",
+  },
+  testingResetButtonPressed: {
+    transform: [{ translateX: 3 }, { translateY: 3 }],
+  },
+  testingResetButtonDisabled: {
+    opacity: 0.7,
+  },
+  testingResetEyebrow: {
+    fontFamily: fonts.pixel,
+    fontSize: fontSizes.caption,
+    color: colors.error,
+    textAlign: "center",
+  },
+  testingResetTitle: {
+    fontFamily: fonts.bold,
+    fontSize: fontSizes.bodyLg,
+    color: colors.error,
+    textAlign: "center",
+  },
+  testingResetBody: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.body,
+    color: colors.error,
+    textAlign: "center",
+    lineHeight: 22,
+  },
+  testingResetAction: {
+    fontFamily: fonts.medium,
+    fontSize: fontSizes.caption,
+    color: colors.error,
+    textAlign: "center",
+  },
 
   footer: { marginTop: "auto", paddingBottom: spacing["2xl"] },
   signOutButton: {

@@ -153,7 +153,7 @@ export default function ConfirmPaymentScreen(): React.ReactElement | null {
 
   const hasBalanceSnapshot = balanceSnapshot !== null;
   const balanceKobo =
-    balanceSnapshot?.availableBalanceKobo ?? Number(user.verifiedBalanceKobo);
+    balanceSnapshot?.availableBalanceKobo ?? Number(user.availableBalanceKobo);
   const canPay = hasBalanceSnapshot && balanceKobo >= paymentRequest.amountKobo;
   const afterBalanceKobo = balanceKobo - paymentRequest.amountKobo;
 

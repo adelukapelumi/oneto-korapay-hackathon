@@ -16,6 +16,9 @@ const CachedMeProfileSchema = z.object({
   role: z.enum(["STUDENT", "MERCHANT", "ADMIN"]),
   status: z.enum(["ACTIVE", "PENDING_VERIFICATION", "FROZEN", "FLAGGED"]),
   verifiedBalanceKobo: z.string().regex(/^\d+$/),
+  availableBalanceKobo: z.string().regex(/^\d+$/),
+  recoveryHeldBalanceKobo: z.string().regex(/^\d+$/),
+  recoveryHoldUntil: z.string().nullable(),
   createdAt: z.string().min(1),
 });
 
@@ -36,6 +39,7 @@ export function persistMeProfile(me: Me): void {
 
   setLocalState(CACHED_ME_PROFILE_KEY, JSON.stringify(me));
   setLocalState("verified_balance_kobo", me.verifiedBalanceKobo);
+  setLocalState("available_balance_kobo", me.availableBalanceKobo);
   setLocalState("last_sync_at", new Date().toISOString());
 }
 
@@ -63,5 +67,6 @@ export function loadCachedMeProfile(): Me | null {
 export function clearCachedMeProfile(): void {
   deleteLocalState(CACHED_ME_PROFILE_KEY);
   deleteLocalState("verified_balance_kobo");
+  deleteLocalState("available_balance_kobo");
   deleteLocalState("last_sync_at");
 }

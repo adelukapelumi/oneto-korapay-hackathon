@@ -11,7 +11,7 @@ Use this as the copy-paste source for the Google Form.
   `https://github.com/adelukapelumi/oneto-korapay-hackathon`
 
 - Project Live Demo Link:
-  `https://admin.getoneto.com`
+  `https://api.getoneto.com`
 
 - Existing or New Submission:
   `Existing Project (Refactored or significantly improved for this hackathon)`
@@ -26,17 +26,6 @@ Use this as the copy-paste source for the Google Form.
 - Kora API Categories Used:
   `Payment APIs (e.g., Transfer, Collection)`
 
-## Suggested Optional Answers
-
-- Project Live Demo Link:
-  If the APK is your primary deliverable and the admin URL is not polished for judging, it is safer to keep the field blank than to send judges somewhere confusing.
-
-- Kora API Documentation Rating:
-  If you want a neutral but positive score, use `4`.
-
-- Total Time Spent During Hackathon:
-  Fill this with your actual tracked time only.
-
 ## Transparency Notes
 
 - Pre-existing project disclosure:
@@ -44,3 +33,7 @@ Use this as the copy-paste source for the Google Form.
 
 - AI usage disclosure:
   `AI was used only to help refine the public README for clearer repository presentation and submission context. The application code, architecture, and implementation decisions remained team-owned.`
+
+## Demo Note
+
+`The prototype video demonstrates student onboarding and QR generation on a physical Android device running the production APK, while the merchant walkthrough is shown on an iOS device using Expo Go.`

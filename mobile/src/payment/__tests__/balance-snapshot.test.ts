@@ -25,7 +25,10 @@ import {
 import { getStudentBalanceProjection } from "../balance-snapshot";
 import type { Me } from "../../api/auth";
 
-function makeMe(verifiedBalanceKobo: string): Me {
+function makeMe(
+  verifiedBalanceKobo: string,
+  overrides: Partial<Me> = {},
+): Me {
   return {
     id: "u_0123456789abcdef",
     email: "student@cu.edu.ng",
@@ -33,7 +36,11 @@ function makeMe(verifiedBalanceKobo: string): Me {
     role: "STUDENT",
     status: "ACTIVE",
     verifiedBalanceKobo,
+    availableBalanceKobo: verifiedBalanceKobo,
+    recoveryHeldBalanceKobo: "0",
+    recoveryHoldUntil: null,
     createdAt: "2026-05-01T10:00:00.000Z",
+    ...overrides,
   };
 }
 
@@ -48,6 +55,9 @@ describe("getSpendableBalanceSnapshot", () => {
     (fetchMe as jest.Mock).mockResolvedValue(makeMe("150000"));
 
     await expect(getStudentBalanceProjection()).resolves.toEqual({
+      verifiedBalanceKobo: 150_000,
+      recoveryHeldBalanceKobo: 0,
+      recoveryHoldUntil: null,
       serverConfirmedBalanceKobo: 150_000,
       pendingOutgoingKobo: 0,
       availableBalanceKobo: 150_000,
@@ -57,6 +67,7 @@ describe("getSpendableBalanceSnapshot", () => {
     });
 
     expect(setLocalState).toHaveBeenCalledWith("verified_balance_kobo", "150000");
+    expect(setLocalState).toHaveBeenCalledWith("available_balance_kobo", "150000");
     expect(setLocalState).toHaveBeenCalledWith("last_sync_at", expect.any(String));
     expect(getLocalState).toHaveBeenCalledWith("last_sync_at");
   });
@@ -74,6 +85,9 @@ describe("getSpendableBalanceSnapshot", () => {
     });
 
     await expect(getStudentBalanceProjection()).resolves.toEqual({
+      verifiedBalanceKobo: 90_000,
+      recoveryHeldBalanceKobo: 0,
+      recoveryHoldUntil: null,
       serverConfirmedBalanceKobo: 90_000,
       pendingOutgoingKobo: 0,
       availableBalanceKobo: 90_000,
@@ -96,6 +110,28 @@ describe("getSpendableBalanceSnapshot", () => {
     expect(snapshot.pendingOutgoingKobo).toBe(150_000);
     expect(snapshot.availableBalanceKobo).toBe(350_000);
     expect(snapshot.pendingOutgoingCount).toBe(1);
+  });
+
+  it("subtracts a recovery hold before local pending outgoing reservations", async () => {
+    (fetchMe as jest.Mock).mockResolvedValue(
+      makeMe("100000", {
+        availableBalanceKobo: "40000",
+        recoveryHeldBalanceKobo: "60000",
+        recoveryHoldUntil: "2026-05-03T10:00:00.000Z",
+      }),
+    );
+    (sumPendingOutgoingKobo as jest.Mock).mockReturnValue(10_000);
+    (listPendingByStatus as jest.Mock).mockReturnValue([
+      { id: "tx_1", amountKobo: 10_000, direction: "outgoing" },
+    ]);
+
+    const snapshot = await getStudentBalanceProjection();
+
+    expect(snapshot.verifiedBalanceKobo).toBe(100_000);
+    expect(snapshot.recoveryHeldBalanceKobo).toBe(60_000);
+    expect(snapshot.serverConfirmedBalanceKobo).toBe(40_000);
+    expect(snapshot.availableBalanceKobo).toBe(30_000);
+    expect(snapshot.recoveryHoldUntil).toBe("2026-05-03T10:00:00.000Z");
   });
 
   it("subtracts multiple pending outgoing payments from the available balance", async () => {

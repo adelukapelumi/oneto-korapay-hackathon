@@ -3,6 +3,9 @@ import type { StudentBalanceProjection } from "../balance-snapshot";
 
 function makeProjection(overrides: Partial<StudentBalanceProjection>): StudentBalanceProjection {
   return {
+    verifiedBalanceKobo: 500_000,
+    recoveryHeldBalanceKobo: 0,
+    recoveryHoldUntil: null,
     serverConfirmedBalanceKobo: 500_000,
     pendingOutgoingKobo: 150_000,
     availableBalanceKobo: 350_000,

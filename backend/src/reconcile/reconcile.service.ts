@@ -1,5 +1,6 @@
 import { Injectable, Logger, InternalServerErrorException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { RecoveryBalanceService } from '../balance/recovery-balance.service';
 import {
   TransactionEnvelope,
   TransactionEnvelopeSchema,
@@ -43,7 +44,10 @@ const OFFLINE_CLAIM_WINDOW_MS = OFFLINE_CLAIM_WINDOW_HOURS * 60 * 60 * 1000;
 export class ReconcileService {
   private readonly logger = new Logger(ReconcileService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly recoveryBalanceService: RecoveryBalanceService,
+  ) {}
 
   private static readonly LEDGER_IDEMPOTENCY_TARGET_KEYS = ['transactionid', 'userid'];
   private static readonly PROCESSED_SEQUENCE_TARGET_KEYS = ['userid', 'sequencenumber'];
@@ -151,6 +155,7 @@ export class ReconcileService {
           },
         },
         select: {
+          id: true,
           publicKey: true,
           status: true,
           retiredAt: true,
@@ -238,14 +243,24 @@ export class ReconcileService {
         return this.reject(envelope.transactionId, 'late_claim_rejected', envelope);
       }
 
-      // j. Check server balance.
-      if (sender.verifiedBalanceKobo < BigInt(envelope.amountKobo)) {
-        return this.reject(envelope.transactionId, 'insufficient_balance', envelope);
-      }
-
       // k. Check sender user status.
       if (sender.status === 'FROZEN' || sender.status === 'FLAGGED') {
         return this.reject(envelope.transactionId, 'account_frozen', envelope);
+      }
+
+      const envelopeAmountKobo = BigInt(envelope.amountKobo);
+      if (senderDeviceKey.status === DeviceKeyStatus.ACTIVE) {
+        const senderBalanceSnapshot = await this.recoveryBalanceService.getBalanceSnapshot(
+          envelope.senderUserId,
+          this.prisma,
+          new Date(nowMs),
+        );
+
+        if (senderBalanceSnapshot.availableBalanceKobo < envelopeAmountKobo) {
+          return this.reject(envelope.transactionId, 'insufficient_balance', envelope);
+        }
+      } else if (sender.verifiedBalanceKobo < envelopeAmountKobo) {
+        return this.reject(envelope.transactionId, 'insufficient_balance', envelope);
       }
 
       let retries = 0;
@@ -262,12 +277,53 @@ export class ReconcileService {
                 select: { verifiedBalanceKobo: true, status: true },
               });
 
-              if (!freshSender || freshSender.verifiedBalanceKobo < BigInt(envelope.amountKobo)) {
+              if (!freshSender) {
                 throw new Error('balance_changed_during_reconcile');
               }
 
               if (freshSender.status === 'FROZEN' || freshSender.status === 'FLAGGED') {
                 throw new Error('balance_changed_during_reconcile'); // Re-use for consistent rejection
+              }
+
+              if (freshSender.verifiedBalanceKobo < envelopeAmountKobo) {
+                throw new Error('balance_changed_during_reconcile');
+              }
+
+              if (senderDeviceKey.status === DeviceKeyStatus.ACTIVE) {
+                const senderBalanceSnapshot = await this.recoveryBalanceService.getBalanceSnapshot(
+                  envelope.senderUserId,
+                  tx,
+                );
+
+                if (senderBalanceSnapshot.availableBalanceKobo < envelopeAmountKobo) {
+                  throw new Error('balance_changed_during_reconcile');
+                }
+              } else {
+                const activeHold = await this.recoveryBalanceService.getActiveHoldForOldKey(
+                  envelope.senderUserId,
+                  senderDeviceKey.id,
+                  tx,
+                );
+
+                if (!activeHold) {
+                  throw new Error('balance_changed_during_reconcile');
+                }
+
+                const holdRemainingKobo =
+                  this.recoveryBalanceService.getRemainingHoldAmount(activeHold);
+                if (
+                  holdRemainingKobo < envelopeAmountKobo ||
+                  freshSender.verifiedBalanceKobo < envelopeAmountKobo
+                ) {
+                  throw new Error('balance_changed_during_reconcile');
+                }
+
+                await tx.recoveryBalanceHold.update({
+                  where: { id: activeHold.id },
+                  data: {
+                    consumedAmountKobo: { increment: envelopeAmountKobo },
+                  },
+                });
               }
 
               // 1. Insert ProcessedSequence row.
@@ -285,8 +341,8 @@ export class ReconcileService {
                   transactionId: envelope.transactionId,
                   userId: envelope.senderUserId,
                   type: 'DEBIT',
-                  amountKobo: BigInt(envelope.amountKobo),
-                  balanceAfterKobo: freshSender.verifiedBalanceKobo - BigInt(envelope.amountKobo),
+                  amountKobo: envelopeAmountKobo,
+                  balanceAfterKobo: freshSender.verifiedBalanceKobo - envelopeAmountKobo,
                   description: `Payment to ${envelope.recipientUserId}`,
                   envelopeJson: envelope as unknown as Prisma.InputJsonValue,
                 },
@@ -314,7 +370,7 @@ export class ReconcileService {
                 throw new Error('recipient_not_merchant');
               }
 
-              if (recipient.verifiedBalanceKobo + BigInt(envelope.amountKobo) > BigInt(MAX_USER_BALANCE_KOBO)) {
+              if (recipient.verifiedBalanceKobo + envelopeAmountKobo > BigInt(MAX_USER_BALANCE_KOBO)) {
                 throw new Error('recipient_balance_cap_exceeded');
               }
 
@@ -323,8 +379,8 @@ export class ReconcileService {
                   transactionId: envelope.transactionId,
                   userId: envelope.recipientUserId,
                   type: 'CREDIT',
-                  amountKobo: BigInt(envelope.amountKobo),
-                  balanceAfterKobo: recipient.verifiedBalanceKobo + BigInt(envelope.amountKobo),
+                  amountKobo: envelopeAmountKobo,
+                  balanceAfterKobo: recipient.verifiedBalanceKobo + envelopeAmountKobo,
                   description: `Payment from ${envelope.senderUserId}`,
                   envelopeJson: envelope as unknown as Prisma.InputJsonValue,
                 },
@@ -333,13 +389,13 @@ export class ReconcileService {
               // 4. Update sender balance.
               await tx.user.update({
                 where: { id: envelope.senderUserId },
-                data: { verifiedBalanceKobo: { decrement: BigInt(envelope.amountKobo) } },
+                data: { verifiedBalanceKobo: { decrement: envelopeAmountKobo } },
               });
 
               // 5. Update recipient balance.
               await tx.user.update({
                 where: { id: envelope.recipientUserId },
-                data: { verifiedBalanceKobo: { increment: BigInt(envelope.amountKobo) } },
+                data: { verifiedBalanceKobo: { increment: envelopeAmountKobo } },
               });
 
               return { transactionId: envelope.transactionId, status: 'success' as const };

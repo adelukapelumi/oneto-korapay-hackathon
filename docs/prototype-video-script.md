@@ -1,6 +1,6 @@
 # Prototype Video Script
 
-Use this as a simple recording guide for Loom, YouTube unlisted, or Vimeo.
+Use this as the final recording guide for Loom, YouTube unlisted, or Vimeo.
 
 ## Target Length
 
@@ -22,11 +22,11 @@ Use this as a simple recording guide for Loom, YouTube unlisted, or Vimeo.
 
 ### 4. Demo Flow
 
-`Here, the student selects a merchant, enters an amount, confirms the payment, and the app generates a signed QR code.`
+`In this demo, the student account is running on a physical Android device using the production APK, while the merchant side is shown on an iOS device using Expo Go.`
 
-`The merchant scans the QR code and stores the payment for later reconciliation.`
+`First, we show student onboarding. Then we show merchant onboarding. After that, the student selects a merchant, enters an amount, confirms the payment, and the app generates a signed QR code.`
 
-`Once the merchant is back online, the payment can be submitted to the backend for verification and reconciliation.`
+`The merchant scans the QR code and stores the payment for later reconciliation. Once the merchant is back online, the payment can be submitted to the backend for verification and reconciliation.`
 
 ### 5. Korapay Integration
 

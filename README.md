@@ -11,8 +11,8 @@ This repository is the public codebase for the Kora 2.0 Hackathon submission by 
 - Project type: `Existing Project (refactored and significantly improved for the hackathon)`
 - Official hackathon build phase began: `May 15, 2026`
 - Primary payments integration: `Korapay`
-- Optional live demo link: `admin.getoneto.com`
-- Primary mobile deliverable: `Android APK submission`
+- Backend API: `https://api.getoneto.com`
+- Primary mobile deliverable: `Production Android APK`
 
 ## Problem
 
@@ -50,11 +50,12 @@ Many payments fail at the point of transaction because both parties need reliabl
 - Payments: Korapay
 - Auth and notifications: email OTP flow
 
-## Current Submission Notes
+## Demo Format
 
-- The backend is deployed and has been used as the main online reconciliation and payments service for the project.
-- The hackathon submission is centered on the mobile experience and APK deliverable.
-- The live demo field in the submission form is optional; the team may submit the APK as the primary demo artifact.
+- Student experience demonstrated on a physical Android device using the production APK
+- Merchant experience demonstrated on an iOS device using Expo Go
+- Demo walkthrough covers onboarding, merchant onboarding, and QR generation for the payment flow
+- Backend API used by the mobile experience: `https://api.getoneto.com`
 
 ## AI Disclosure
 
@@ -62,4 +63,4 @@ AI assistance was used only to help draft and refine parts of this `README.md` s
 
 ## Submission Support
 
-See [docs/hackathon-submission.md](docs/hackathon-submission.md) for the exact submission details, disclosure notes, and remaining assets still needed before final form submission.
+See [docs/hackathon-submission.md](docs/hackathon-submission.md) for the final submission summary and [docs/google-form-draft.md](docs/google-form-draft.md) for the exact form-ready answers.

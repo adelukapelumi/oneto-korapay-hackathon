@@ -13,9 +13,9 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { WebView } from "react-native-webview";
 import { fetchMe } from "../../../src/api/auth";
+import { persistMeProfile } from "../../../src/auth/profile-cache";
 import { useAuth } from "../../../src/auth/auth-state";
 import { fetchTopupStatus, type TopupStatusResponse } from "../../../src/api/topup";
-import { setLocalState } from "../../../src/ledger/db";
 import { logger } from "../../../src/lib/logger";
 import {
   resolveCheckoutStatusState,
@@ -58,8 +58,7 @@ export default function CheckoutScreen(): React.ReactElement {
     try {
       const user = await fetchMe();
       hydrateProfile(user);
-      setLocalState("verified_balance_kobo", user.verifiedBalanceKobo);
-      setLocalState("last_sync_at", new Date().toISOString());
+      persistMeProfile(user);
     } catch (err) {
       logger.warn("Failed to refresh balance after confirmed top-up", err);
     }

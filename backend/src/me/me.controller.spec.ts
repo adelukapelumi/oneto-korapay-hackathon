@@ -6,6 +6,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { UserThrottlerGuard } from "../common/user-throttler.guard";
 import { NotFoundException, BadRequestException } from "@nestjs/common";
+import { RecoveryBalanceService } from "../balance/recovery-balance.service";
 
 describe("MeController", () => {
   let controller: MeController;
@@ -13,6 +14,9 @@ describe("MeController", () => {
   let mockPrisma: {
     user: { findUnique: jest.Mock };
     ledgerEntry: { findMany: jest.Mock };
+  };
+  let mockRecoveryBalanceService: {
+    getBalanceSnapshot: jest.Mock;
   };
 
   const baseUser = {
@@ -42,10 +46,24 @@ describe("MeController", () => {
       user: { findUnique: jest.fn() },
       ledgerEntry: { findMany: jest.fn() },
     };
+    mockRecoveryBalanceService = {
+      getBalanceSnapshot: jest.fn().mockResolvedValue({
+        verifiedBalanceKobo: 50000n,
+        activeRecoveryHeldBalanceKobo: 0n,
+        availableBalanceKobo: 50000n,
+        recoveryHoldUntil: null,
+      }),
+    };
 
     const module = await Test.createTestingModule({
       controllers: [MeController],
-      providers: [{ provide: PrismaService, useValue: mockPrisma }],
+      providers: [
+        { provide: PrismaService, useValue: mockPrisma },
+        {
+          provide: RecoveryBalanceService,
+          useValue: mockRecoveryBalanceService,
+        },
+      ],
     })
       .overrideGuard(JwtAuthGuard)
       .useValue(mockJwtGuard)
@@ -83,6 +101,9 @@ describe("MeController", () => {
         role: "STUDENT",
         status: "ACTIVE",
         verifiedBalanceKobo: "50000",
+        availableBalanceKobo: "50000",
+        recoveryHeldBalanceKobo: "0",
+        recoveryHoldUntil: null,
         createdAt: "2026-01-01T00:00:00.000Z",
       });
     });
@@ -101,6 +122,22 @@ describe("MeController", () => {
       const result = await controller.getMe(mockReq(baseUser.id) as any);
 
       expect(result).not.toHaveProperty("publicKey");
+    });
+
+    it("returns available balance after subtracting an active recovery hold", async () => {
+      mockPrisma.user.findUnique.mockResolvedValue(baseUser);
+      mockRecoveryBalanceService.getBalanceSnapshot.mockResolvedValue({
+        verifiedBalanceKobo: 50000n,
+        activeRecoveryHeldBalanceKobo: 30000n,
+        availableBalanceKobo: 20000n,
+        recoveryHoldUntil: new Date("2026-06-14T10:00:00.000Z"),
+      });
+
+      const result = await controller.getMe(mockReq(baseUser.id) as any);
+
+      expect(result.availableBalanceKobo).toBe("20000");
+      expect(result.recoveryHeldBalanceKobo).toBe("30000");
+      expect(result.recoveryHoldUntil).toBe("2026-06-14T10:00:00.000Z");
     });
 
     it("selects only safe fields from Prisma", async () => {

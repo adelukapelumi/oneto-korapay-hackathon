@@ -11,6 +11,7 @@ import { Throttle } from "@nestjs/throttler";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PrismaService } from "../prisma/prisma.service";
 import { UserThrottlerGuard } from "../common/user-throttler.guard";
+import { RecoveryBalanceService } from "../balance/recovery-balance.service";
 
 interface AuthedRequest {
   user: { sub: string; email: string; role: string };
@@ -18,7 +19,10 @@ interface AuthedRequest {
 
 @Controller("me")
 export class MeController {
-  constructor(private readonly prisma: PrismaService) { }
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly recoveryBalanceService: RecoveryBalanceService,
+  ) { }
 
   /**
    * GET /me
@@ -46,6 +50,11 @@ export class MeController {
       throw new NotFoundException("user_not_found");
     }
 
+    const balanceSnapshot = await this.recoveryBalanceService.getBalanceSnapshot(
+      req.user.sub,
+      this.prisma,
+    );
+
     return {
       id: user.id,
       email: user.email,
@@ -53,6 +62,10 @@ export class MeController {
       role: user.role,
       status: user.status,
       verifiedBalanceKobo: user.verifiedBalanceKobo.toString(),
+      availableBalanceKobo: balanceSnapshot.availableBalanceKobo.toString(),
+      recoveryHeldBalanceKobo:
+        balanceSnapshot.activeRecoveryHeldBalanceKobo.toString(),
+      recoveryHoldUntil: balanceSnapshot.recoveryHoldUntil?.toISOString() ?? null,
       createdAt: user.createdAt.toISOString(),
     };
   }

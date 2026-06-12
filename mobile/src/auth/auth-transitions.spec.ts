@@ -18,6 +18,9 @@ function makeMe(overrides: Partial<Me> = {}): Me {
     role: "STUDENT",
     status: "ACTIVE",
     verifiedBalanceKobo: "150000",
+    availableBalanceKobo: "150000",
+    recoveryHeldBalanceKobo: "0",
+    recoveryHoldUntil: null,
     createdAt: "2026-05-01T10:00:00.000Z",
     ...overrides,
   };

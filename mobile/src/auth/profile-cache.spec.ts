@@ -22,6 +22,9 @@ function makeMe(overrides: Partial<Me> = {}): Me {
     role: "STUDENT",
     status: "ACTIVE",
     verifiedBalanceKobo: "150000",
+    availableBalanceKobo: "150000",
+    recoveryHeldBalanceKobo: "0",
+    recoveryHoldUntil: null,
     createdAt: "2026-05-01T10:00:00.000Z",
     ...overrides,
   };
@@ -42,6 +45,7 @@ describe("profile cache", () => {
       JSON.stringify(me),
     );
     expect(setLocalState).toHaveBeenCalledWith("verified_balance_kobo", "150000");
+    expect(setLocalState).toHaveBeenCalledWith("available_balance_kobo", "150000");
     expect(setLocalState).toHaveBeenCalledWith("last_sync_at", expect.any(String));
   });
 
@@ -84,6 +88,7 @@ describe("profile cache", () => {
       JSON.stringify(fresh),
     );
     expect(setLocalState).toHaveBeenCalledWith("verified_balance_kobo", "250000");
+    expect(setLocalState).toHaveBeenCalledWith("available_balance_kobo", "150000");
   });
 
   it("clears the cached /me profile and balance sync fields", () => {
@@ -91,6 +96,7 @@ describe("profile cache", () => {
 
     expect(deleteLocalState).toHaveBeenCalledWith(CACHED_ME_PROFILE_KEY);
     expect(deleteLocalState).toHaveBeenCalledWith("verified_balance_kobo");
+    expect(deleteLocalState).toHaveBeenCalledWith("available_balance_kobo");
     expect(deleteLocalState).toHaveBeenCalledWith("last_sync_at");
   });
 });

@@ -140,7 +140,7 @@ beforeEach(() => {
 
 describe("buildAndSignEnvelope — happy path", () => {
   it("constructs correct draft and delegates to signEnvelope", () => {
-    mockDb.setState("verified_balance_kobo", "200000");
+    mockDb.setState("available_balance_kobo", "200000");
     mockDb.setPendingOutgoing(0);
     mockDb.setNextSeq(1);
 
@@ -167,7 +167,7 @@ describe("buildAndSignEnvelope — happy path", () => {
   });
 
   it("senderBalanceAfterKobo === senderBalanceBeforeKobo - amountKobo", () => {
-    mockDb.setState("verified_balance_kobo", "300000");
+    mockDb.setState("available_balance_kobo", "300000");
     mockDb.setPendingOutgoing(50_000); // 50_000 pending = 250_000 spendable
     mockDb.setNextSeq(2);
 
@@ -183,7 +183,7 @@ describe("buildAndSignEnvelope — happy path", () => {
   });
 
   it("uses the sequence number from getNextSequenceNumber", () => {
-    mockDb.setState("verified_balance_kobo", "500000");
+    mockDb.setState("available_balance_kobo", "500000");
     mockDb.setPendingOutgoing(0);
     mockDb.setNextSeq(7); // Simulate 6 previous transactions
 
@@ -205,7 +205,7 @@ describe("buildAndSignEnvelope — error cases", () => {
 
   it("throws InsufficientBalanceError when spendable < requested", () => {
     // Only 30_000 kobo available, request is 50_000
-    mockDb.setState("verified_balance_kobo", "80000");
+    mockDb.setState("available_balance_kobo", "80000");
     mockDb.setPendingOutgoing(50_000); // spendable = 30_000
     mockDb.setNextSeq(1);
 
@@ -218,7 +218,7 @@ describe("buildAndSignEnvelope — error cases", () => {
   });
 
   it("InsufficientBalanceError carries correct available/requested fields", () => {
-    mockDb.setState("verified_balance_kobo", "100000");
+    mockDb.setState("available_balance_kobo", "100000");
     mockDb.setPendingOutgoing(90_000); // spendable = 10_000
     mockDb.setNextSeq(1);
 
@@ -237,7 +237,7 @@ describe("buildAndSignEnvelope — error cases", () => {
 
   it("allows payment at exact balance (spendable === amountKobo)", () => {
     // Edge case: spendable exactly equals requested — should succeed
-    mockDb.setState("verified_balance_kobo", "50000");
+    mockDb.setState("available_balance_kobo", "50000");
     mockDb.setPendingOutgoing(0);
     mockDb.setNextSeq(1);
 
@@ -246,5 +246,16 @@ describe("buildAndSignEnvelope — error cases", () => {
 
     const draftPassed = (signEnvelope as jest.Mock).mock.calls[0][0] as EnvelopeDraft;
     expect(draftPassed.senderBalanceAfterKobo).toBe(0);
+  });
+
+  it("prefers server-available balance over the raw verified balance cache", () => {
+    mockDb.setState("verified_balance_kobo", "100000");
+    mockDb.setState("available_balance_kobo", "40000");
+    mockDb.setPendingOutgoing(5_000);
+    mockDb.setNextSeq(1);
+
+    expect(() => buildAndSignEnvelope(makeInput())).toThrow(
+      InsufficientBalanceError,
+    );
   });
 });

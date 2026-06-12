@@ -80,7 +80,7 @@ export default function TopupAmountScreen(): React.ReactElement {
   const amountKobo = Math.round(amountNgn * 100);
   const topupBalance = buildTopupBalanceDisplay({
     projection: balanceProjection,
-    fallbackServerBalanceKobo: user ? Number(user.verifiedBalanceKobo) : 0,
+    fallbackServerBalanceKobo: user ? Number(user.availableBalanceKobo) : 0,
     topupAmountKobo: amountKobo,
   });
 

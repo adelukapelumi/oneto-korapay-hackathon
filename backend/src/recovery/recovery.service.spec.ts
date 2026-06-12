@@ -16,6 +16,7 @@ import {
   RECOVERY_VERIFY_ONLY_WINDOW_MS,
   RecoveryService,
 } from "./recovery.service";
+import { RecoveryBalanceHoldStatus } from "@prisma/client";
 
 type UserRecord = {
   id: string;
@@ -57,6 +58,19 @@ type RecoveryRequestRecord = {
   updatedAt: Date;
 };
 
+type RecoveryBalanceHoldRecord = {
+  id: string;
+  userId: string;
+  recoveryRequestId: string;
+  oldKeyId: string;
+  status: RecoveryBalanceHoldStatus;
+  heldAmountKobo: bigint;
+  consumedAmountKobo: bigint;
+  holdUntil: Date;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 const NOW = new Date("2026-05-30T09:00:00.000Z");
 
 const publicKey = (n: number) => `ed25519:${n.toString(16).padStart(64, "0")}`;
@@ -65,8 +79,10 @@ class PrismaMock {
   readonly users = new Map<string, UserRecord>();
   readonly deviceKeys = new Map<string, DeviceKeyRecord>();
   readonly recoveryRequests = new Map<string, RecoveryRequestRecord>();
+  readonly recoveryBalanceHolds = new Map<string, RecoveryBalanceHoldRecord>();
   private keyCounter = 0;
   private requestCounter = 0;
+  private holdCounter = 0;
 
   private syncKeyCounter(id: string) {
     const match = /^key-(\d+)$/.exec(id);
@@ -257,6 +273,37 @@ class PrismaMock {
     ),
   };
 
+  readonly recoveryBalanceHold = {
+    create: jest.fn(
+      async (args: {
+        data: {
+          userId: string;
+          recoveryRequestId: string;
+          oldKeyId: string;
+          status: RecoveryBalanceHoldStatus;
+          heldAmountKobo: bigint;
+          consumedAmountKobo: bigint;
+          holdUntil: Date;
+        };
+      }) => {
+        const hold: RecoveryBalanceHoldRecord = {
+          id: `hold-${++this.holdCounter}`,
+          userId: args.data.userId,
+          recoveryRequestId: args.data.recoveryRequestId,
+          oldKeyId: args.data.oldKeyId,
+          status: args.data.status,
+          heldAmountKobo: args.data.heldAmountKobo,
+          consumedAmountKobo: args.data.consumedAmountKobo,
+          holdUntil: args.data.holdUntil,
+          createdAt: new Date(NOW),
+          updatedAt: new Date(NOW),
+        };
+        this.recoveryBalanceHolds.set(hold.id, hold);
+        return hold;
+      },
+    ),
+  };
+
   readonly $transaction = jest.fn(
     async <T>(callback: (tx: PrismaMock) => Promise<T>) => callback(this),
   );
@@ -341,7 +388,11 @@ describe("RecoveryService", () => {
       prisma as unknown as PrismaService,
       recoveryEmailService,
     );
-    user = prisma.addUser({ id: "user-1", publicKey: publicKey(1) });
+    user = prisma.addUser({
+      id: "user-1",
+      publicKey: publicKey(1),
+      verifiedBalanceKobo: 50_000n,
+    });
     activeKey = prisma.addDeviceKey({
       id: "key-1",
       userId: user.id,
@@ -418,7 +469,33 @@ describe("RecoveryService", () => {
     );
     expect(newKey?.status).toBe(DeviceKeyStatus.ACTIVE);
     expect(prisma.users.get(user.id)?.publicKey).toBe(publicKey(5));
+    const createdHold = [...prisma.recoveryBalanceHolds.values()][0];
+    expect(createdHold).toMatchObject({
+      userId: user.id,
+      recoveryRequestId: request.id,
+      oldKeyId: activeKey.id,
+      status: RecoveryBalanceHoldStatus.ACTIVE,
+      heldAmountKobo: user.verifiedBalanceKobo,
+      consumedAmountKobo: 0n,
+    });
+    expect(createdHold?.holdUntil.toISOString()).toBe(
+      new Date(NOW.getTime() + RECOVERY_VERIFY_ONLY_WINDOW_MS).toISOString(),
+    );
     expect(recoveryEmailService.sendUserRecoveryApproved).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not create a recovery balance hold when the approval balance is zero", async () => {
+    prisma.users.set(user.id, { ...user, verifiedBalanceKobo: 0n });
+    const request = prisma.addRecoveryRequest({
+      userId: user.id,
+      oldKeyId: activeKey.id,
+      requestedNewPublicKey: publicKey(12),
+    });
+
+    await service.approveRecoveryRequest(request.id, "admin-1", {});
+
+    expect(prisma.recoveryBalanceHold.create).not.toHaveBeenCalled();
+    expect(prisma.recoveryBalanceHolds.size).toBe(0);
   });
 
   it("preserves the stolen-phone report time when approval happens later", async () => {

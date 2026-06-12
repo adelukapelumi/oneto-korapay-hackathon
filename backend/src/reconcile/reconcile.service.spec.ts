@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ReconcileService } from './reconcile.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { RecoveryBalanceService } from '../balance/recovery-balance.service';
 import {
   generateKeypair,
   signEnvelope,
@@ -22,6 +23,7 @@ import {
 describe('ReconcileService', () => {
   let service: ReconcileService;
   let prisma: PrismaService;
+  let recoveryBalanceService: jest.Mocked<RecoveryBalanceService>;
 
   const mockPrisma: any = {
     $transaction: jest.fn((callback) => callback(mockPrisma)),
@@ -42,6 +44,10 @@ describe('ReconcileService', () => {
       findUnique: jest.fn(),
       create: jest.fn(),
     },
+    recoveryBalanceHold: {
+      findMany: jest.fn(),
+      update: jest.fn(),
+    },
     userDeviceKey: {
       findUnique: jest.fn(),
     },
@@ -50,10 +56,21 @@ describe('ReconcileService', () => {
   beforeEach(async () => {
     jest.useRealTimers();
 
+    recoveryBalanceService = {
+      getBalanceSnapshot: jest.fn(),
+      getActiveRecoveryHolds: jest.fn(),
+      getActiveHoldForOldKey: jest.fn(),
+      getRemainingHoldAmount: jest.fn(),
+    } as unknown as jest.Mocked<RecoveryBalanceService>;
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ReconcileService,
         { provide: PrismaService, useValue: mockPrisma },
+        {
+          provide: RecoveryBalanceService,
+          useValue: recoveryBalanceService,
+        },
       ],
     }).compile();
 
@@ -82,6 +99,17 @@ describe('ReconcileService', () => {
         createTestDeviceKey(lookup.publicKey, DeviceKeyStatus.ACTIVE),
       );
     });
+    recoveryBalanceService.getBalanceSnapshot.mockResolvedValue({
+      verifiedBalanceKobo: 1_000_000n,
+      activeRecoveryHeldBalanceKobo: 0n,
+      availableBalanceKobo: 1_000_000n,
+      recoveryHoldUntil: null,
+    });
+    recoveryBalanceService.getActiveHoldForOldKey.mockResolvedValue(null);
+    recoveryBalanceService.getRemainingHoldAmount.mockImplementation(
+      (hold: { heldAmountKobo: bigint; consumedAmountKobo: bigint }) =>
+        hold.heldAmountKobo - hold.consumedAmountKobo,
+    );
   });
 
   afterEach(() => {
@@ -275,10 +303,79 @@ describe('ReconcileService', () => {
         verifyUntil: new Date('2026-05-22T03:00:00.000Z'),
       }),
     );
+    recoveryBalanceService.getActiveHoldForOldKey.mockResolvedValue({
+      id: 'hold-1',
+      userId: senderId,
+      oldKeyId: 'dk_test',
+      heldAmountKobo: 10_000n,
+      consumedAmountKobo: 2_000n,
+      holdUntil: new Date('2026-05-22T03:00:00.000Z'),
+    });
+    recoveryBalanceService.getRemainingHoldAmount.mockReturnValue(8_000n);
 
     const result = await service.reconcileOneInternal(recipientId, envelope);
 
     expect(result).toEqual({ transactionId: envelope.transactionId, status: 'success' });
+    expect(mockPrisma.recoveryBalanceHold.update).toHaveBeenCalledWith({
+      where: { id: 'hold-1' },
+      data: {
+        consumedAmountKobo: { increment: BigInt(envelope.amountKobo) },
+      },
+    });
+  });
+
+  it('rejects ACTIVE-key reconciliation when the requested amount is fully held by recovery review', async () => {
+    const draft = createValidEnvelopeDraft(senderId, recipientId, senderKey.publicKeyString, 6_000);
+    const envelope = signEnvelope(draft, senderKey.privateKey);
+
+    mockPrisma.user.findUnique.mockImplementation((args: any) => {
+      const where = args?.where;
+      if (where?.id === senderId) {
+        return Promise.resolve(createTestUser(senderId, senderKey.publicKeyString, 10_000, 'STUDENT'));
+      }
+      if (where?.id === recipientId) return Promise.resolve(createTestUser(recipientId, 'dummy'));
+      return Promise.resolve(null);
+    });
+    recoveryBalanceService.getBalanceSnapshot.mockResolvedValue({
+      verifiedBalanceKobo: 10_000n,
+      activeRecoveryHeldBalanceKobo: 10_000n,
+      availableBalanceKobo: 0n,
+      recoveryHoldUntil: new Date('2026-05-23T03:00:00.000Z'),
+    });
+
+    const result = await service.reconcileOneInternal(recipientId, envelope);
+
+    expect(result).toMatchObject({ status: 'rejected', reason: 'insufficient_balance' });
+    expect(mockPrisma.recoveryBalanceHold.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects VERIFY_ONLY reconciliation when there is no matching active recovery hold', async () => {
+    const fixedNow = new Date('2026-05-21T03:00:00.000Z');
+    jest.useFakeTimers().setSystemTime(fixedNow);
+
+    const draft = createValidEnvelopeDraft(senderId, recipientId, senderKey.publicKeyString);
+    draft.timestamp = '2026-05-21T02:59:30.000Z';
+    draft.expiresAt = '2026-05-21T03:00:30.000Z';
+    const envelope = signEnvelope(draft, senderKey.privateKey);
+
+    mockPrisma.user.findUnique.mockImplementation((args: any) => {
+      const where = args?.where;
+      if (where?.id === senderId) return Promise.resolve(createTestUser(senderId, senderKey.publicKeyString, 10_000, 'STUDENT'));
+      if (where?.id === recipientId) return Promise.resolve(createTestUser(recipientId, 'dummy'));
+      return Promise.resolve(null);
+    });
+    mockPrisma.userDeviceKey.findUnique.mockResolvedValue(
+      createTestDeviceKey(senderKey.publicKeyString, DeviceKeyStatus.VERIFY_ONLY, {
+        retiredAt: new Date('2026-05-21T02:59:45.000Z'),
+        verifyUntil: new Date('2026-05-22T03:00:00.000Z'),
+      }),
+    );
+    recoveryBalanceService.getActiveHoldForOldKey.mockResolvedValue(null);
+
+    const result = await service.reconcileOneInternal(recipientId, envelope);
+
+    expect(result).toMatchObject({ status: 'rejected', reason: 'insufficient_balance' });
+    expect(mockPrisma.recoveryBalanceHold.update).not.toHaveBeenCalled();
   });
 
   it('rejects VERIFY_ONLY key when envelope timestamp is after retiredAt', async () => {

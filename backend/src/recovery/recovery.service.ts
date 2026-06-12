@@ -12,6 +12,7 @@ import {
   KeyRecoveryRiskType,
   KeyRecoveryStatus,
   Prisma,
+  RecoveryBalanceHoldStatus,
   Role,
 } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
@@ -320,6 +321,14 @@ export class RecoveryService {
 
           const reviewedAt = new Date();
           const oldKeyUpdate = this.buildOldKeyApprovalUpdate(request, oldKey, reviewedAt);
+          const requestUserBalance = await tx.user.findUnique({
+            where: { id: request.userId },
+            select: { verifiedBalanceKobo: true, email: true, role: true },
+          });
+
+          if (!requestUserBalance) {
+            throw new ConflictException("recovery_request_user_not_found");
+          }
 
           await tx.userDeviceKey.update({
             where: { id: oldKey.id },
@@ -351,19 +360,26 @@ export class RecoveryService {
             },
           });
 
-          const requestUser = await tx.user.findUnique({
-            where: { id: request.userId },
-            select: { email: true, role: true },
-          });
-
-          if (!requestUser) {
-            throw new ConflictException("recovery_request_user_not_found");
+          if (requestUserBalance.verifiedBalanceKobo > 0n) {
+            await tx.recoveryBalanceHold.create({
+              data: {
+                userId: request.userId,
+                recoveryRequestId: request.id,
+                oldKeyId: request.oldKeyId,
+                status: RecoveryBalanceHoldStatus.ACTIVE,
+                heldAmountKobo: requestUserBalance.verifiedBalanceKobo,
+                consumedAmountKobo: 0n,
+                holdUntil: new Date(
+                  reviewedAt.getTime() + RECOVERY_VERIFY_ONLY_WINDOW_MS,
+                ),
+              },
+            });
           }
 
           return {
             ...updatedRequest,
-            userEmail: requestUser.email,
-            userRole: requestUser.role,
+            userEmail: requestUserBalance.email,
+            userRole: requestUserBalance.role,
             oldKeyPublicKey: oldKey.publicKey,
           } satisfies RecoveryRequestRecord;
         },

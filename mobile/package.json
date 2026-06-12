@@ -4,10 +4,15 @@
   "private": true,
   "main": "./index.js",
   "scripts": {
+    "prestart": "pnpm --filter @oneto/shared build",
     "start": "expo start --go",
+    "prestart:dev-client": "pnpm --filter @oneto/shared build",
     "start:dev-client": "expo start --dev-client",
+    "preandroid": "pnpm --filter @oneto/shared build",
     "android": "expo run:android",
+    "preios": "pnpm --filter @oneto/shared build",
     "ios": "expo run:ios",
+    "preweb": "pnpm --filter @oneto/shared build",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
     "test": "jest"

@@ -243,8 +243,11 @@ export default function HomeScreen(): React.ReactElement {
 
     logger.debug("dashboard_balance_rendered", {
       userId: user.id,
+      verifiedBalanceKobo: studentBalanceProjection.verifiedBalanceKobo,
       serverConfirmedBalanceKobo:
         studentBalanceProjection.serverConfirmedBalanceKobo,
+      recoveryHeldBalanceKobo:
+        studentBalanceProjection.recoveryHeldBalanceKobo,
       pendingOutgoingKobo: studentBalanceProjection.pendingOutgoingKobo,
       availableBalanceKobo: studentBalanceProjection.availableBalanceKobo,
       pendingOutgoingCount: studentBalanceProjection.pendingOutgoingCount,
@@ -620,7 +623,10 @@ export default function HomeScreen(): React.ReactElement {
   const isNewUser = dashboardTransactions.length === 0;
   const availableBalanceKobo =
     studentBalanceProjection?.availableBalanceKobo ??
-    Number(user.verifiedBalanceKobo);
+    Number(user.availableBalanceKobo);
+  const recoveryHeldBalanceKobo =
+    studentBalanceProjection?.recoveryHeldBalanceKobo ??
+    Number(user.recoveryHeldBalanceKobo);
   const pendingOutgoingKobo = studentBalanceProjection?.pendingOutgoingKobo ?? 0;
   const pendingOutgoingCount =
     studentBalanceProjection?.pendingOutgoingCount ?? 0;
@@ -791,6 +797,11 @@ export default function HomeScreen(): React.ReactElement {
                 <Text style={[styles.balanceUpdated, { color: t.textMut }]}>
                   {studentBalanceStatusText}
                 </Text>
+                {recoveryHeldBalanceKobo > 0 ? (
+                  <Text style={[styles.balancePendingDetail, { color: t.textMut }]}>
+                    Your previous device balance is under 48-hour recovery review. New topups are spendable immediately.
+                  </Text>
+                ) : null}
                 {pendingOutgoingKobo > 0 ? (
                   <Text style={[styles.balancePendingSummary, { color: t.textSec }]}>
                     {formatDashboardNaira(pendingOutgoingKobo)} pending offline payment
