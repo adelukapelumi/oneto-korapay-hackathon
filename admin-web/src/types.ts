@@ -96,3 +96,37 @@ export type PendingCashout = {
   cashoutAccountNumber: string;
   cashoutAccountName: string;
 };
+
+export type PendingRecoveryRequest = {
+  id: string;
+  userId: string;
+  oldKeyId: string;
+  requestedNewPublicKey: string;
+  status: string;
+  riskType: string;
+  reason: string;
+  userNotes: string | null;
+  approximateBalanceKobo: string | null;
+  lastMerchantText: string | null;
+  lastTopupAmountKobo: string | null;
+  reviewedByUserId: string | null;
+  reviewedAt: string | null;
+  decisionNotes: string | null;
+  createdAt: string;
+  updatedAt: string;
+  user: {
+    id: string;
+    email: string;
+    role: string;
+    status: string;
+    verifiedBalanceKobo: string;
+  };
+  oldKey: {
+    id: string;
+    publicKey: string;
+    status: string;
+    validFrom: string;
+    retiredAt: string | null;
+    verifyUntil: string | null;
+  };
+};

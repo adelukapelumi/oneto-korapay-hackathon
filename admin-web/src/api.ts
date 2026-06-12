@@ -4,6 +4,7 @@ import type {
   AdminOverview,
   CreateAdminMerchantInput,
   PendingCashout,
+  PendingRecoveryRequest,
   PendingMerchant,
   ReconciliationReport,
   ResolvedBankAccount,
@@ -150,6 +151,56 @@ export async function getPendingCashouts(onAuthFailure: OnAuthFailure) {
   );
 
   return result.cashouts;
+}
+
+export async function getPendingRecoveryRequests(onAuthFailure: OnAuthFailure) {
+  const result = await request<
+    PendingRecoveryRequest[] | { requests?: PendingRecoveryRequest[]; recoveryRequests?: PendingRecoveryRequest[] }
+  >(
+    "/admin/recovery/pending",
+    {
+      method: "GET",
+    },
+    onAuthFailure,
+  );
+
+  if (Array.isArray(result)) {
+    return result;
+  }
+
+  return result.recoveryRequests ?? result.requests ?? [];
+}
+
+export function approveRecoveryRequest(
+  id: string,
+  input: { decisionNotes?: string },
+  onAuthFailure: OnAuthFailure,
+) {
+  return request<{ success?: boolean; status: string }>(
+    `/admin/recovery/${id}/approve`,
+    {
+      method: "POST",
+      requiresCsrf: true,
+      body: JSON.stringify(input),
+    },
+    onAuthFailure,
+  );
+}
+
+export function rejectRecoveryRequest(
+  id: string,
+  input: { decisionNotes: string },
+  onAuthFailure: OnAuthFailure,
+) {
+  return request<{ success?: boolean; status: string }>(
+    `/admin/recovery/${id}/reject`,
+    {
+      method: "POST",
+      requiresCsrf: true,
+      body: JSON.stringify(input),
+    },
+    onAuthFailure,
+  );
 }
 
 export async function getCashoutOperations(onAuthFailure: OnAuthFailure) {
