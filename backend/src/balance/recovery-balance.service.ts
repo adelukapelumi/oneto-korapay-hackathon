@@ -46,12 +46,12 @@ export class RecoveryBalanceService {
       (sum, hold) => sum + this.getRemainingHoldAmount(hold),
       0n,
     );
+    const availableBalanceKobo = user.verifiedBalanceKobo - activeRecoveryHeldBalanceKobo;
 
     return {
       verifiedBalanceKobo: user.verifiedBalanceKobo,
       activeRecoveryHeldBalanceKobo,
-      availableBalanceKobo:
-        user.verifiedBalanceKobo - activeRecoveryHeldBalanceKobo,
+      availableBalanceKobo: availableBalanceKobo > 0n ? availableBalanceKobo : 0n,
       recoveryHoldUntil:
         activeHolds.length === 0
           ? null

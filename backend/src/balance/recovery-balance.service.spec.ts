@@ -90,6 +90,29 @@ describe("RecoveryBalanceService", () => {
     expect(service.getRemainingHoldAmount(hold!)).toBe(3_500n);
   });
 
+  it("never lets available balance go negative when active holds exceed verified balance", async () => {
+    prisma.user.findUnique.mockResolvedValue({ verifiedBalanceKobo: 3_000n });
+    prisma.recoveryBalanceHold.findMany.mockResolvedValue([
+      {
+        id: "hold-1",
+        userId: "user-1",
+        oldKeyId: "key-1",
+        heldAmountKobo: 10_000n,
+        consumedAmountKobo: 1_000n,
+        holdUntil: new Date("2026-06-14T10:00:00.000Z"),
+      },
+    ]);
+
+    const snapshot = await service.getBalanceSnapshot(
+      "user-1",
+      prisma as unknown as PrismaService,
+      now,
+    );
+
+    expect(snapshot.activeRecoveryHeldBalanceKobo).toBe(9_000n);
+    expect(snapshot.availableBalanceKobo).toBe(0n);
+  });
+
   it("throws when the user does not exist", async () => {
     prisma.user.findUnique.mockResolvedValue(null);
 

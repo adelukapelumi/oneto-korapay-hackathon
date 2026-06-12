@@ -270,141 +270,139 @@ export class ReconcileService {
         try {
           // If all checks pass, execute a Serializable Prisma transaction.
           return await this.prisma.$transaction(async (tx) => {
-            try {
-              // Fix 1: Re-fetch sender inside transaction to prevent race conditions
-              const freshSender = await tx.user.findUnique({
-                where: { id: envelope.senderUserId },
-                select: { verifiedBalanceKobo: true, status: true },
-              });
-
-              if (!freshSender) {
-                throw new Error('balance_changed_during_reconcile');
-              }
-
-              if (freshSender.status === 'FROZEN' || freshSender.status === 'FLAGGED') {
-                throw new Error('balance_changed_during_reconcile'); // Re-use for consistent rejection
-              }
-
-              if (freshSender.verifiedBalanceKobo < envelopeAmountKobo) {
-                throw new Error('balance_changed_during_reconcile');
-              }
-
-              if (senderDeviceKey.status === DeviceKeyStatus.ACTIVE) {
-                const senderBalanceSnapshot = await this.recoveryBalanceService.getBalanceSnapshot(
-                  envelope.senderUserId,
-                  tx,
-                );
-
-                if (senderBalanceSnapshot.availableBalanceKobo < envelopeAmountKobo) {
-                  throw new Error('balance_changed_during_reconcile');
-                }
-              } else {
-                const activeHold = await this.recoveryBalanceService.getActiveHoldForOldKey(
-                  envelope.senderUserId,
-                  senderDeviceKey.id,
-                  tx,
-                );
-
-                if (!activeHold) {
-                  throw new Error('balance_changed_during_reconcile');
-                }
-
-                const holdRemainingKobo =
-                  this.recoveryBalanceService.getRemainingHoldAmount(activeHold);
-                if (
-                  holdRemainingKobo < envelopeAmountKobo ||
-                  freshSender.verifiedBalanceKobo < envelopeAmountKobo
-                ) {
-                  throw new Error('balance_changed_during_reconcile');
-                }
-
-                await tx.recoveryBalanceHold.update({
-                  where: { id: activeHold.id },
-                  data: {
-                    consumedAmountKobo: { increment: envelopeAmountKobo },
-                  },
-                });
-              }
-
-              // 1. Insert ProcessedSequence row.
-              await tx.processedSequence.create({
-                data: {
-                  userId: envelope.senderUserId,
-                  sequenceNumber: envelope.senderSequenceNumber,
-                  transactionId: envelope.transactionId,
-                },
-              });
-
-              // 2. Insert LedgerEntry DEBIT row for sender.
-              await tx.ledgerEntry.create({
-                data: {
-                  transactionId: envelope.transactionId,
-                  userId: envelope.senderUserId,
-                  type: 'DEBIT',
-                  amountKobo: envelopeAmountKobo,
-                  balanceAfterKobo: freshSender.verifiedBalanceKobo - envelopeAmountKobo,
-                  description: `Payment to ${envelope.recipientUserId}`,
-                  envelopeJson: envelope as unknown as Prisma.InputJsonValue,
-                },
-              });
-
-              // 3. Insert LedgerEntry CREDIT row for recipient.
-              // Need recipient's current balance for the LedgerEntry.
-              const recipient = await tx.user.findUnique({
-                where: { id: envelope.recipientUserId },
-                select: {
-                  verifiedBalanceKobo: true,
-                  role: true,
-                  status: true,
-                  merchantProfile: {
-                    select: { verifiedAt: true },
-                  },
-                },
-              });
-
-              if (!recipient) {
-                throw new Error(`Recipient ${envelope.recipientUserId} not found during transaction`);
-              }
-
-              if (!this.isRecipientApprovedMerchant(recipient)) {
-                throw new Error('recipient_not_merchant');
-              }
-
-              if (recipient.verifiedBalanceKobo + envelopeAmountKobo > BigInt(MAX_USER_BALANCE_KOBO)) {
-                throw new Error('recipient_balance_cap_exceeded');
-              }
-
-              await tx.ledgerEntry.create({
-                data: {
-                  transactionId: envelope.transactionId,
-                  userId: envelope.recipientUserId,
-                  type: 'CREDIT',
-                  amountKobo: envelopeAmountKobo,
-                  balanceAfterKobo: recipient.verifiedBalanceKobo + envelopeAmountKobo,
-                  description: `Payment from ${envelope.senderUserId}`,
-                  envelopeJson: envelope as unknown as Prisma.InputJsonValue,
-                },
-              });
-
-              // 4. Update sender balance.
-              await tx.user.update({
-                where: { id: envelope.senderUserId },
-                data: { verifiedBalanceKobo: { decrement: envelopeAmountKobo } },
-              });
-
-              // 5. Update recipient balance.
-              await tx.user.update({
-                where: { id: envelope.recipientUserId },
-                data: { verifiedBalanceKobo: { increment: envelopeAmountKobo } },
-              });
-
-              return { transactionId: envelope.transactionId, status: 'success' as const };
-            } catch (error) {
-              if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-                return this.resolveReconcileUniqueConflict(tx, envelope, error);
-              }
-              throw error;
+            const duplicateResult = await this.detectExistingReconcileReplay(tx, envelope);
+            if (duplicateResult) {
+              return duplicateResult;
             }
+
+            // Fix 1: Re-fetch sender inside transaction to prevent race conditions
+            const freshSender = await tx.user.findUnique({
+              where: { id: envelope.senderUserId },
+              select: { verifiedBalanceKobo: true, status: true },
+            });
+
+            if (!freshSender) {
+              throw new Error('balance_changed_during_reconcile');
+            }
+
+            if (freshSender.status === 'FROZEN' || freshSender.status === 'FLAGGED') {
+              throw new Error('balance_changed_during_reconcile'); // Re-use for consistent rejection
+            }
+
+            if (freshSender.verifiedBalanceKobo < envelopeAmountKobo) {
+              throw new Error('balance_changed_during_reconcile');
+            }
+
+            if (senderDeviceKey.status === DeviceKeyStatus.ACTIVE) {
+              const senderBalanceSnapshot = await this.recoveryBalanceService.getBalanceSnapshot(
+                envelope.senderUserId,
+                tx,
+              );
+
+              if (senderBalanceSnapshot.availableBalanceKobo < envelopeAmountKobo) {
+                throw new Error('balance_changed_during_reconcile');
+              }
+            } else {
+              const activeHold = await this.recoveryBalanceService.getActiveHoldForOldKey(
+                envelope.senderUserId,
+                senderDeviceKey.id,
+                tx,
+              );
+
+              if (!activeHold) {
+                throw new Error('balance_changed_during_reconcile');
+              }
+
+              const holdRemainingKobo =
+                this.recoveryBalanceService.getRemainingHoldAmount(activeHold);
+              if (
+                holdRemainingKobo < envelopeAmountKobo ||
+                freshSender.verifiedBalanceKobo < envelopeAmountKobo
+              ) {
+                throw new Error('balance_changed_during_reconcile');
+              }
+
+              await tx.recoveryBalanceHold.update({
+                where: { id: activeHold.id },
+                data: {
+                  consumedAmountKobo: { increment: envelopeAmountKobo },
+                },
+              });
+            }
+
+            // 1. Insert ProcessedSequence row.
+            await tx.processedSequence.create({
+              data: {
+                userId: envelope.senderUserId,
+                sequenceNumber: envelope.senderSequenceNumber,
+                transactionId: envelope.transactionId,
+              },
+            });
+
+            // 2. Insert LedgerEntry DEBIT row for sender.
+            await tx.ledgerEntry.create({
+              data: {
+                transactionId: envelope.transactionId,
+                userId: envelope.senderUserId,
+                type: 'DEBIT',
+                amountKobo: envelopeAmountKobo,
+                balanceAfterKobo: freshSender.verifiedBalanceKobo - envelopeAmountKobo,
+                description: `Payment to ${envelope.recipientUserId}`,
+                envelopeJson: envelope as unknown as Prisma.InputJsonValue,
+              },
+            });
+
+            // 3. Insert LedgerEntry CREDIT row for recipient.
+            // Need recipient's current balance for the LedgerEntry.
+            const recipient = await tx.user.findUnique({
+              where: { id: envelope.recipientUserId },
+              select: {
+                verifiedBalanceKobo: true,
+                role: true,
+                status: true,
+                merchantProfile: {
+                  select: { verifiedAt: true },
+                },
+              },
+            });
+
+            if (!recipient) {
+              throw new Error(`Recipient ${envelope.recipientUserId} not found during transaction`);
+            }
+
+            if (!this.isRecipientApprovedMerchant(recipient)) {
+              throw new Error('recipient_not_merchant');
+            }
+
+            if (recipient.verifiedBalanceKobo + envelopeAmountKobo > BigInt(MAX_USER_BALANCE_KOBO)) {
+              throw new Error('recipient_balance_cap_exceeded');
+            }
+
+            await tx.ledgerEntry.create({
+              data: {
+                transactionId: envelope.transactionId,
+                userId: envelope.recipientUserId,
+                type: 'CREDIT',
+                amountKobo: envelopeAmountKobo,
+                balanceAfterKobo: recipient.verifiedBalanceKobo + envelopeAmountKobo,
+                description: `Payment from ${envelope.senderUserId}`,
+                envelopeJson: envelope as unknown as Prisma.InputJsonValue,
+              },
+            });
+
+            // 4. Update sender balance.
+            await tx.user.update({
+              where: { id: envelope.senderUserId },
+              data: { verifiedBalanceKobo: { decrement: envelopeAmountKobo } },
+            });
+
+            // 5. Update recipient balance.
+            await tx.user.update({
+              where: { id: envelope.recipientUserId },
+              data: { verifiedBalanceKobo: { increment: envelopeAmountKobo } },
+            });
+
+            return { transactionId: envelope.transactionId, status: 'success' as const };
           }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
         } catch (error) {
           if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034') {
@@ -416,6 +414,9 @@ export class ReconcileService {
             this.logger.warn(`Serialization anomaly (P2034) for ${envelope.transactionId}. Retrying ${retries}/${maxRetries}...`);
             await new Promise((resolve) => setTimeout(resolve, 50 * Math.pow(2, retries)));
             continue;
+          }
+          if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+            return this.resolveReconcileUniqueConflict(this.prisma, envelope, error);
           }
           throw error;
         }
@@ -707,6 +708,39 @@ export class ReconcileService {
     return existingDebit !== null;
   }
 
+  private async detectExistingReconcileReplay(
+    client: PrismaService | Prisma.TransactionClient,
+    envelope: TransactionEnvelope,
+  ): Promise<ReconcileResult | null> {
+    const existingSequence = await client.processedSequence.findUnique({
+      where: {
+        userId_sequenceNumber: {
+          userId: envelope.senderUserId,
+          sequenceNumber: envelope.senderSequenceNumber,
+        },
+      },
+      select: { transactionId: true },
+    });
+
+    if (!existingSequence) {
+      return null;
+    }
+
+    if (existingSequence.transactionId !== envelope.transactionId) {
+      return this.reject(envelope.transactionId, 'sequence_collision', envelope);
+    }
+
+    const isSettledReplay = await this.hasMatchingLedgerEntriesForReplay(client, envelope);
+    if (!isSettledReplay) {
+      return this.reject(envelope.transactionId, 'idempotency_conflict', envelope);
+    }
+
+    this.logger.log(
+      `Idempotent replay accepted for transaction ${envelope.transactionId} (pre-mutation duplicate check)`,
+    );
+    return { transactionId: envelope.transactionId, status: 'success' };
+  }
+
   private async recordExpiredUnclaimedIfStillPending(
     envelope: TransactionEnvelope,
   ): Promise<OutgoingStatusResult> {
@@ -776,7 +810,7 @@ export class ReconcileService {
   }
 
   private async resolveReconcileUniqueConflict(
-    tx: Prisma.TransactionClient,
+    client: PrismaService | Prisma.TransactionClient,
     envelope: TransactionEnvelope,
     error: Prisma.PrismaClientKnownRequestError,
   ): Promise<ReconcileResult> {
@@ -787,7 +821,7 @@ export class ReconcileService {
       this.targetIncludesAll(uniqueTarget, ReconcileService.LEDGER_IDEMPOTENCY_TARGET_KEYS);
 
     if (isProcessedSequenceViolation) {
-      const existingSequence = await tx.processedSequence.findUnique({
+      const existingSequence = await client.processedSequence.findUnique({
         where: {
           userId_sequenceNumber: {
             userId: envelope.senderUserId,
@@ -805,7 +839,7 @@ export class ReconcileService {
         return this.reject(envelope.transactionId, 'sequence_collision', envelope);
       }
 
-      const isExistingLedgerEquivalent = await this.hasMatchingLedgerEntriesForReplay(tx, envelope);
+      const isExistingLedgerEquivalent = await this.hasMatchingLedgerEntriesForReplay(client, envelope);
       if (!isExistingLedgerEquivalent) {
         return this.reject(envelope.transactionId, 'idempotency_conflict', envelope);
       }
@@ -817,7 +851,7 @@ export class ReconcileService {
     }
 
     if (isLedgerIdempotencyViolation) {
-      const isExistingLedgerEquivalent = await this.hasMatchingLedgerEntriesForReplay(tx, envelope);
+      const isExistingLedgerEquivalent = await this.hasMatchingLedgerEntriesForReplay(client, envelope);
       if (!isExistingLedgerEquivalent) {
         return this.reject(envelope.transactionId, 'idempotency_conflict', envelope);
       }
@@ -857,10 +891,10 @@ export class ReconcileService {
   }
 
   private async hasMatchingLedgerEntriesForReplay(
-    tx: Prisma.TransactionClient,
+    client: PrismaService | Prisma.TransactionClient,
     envelope: TransactionEnvelope,
   ): Promise<boolean> {
-    const existingRows = await tx.ledgerEntry.findMany({
+    const existingRows = await client.ledgerEntry.findMany({
       where: {
         transactionId: envelope.transactionId,
       },

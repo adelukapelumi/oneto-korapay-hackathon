@@ -76,9 +76,15 @@ describe('ReconcileService', () => {
 
     service = module.get<ReconcileService>(ReconcileService);
     prisma = module.get<PrismaService>(PrismaService);
-    jest.clearAllMocks();
+    jest.resetAllMocks();
+    mockPrisma.$transaction.mockImplementation((callback: any) => callback(mockPrisma));
+    mockPrisma.processedSequence.findUnique.mockResolvedValue(null);
+    mockPrisma.processedSequence.create.mockResolvedValue({});
+    mockPrisma.ledgerEntry.create.mockResolvedValue({});
     mockPrisma.ledgerEntry.findMany.mockResolvedValue([]);
     mockPrisma.ledgerEntry.findFirst.mockResolvedValue(null);
+    mockPrisma.user.update.mockResolvedValue({});
+    mockPrisma.recoveryBalanceHold.update.mockResolvedValue({});
     mockPrisma.offlinePaymentResolution.findUnique.mockResolvedValue(null);
     mockPrisma.offlinePaymentResolution.create.mockImplementation(({ data }: any) =>
       Promise.resolve({
@@ -321,6 +327,124 @@ describe('ReconcileService', () => {
       data: {
         consumedAmountKobo: { increment: BigInt(envelope.amountKobo) },
       },
+    });
+  });
+
+  it('does not consume a VERIFY_ONLY recovery hold twice when the same merchant payment is replayed', async () => {
+    const fixedNow = new Date('2026-05-21T03:00:00.000Z');
+    jest.useFakeTimers().setSystemTime(fixedNow);
+
+    const draft = createValidEnvelopeDraft(senderId, recipientId, senderKey.publicKeyString);
+    draft.timestamp = '2026-05-21T02:59:30.000Z';
+    draft.expiresAt = '2026-05-21T03:00:30.000Z';
+    const envelope = signEnvelope(draft, senderKey.privateKey);
+
+    mockPrisma.user.findUnique.mockImplementation((args: any) => {
+      const where = args?.where;
+      if (where?.id === senderId) return Promise.resolve(createTestUser(senderId, senderKey.publicKeyString, 10_000, 'STUDENT'));
+      if (where?.id === recipientId) return Promise.resolve(createTestUser(recipientId, 'dummy'));
+      return Promise.resolve(null);
+    });
+    mockPrisma.userDeviceKey.findUnique.mockResolvedValue(
+      createTestDeviceKey(senderKey.publicKeyString, DeviceKeyStatus.VERIFY_ONLY, {
+        retiredAt: new Date('2026-05-21T02:59:45.000Z'),
+        verifyUntil: new Date('2026-05-22T03:00:00.000Z'),
+      }),
+    );
+    mockPrisma.processedSequence.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ transactionId: envelope.transactionId });
+    recoveryBalanceService.getActiveHoldForOldKey.mockResolvedValue({
+      id: 'hold-1',
+      userId: senderId,
+      oldKeyId: 'dk_test',
+      heldAmountKobo: 10_000n,
+      consumedAmountKobo: 2_000n,
+      holdUntil: new Date('2026-05-22T03:00:00.000Z'),
+    });
+    recoveryBalanceService.getRemainingHoldAmount.mockReturnValue(8_000n);
+    mockPrisma.ledgerEntry.findMany.mockResolvedValue([
+      {
+        userId: senderId,
+        type: 'DEBIT',
+        amountKobo: BigInt(envelope.amountKobo),
+        envelopeJson: envelope,
+      },
+      {
+        userId: recipientId,
+        type: 'CREDIT',
+        amountKobo: BigInt(envelope.amountKobo),
+        envelopeJson: envelope,
+      },
+    ]);
+
+    const firstResult = await service.reconcileOneInternal(recipientId, envelope);
+    const replayResult = await service.reconcileOneInternal(recipientId, envelope);
+
+    expect(firstResult).toEqual({ transactionId: envelope.transactionId, status: 'success' });
+    expect(replayResult).toEqual({ transactionId: envelope.transactionId, status: 'success' });
+    expect(mockPrisma.recoveryBalanceHold.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not debit a VERIFY_ONLY sender twice when the same merchant payment is replayed', async () => {
+    const fixedNow = new Date('2026-05-21T03:00:00.000Z');
+    jest.useFakeTimers().setSystemTime(fixedNow);
+
+    const draft = createValidEnvelopeDraft(senderId, recipientId, senderKey.publicKeyString);
+    draft.timestamp = '2026-05-21T02:59:30.000Z';
+    draft.expiresAt = '2026-05-21T03:00:30.000Z';
+    const envelope = signEnvelope(draft, senderKey.privateKey);
+
+    mockPrisma.user.findUnique.mockImplementation((args: any) => {
+      const where = args?.where;
+      if (where?.id === senderId) return Promise.resolve(createTestUser(senderId, senderKey.publicKeyString, 10_000, 'STUDENT'));
+      if (where?.id === recipientId) return Promise.resolve(createTestUser(recipientId, 'dummy'));
+      return Promise.resolve(null);
+    });
+    mockPrisma.userDeviceKey.findUnique.mockResolvedValue(
+      createTestDeviceKey(senderKey.publicKeyString, DeviceKeyStatus.VERIFY_ONLY, {
+        retiredAt: new Date('2026-05-21T02:59:45.000Z'),
+        verifyUntil: new Date('2026-05-22T03:00:00.000Z'),
+      }),
+    );
+    mockPrisma.processedSequence.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ transactionId: envelope.transactionId });
+    recoveryBalanceService.getActiveHoldForOldKey.mockResolvedValue({
+      id: 'hold-1',
+      userId: senderId,
+      oldKeyId: 'dk_test',
+      heldAmountKobo: 10_000n,
+      consumedAmountKobo: 2_000n,
+      holdUntil: new Date('2026-05-22T03:00:00.000Z'),
+    });
+    recoveryBalanceService.getRemainingHoldAmount.mockReturnValue(8_000n);
+    mockPrisma.ledgerEntry.findMany.mockResolvedValue([
+      {
+        userId: senderId,
+        type: 'DEBIT',
+        amountKobo: BigInt(envelope.amountKobo),
+        envelopeJson: envelope,
+      },
+      {
+        userId: recipientId,
+        type: 'CREDIT',
+        amountKobo: BigInt(envelope.amountKobo),
+        envelopeJson: envelope,
+      },
+    ]);
+
+    await service.reconcileOneInternal(recipientId, envelope);
+    await service.reconcileOneInternal(recipientId, envelope);
+
+    expect(mockPrisma.user.update).toHaveBeenCalledTimes(2);
+    expect(mockPrisma.user.update).toHaveBeenNthCalledWith(1, {
+      where: { id: envelope.senderUserId },
+      data: { verifiedBalanceKobo: { decrement: BigInt(envelope.amountKobo) } },
+    });
+    expect(mockPrisma.user.update).toHaveBeenNthCalledWith(2, {
+      where: { id: envelope.recipientUserId },
+      data: { verifiedBalanceKobo: { increment: BigInt(envelope.amountKobo) } },
     });
   });
 
@@ -694,7 +818,8 @@ describe('ReconcileService', () => {
     const draft2 = { 
       ...draft1, 
       amountKobo: toKobo(2000),
-      senderBalanceAfterKobo: toKobo(draft1.senderBalanceBeforeKobo - 2000)
+      senderBalanceAfterKobo: toKobo(draft1.senderBalanceBeforeKobo - 2000),
+      requestNonce: 'b'.repeat(32),
     }; // same sequence, different amount
     const env2 = signEnvelope(draft2, senderKey.privateKey);
 
@@ -714,9 +839,11 @@ describe('ReconcileService', () => {
           meta: { target: ['userId', 'sequenceNumber'] },
         }),
       );
-    mockPrisma.processedSequence.findUnique.mockResolvedValue({
-      transactionId: env1.transactionId,
-    });
+    mockPrisma.processedSequence.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        transactionId: env1.transactionId,
+      });
 
     const res1 = await service.reconcile(recipientId, [env1]);
     const res2 = await service.reconcileOneInternal(recipientId, env2);
@@ -730,10 +857,12 @@ describe('ReconcileService', () => {
   it('17. Out-of-order sequence: 10 before 9', async () => {
     const draft10 = createValidEnvelopeDraft(senderId, recipientId, senderKey.publicKeyString);
     draft10.senderSequenceNumber = 10;
+    draft10.requestNonce = 'c'.repeat(32);
     const env10 = signEnvelope(draft10, senderKey.privateKey);
 
     const draft9 = createValidEnvelopeDraft(senderId, recipientId, senderKey.publicKeyString);
     draft9.senderSequenceNumber = 9;
+    draft9.requestNonce = 'd'.repeat(32);
     const env9 = signEnvelope(draft9, senderKey.privateKey);
 
     mockPrisma.user.findUnique.mockImplementation((args: any) => {
@@ -751,12 +880,14 @@ describe('ReconcileService', () => {
 
   it('18. Batch: independent processing', async () => {
     const draft1 = createValidEnvelopeDraft(senderId, recipientId, senderKey.publicKeyString);
+    draft1.requestNonce = 'e'.repeat(32);
     const env1 = signEnvelope(draft1, senderKey.privateKey);
 
     const env2 = { ...env1, signature: 'invalid' }; // Bad one
 
     const draft3 = createValidEnvelopeDraft(senderId, recipientId, senderKey.publicKeyString);
     draft3.senderSequenceNumber = 2;
+    draft3.requestNonce = 'f'.repeat(32);
     const env3 = signEnvelope(draft3, senderKey.privateKey);
 
     mockPrisma.user.findUnique.mockImplementation((args: any) => {
@@ -820,6 +951,69 @@ describe('ReconcileService', () => {
 
     const result = await service.reconcileOneInternal(recipientId, envelope);
     expect(result).toMatchObject({ status: 'rejected', reason: 'internal_error' });
+  });
+
+  it('rolls back late duplicate detection instead of returning success from inside the same transaction', async () => {
+    const fixedNow = new Date('2026-05-21T03:00:00.000Z');
+    jest.useFakeTimers().setSystemTime(fixedNow);
+
+    const draft = createValidEnvelopeDraft(senderId, recipientId, senderKey.publicKeyString);
+    draft.timestamp = '2026-05-21T02:59:30.000Z';
+    draft.expiresAt = '2026-05-21T03:00:30.000Z';
+    const envelope = signEnvelope(draft, senderKey.privateKey);
+
+    mockPrisma.user.findUnique.mockImplementation((args: any) => {
+      const where = args?.where;
+      if (where?.id === senderId) return Promise.resolve(createTestUser(senderId, senderKey.publicKeyString, 10_000, 'STUDENT'));
+      if (where?.id === recipientId) return Promise.resolve(createTestUser(recipientId, 'dummy'));
+      return Promise.resolve(null);
+    });
+    mockPrisma.userDeviceKey.findUnique.mockResolvedValue(
+      createTestDeviceKey(senderKey.publicKeyString, DeviceKeyStatus.VERIFY_ONLY, {
+        retiredAt: new Date('2026-05-21T02:59:45.000Z'),
+        verifyUntil: new Date('2026-05-22T03:00:00.000Z'),
+      }),
+    );
+    mockPrisma.processedSequence.findUnique.mockResolvedValueOnce(null);
+    recoveryBalanceService.getActiveHoldForOldKey.mockResolvedValue({
+      id: 'hold-1',
+      userId: senderId,
+      oldKeyId: 'dk_test',
+      heldAmountKobo: 10_000n,
+      consumedAmountKobo: 2_000n,
+      holdUntil: new Date('2026-05-22T03:00:00.000Z'),
+    });
+    recoveryBalanceService.getRemainingHoldAmount.mockReturnValue(8_000n);
+    mockPrisma.processedSequence.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('Duplicate', {
+        code: 'P2002',
+        clientVersion: '5.x',
+        meta: { target: ['userId', 'sequenceNumber'] },
+      }),
+    );
+    mockPrisma.ledgerEntry.findMany.mockResolvedValue([
+      {
+        userId: senderId,
+        type: 'DEBIT',
+        amountKobo: BigInt(envelope.amountKobo),
+        envelopeJson: envelope,
+      },
+      {
+        userId: recipientId,
+        type: 'CREDIT',
+        amountKobo: BigInt(envelope.amountKobo),
+        envelopeJson: envelope,
+      },
+    ]);
+    mockPrisma.processedSequence.findUnique.mockResolvedValueOnce({
+      transactionId: envelope.transactionId,
+    });
+
+    const result = await service.reconcileOneInternal(recipientId, envelope);
+
+    expect(result).toEqual({ transactionId: envelope.transactionId, status: 'success' });
+    expect(mockPrisma.recoveryBalanceHold.update).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.user.update).not.toHaveBeenCalled();
   });
 
   it('rejects S2S transfer when recipient is not a merchant', async () => {
